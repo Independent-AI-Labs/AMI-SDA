@@ -1,0 +1,1 @@
+pip install torch==2.7.1+xpu torchvision==0.22.1+xpu torchaudio==2.7.1+xpu intel-cmplr-lib-rt intel-cmplr-lib-ur intel-cmplr-lic-rt intel-sycl-rt pytorch-triton-xpu tcmlib umf intel-pti --index-url https://download.pytorch.org/whl/xpu --extra-index-url https://pypi.org/simple

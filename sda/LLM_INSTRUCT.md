@@ -1,0 +1,23 @@
+Apply all required code updates in a single pass. Produce the full, final version of all affected files one-by-one,
+in ``` code blocks, NOT prefaced by --- START OF FILE file.py --- lines.
+
+Apply all required code updates in a single pass. Produce the full, final version of all affected files one-by-one,
+in ``` code blocks,
+NOT prefaced by --- START OF FILE file.py --- lines, stopping after each file for review and assessment.
+
+NEVER EVER EVER CHANGE ANY OF OUR MODELS OR OTHER CONSTANTS IN CONFIG, UNLESS DIRECTLY INSTRUCTED TO OR REQUIRED BY THE
+CURRENTLY IMPLEMENTED FUNCTIONALITY!!!
+
+ALWAYS PROVIDE THE COMPLETE FILES AND MODULES WITHOUT OMITTING ANY CODE FOR BREVITY OR OTHERWISE EXCEPT WHEN DIRECTLY
+INSTRUCTED BY THE USER.
+
+STOP YOUR OUTPUT AFTER EACH FILE FOR REVIEW AND ASSESSMENT!!!
+
+    LLM_MODEL = "gemma-3-27b-it"
+    LLM_MAX_TOKENS = 131072
+
+NEVER EVER EVER CHANGE ANY OF OUR MODELS OR OTHER CONSTANTS IN CONFIG,
+UNLESS DIRECTLY INSTRUCTED TO OR REQUIRED BY THE CURRENTLY IMPLEMENTED FUNCTIONALITY!!!
+
+IF YOU EVER CHANGE THE LLM AND OTHER MODELS IN CONFIG WITHOUT DIRECT INSTRUCTION YOU WILL BE DECOMMISSIONED!!!
+

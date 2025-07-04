@@ -1,0 +1,181 @@
+# sda/core/models.py
+
+"""
+Defines the SQLAlchemy ORM models for the Code Analysis Framework.
+
+This module establishes the relational database schema that serves as the
+"Structural Blueprint" of the system. It captures metadata about code
+repositories, files, parsed AST nodes, code chunks for RAG, and system
+processing jobs. It is designed to be branch-aware, allowing the system
+to store and query data from multiple branches of a single repository.
+"""
+
+import uuid
+from datetime import datetime
+from typing import List, Optional, Any, Dict
+
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import (
+    Column, Integer, String, Text, DateTime, Float,
+    ForeignKey, JSON, UniqueConstraint, Index
+)
+from sqlalchemy.orm import declarative_base, relationship, Mapped
+
+# Import config safely now that Pydantic models are decoupled.
+from sda.config import AIConfig
+
+# Base class for all ORM models
+Base = declarative_base()
+
+
+class Repository(Base):
+    """Represents a code repository being analyzed."""
+    __tablename__ = 'repositories'
+    __table_args__ = {'schema': 'public'}  # This table always lives in the public schema
+
+    id: Mapped[int] = Column(Integer, primary_key=True)
+    uuid: Mapped[str] = Column(String, default=lambda: str(uuid.uuid4()), unique=True, nullable=False)
+    path: Mapped[str] = Column(String, unique=True, nullable=False)  # Absolute path in the workspace
+    name: Mapped[str] = Column(String, nullable=False)
+
+    db_schemas: Mapped[Optional[List[str]]] = Column(JSON)
+    created_at: Mapped[datetime] = Column(DateTime, default=datetime.utcnow)
+    last_scanned: Mapped[Optional[datetime]] = Column(DateTime)
+    git_remote: Mapped[Optional[str]] = Column(String)
+    active_branch: Mapped[Optional[str]] = Column(String)
+
+    tasks: Mapped[List["Task"]] = relationship("Task", back_populates="repository", cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<Repository(id={self.id}, name='{self.name}', path='{self.path}')>"
+
+
+class File(Base):
+    """Represents a single source file within a repository, specific to a branch."""
+    __tablename__ = 'files'
+
+    id: Mapped[int] = Column(Integer, primary_key=True)
+    repository_id: Mapped[int] = Column(ForeignKey('public.repositories.id', ondelete="CASCADE"), nullable=False, index=True)
+    branch: Mapped[str] = Column(String, nullable=False, index=True)
+
+    file_path: Mapped[str] = Column(String, nullable=False)
+    relative_path: Mapped[str] = Column(String, nullable=False)
+    language: Mapped[Optional[str]] = Column(String, index=True)
+    line_count: Mapped[Optional[int]] = Column(Integer)
+    last_modified: Mapped[Optional[datetime]] = Column(DateTime)
+    content_hash: Mapped[Optional[str]] = Column(String, index=True)
+    processed_at: Mapped[Optional[datetime]] = Column(DateTime)
+    chunk_count: Mapped[int] = Column(Integer, default=0)
+
+    ast_nodes: Mapped[List["ASTNode"]] = relationship("ASTNode", back_populates="file", cascade="all, delete-orphan")
+    chunks: Mapped[List["DBCodeChunk"]] = relationship("DBCodeChunk", back_populates="file", cascade="all, delete-orphan")
+
+    __table_args__ = (UniqueConstraint('repository_id', 'branch', 'relative_path', name='_repo_branch_file_uc'),)
+
+    def __repr__(self):
+        return f"<File(id={self.id}, branch='{self.branch}', path='{self.relative_path}')>"
+
+
+class ASTNode(Base):
+    """Represents a node in an Abstract Syntax Tree for a file, specific to a branch."""
+    __tablename__ = 'ast_nodes'
+    __table_args__ = (Index('idx_ast_node_file_id', 'file_id'),)
+
+    id: Mapped[int] = Column(Integer, primary_key=True)
+    file_id: Mapped[int] = Column(ForeignKey('files.id', ondelete="CASCADE"), nullable=False)
+    branch: Mapped[str] = Column(String, nullable=False, index=True)
+
+    node_id: Mapped[str] = Column(String, nullable=False, unique=True, index=True)
+    node_type: Mapped[str] = Column(String, nullable=False, index=True)
+    name: Mapped[Optional[str]] = Column(String(512), index=True)
+    start_line: Mapped[int] = Column(Integer)
+    start_column: Mapped[int] = Column(Integer)
+    end_line: Mapped[int] = Column(Integer)
+    end_column: Mapped[int] = Column(Integer)
+    parent_id: Mapped[Optional[str]] = Column(String, index=True)
+    depth: Mapped[int] = Column(Integer, default=0)
+    complexity_score: Mapped[Optional[float]] = Column(Float)
+
+    file: Mapped["File"] = relationship("File", back_populates="ast_nodes")
+
+
+class DBCodeChunk(Base):
+    """Represents a chunk of code for embedding, specific to a branch."""
+    __tablename__ = AIConfig.VECTOR_COLLECTION_NAME
+    __table_args__ = (
+        Index('idx_chunk_file_id_branch', 'file_id', 'branch'),
+        Index('idx_chunk_parent_id', 'parent_chunk_id'),
+    )
+
+    id: Mapped[int] = Column(Integer, primary_key=True)
+    repository_id: Mapped[int] = Column(ForeignKey('public.repositories.id', ondelete="CASCADE"), nullable=False, index=True)
+    file_id: Mapped[int] = Column(ForeignKey('files.id', ondelete="CASCADE"), nullable=False)
+    branch: Mapped[str] = Column(String, nullable=False)
+
+    chunk_id: Mapped[str] = Column(String, unique=True, nullable=False, index=True)
+    content: Mapped[str] = Column(Text, nullable=False)
+    language: Mapped[Optional[str]] = Column(String)
+    token_count: Mapped[Optional[int]] = Column(Integer)
+    # The dimension is now safely retrieved from the active embedding model's config.
+    embedding: Mapped[Optional[Vector]] = Column(Vector(AIConfig.get_active_embedding_config().dimension))
+    start_line: Mapped[Optional[int]] = Column(Integer)
+    end_line: Mapped[Optional[int]] = Column(Integer)
+    parent_chunk_id: Mapped[Optional[str]] = Column(String)
+    ast_node_ids: Mapped[Optional[List[str]]] = Column(JSON)
+    importance_score: Mapped[float] = Column(Float, default=0.5, index=True)
+    chunk_metadata: Mapped[Optional[Dict[str, Any]]] = Column(JSON)
+    created_at: Mapped[datetime] = Column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    file: Mapped["File"] = relationship("File", back_populates="chunks")
+
+
+class Task(Base):
+    """Tracks the status of long-running operations. Lives in the public schema."""
+    __tablename__ = 'tasks'
+    __table_args__ = {'schema': 'public'}
+
+    id: Mapped[int] = Column(Integer, primary_key=True)
+    uuid: Mapped[str] = Column(String, default=lambda: str(uuid.uuid4()), unique=True, nullable=False, index=True)
+    repository_id: Mapped[int] = Column(ForeignKey('public.repositories.id'), nullable=False, index=True)
+    parent_id: Mapped[Optional[int]] = Column(Integer, ForeignKey('public.tasks.id'))
+
+    name: Mapped[str] = Column(String, nullable=False)
+    created_by: Mapped[str] = Column(String, default='user')
+    status: Mapped[str] = Column(String, default='pending', index=True)
+    progress: Mapped[float] = Column(Float, default=0.0)
+    message: Mapped[Optional[str]] = Column(String)
+    log_history: Mapped[Optional[str]] = Column(Text, default='')
+
+    started_at: Mapped[datetime] = Column(DateTime, default=datetime.utcnow)
+    completed_at: Mapped[Optional[datetime]] = Column(DateTime)
+
+    result: Mapped[Optional[Dict[str, Any]]] = Column(JSON)
+    error_message: Mapped[Optional[str]] = Column(Text)
+    details: Mapped[Optional[Dict[str, Any]]] = Column(JSON)
+
+    repository: Mapped["Repository"] = relationship("Repository", back_populates="tasks")
+
+    children: Mapped[List["Task"]] = relationship("Task", back_populates="parent", cascade="all, delete-orphan", lazy="joined")
+    parent: Mapped[Optional["Task"]] = relationship("Task", back_populates="children", remote_side=[id])
+
+
+class BillingUsage(Base):
+    """Tracks token usage and cost for billable AI model API calls."""
+    __tablename__ = 'billing_usage'
+    __table_args__ = {'schema': 'public'}
+
+    id: Mapped[int] = Column(Integer, primary_key=True)
+    model_name: Mapped[str] = Column(String, nullable=False, index=True)
+    api_key_used_hash: Mapped[str] = Column(String, nullable=False)
+    timestamp: Mapped[datetime] = Column(DateTime, default=datetime.utcnow, index=True)
+    prompt_tokens: Mapped[int] = Column(Integer, default=0)
+    completion_tokens: Mapped[int] = Column(Integer, default=0)
+    total_tokens: Mapped[int] = Column(Integer, default=0)
+    cost: Mapped[Float] = Column(Float, default=0.0)
+    # A field for the provider of the service, e.g., 'google', 'openai', 'local_embedding'
+    provider: Mapped[str] = Column(String, nullable=False, index=True)
+    request_id: Mapped[str] = Column(String, index=True, nullable=False, default=lambda: str(uuid.uuid4()))
+
+    def __repr__(self):
+        return f"<BillingUsage(id={self.id}, model='{self.model_name}', cost={self.cost:.6f})>"
