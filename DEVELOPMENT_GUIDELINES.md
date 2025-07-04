@@ -39,7 +39,7 @@
 
 ### 1.2 Technology Stack Rationale
 
-#### Language Choice: Python 3.12+
+#### Language Choice: Python 3.10+
 **Strategic Decision**: Python for rapid AI/ML integration and extensive ecosystem
 **Production Considerations**: 
 - Type hints mandatory for maintainability
@@ -67,20 +67,20 @@
 ### 2.1 Concurrency Architecture
 
 #### Multi-Level Parallelization Strategy
-**Process Level**: CPU-intensive parsing operations
-- Isolated chunker instances per process
-- Configurable worker pool sizing (up to 60 processes)
-- Memory isolation prevents cross-contamination
+- **Process Level**: CPU-intensive parsing operations
+  - Isolated chunker instances per process
+  - Configurable worker pool sizing (up to 60 processes per pool)
+  - Memory isolation prevents cross-contamination
 
-**Thread Level**: I/O-bound database operations  
-- Bulkhead pattern with separate pools per database type
-- Deadlock avoidance through consistent resource ordering
-- Connection pool management per database
+- **Thread Level**: I/O-bound database operations  
+  - Bulkhead pattern with separate pools per database type
+  - Deadlock avoidance through consistent resource ordering
+  - Connection pool management per database
 
-**Device Level**: GPU/accelerator utilization
-- Multi-device embedding generation
-- Automatic device detection and optimization
-- Graceful fallback to CPU processing
+- **Device Level**: GPU/accelerator utilization
+  - Multi-device embedding generation
+  - Automatic device detection and optimization
+  - Graceful fallback to CPU processing
 
 #### Task Execution Framework
 **Implementation**: `TaskExecutor` with workload-specific pools
@@ -186,29 +186,29 @@
 **Production Environment**: Kubernetes-based with auto-scaling
 
 #### Infrastructure Requirements
-**Compute Resources**:
-- CPU: 32+ cores for optimal parsing performance
-- Memory: 64GB+ for large repository processing
-- Storage: PCIe Gen5 SSD for database performance
-- GPUs/NPUs: Optional for accelerated embedding generation
+- **Compute Resources**:
+  - CPU: 32+ cores for optimal parsing performance
+  - Memory: 64GB+ for large repository processing
+  - Storage: SSD for database performance
+  - GPU: Optional for accelerated embedding generation
 
-**Network Requirements**:
-- Low-latency connections between database clusters
-- Bandwidth considerations for large repository cloning
-- API rate limiting for external service calls
+- **Network Requirements**:
+  - Low-latency connections between database clusters
+  - Bandwidth considerations for large repository cloning
+  - API rate limiting for external service calls
 
 ### 4.2 Monitoring & Observability
 
 #### Performance Monitoring Strategy
-**Application Metrics**:
-- Processing throughput (files/minute, chunks/second)
-- Query response times across different operation types
-- Resource utilization (CPU, memory, GPU, storage)
+- **Application Metrics**:
+  - Processing throughput (files/minute, chunks/second)
+  - Query response times across different operation types
+  - Resource utilization (CPU, memory, GPU, storage)
 
-**Business Metrics**:
-- Repository analysis completion rates
-- User query success rates
-- Cost per analysis operation
+- **Business Metrics**:
+  - Repository analysis completion rates
+  - User query success rates
+  - Cost per analysis operation
 
 #### Alerting Framework
 **Critical Alerts**: System failures, database connectivity issues
@@ -314,19 +314,19 @@
 **Access Control**: Fine-grained permissions per repository/operation
 
 #### Rate Limiting & Abuse Prevention
-**Multi-Layer Protection**: Application-level and infrastructure-level controls
-**Anomaly Detection**: Unusual usage pattern identification
-**Cost Protection**: Budget limits and alerting mechanisms
+- **Multi-Layer Protection**: Application-level and infrastructure-level controls
+- **Anomaly Detection**: Unusual usage pattern identification
+- **Cost Protection**: Budget limits and alerting mechanisms
 
 ## 7. Feature Development Lifecycle
 
 ### 7.1 Feature Planning & Prioritization
 
 #### Technical Decision Framework
-**Performance Impact Assessment**: Benchmark analysis for new features
-**Scalability Evaluation**: Load testing and capacity planning
-**Security Review**: Threat modeling and vulnerability assessment
-**Operational Impact**: Monitoring, alerting, and support requirements
+- **Performance Impact Assessment**: Benchmark analysis for new features
+- **Scalability Evaluation**: Load testing and capacity planning
+- **Security Review**: Threat modeling and vulnerability assessment
+- **Operational Impact**: Monitoring, alerting, and support requirements
 
 #### Feature Flagging Strategy
 **Gradual Rollout**: Percentage-based feature deployment
@@ -349,15 +349,15 @@
 ### 7.3 Production Readiness Criteria
 
 #### Technical Requirements
-**Performance Benchmarks**: Response time and throughput targets met
-**Scalability Validation**: Load testing under expected traffic patterns
-**Security Clearance**: Vulnerability assessment and penetration testing
-**Monitoring Implementation**: Comprehensive observability coverage
+- **Performance Benchmarks**: Response time and throughput targets met
+- **Scalability Validation**: Load testing under expected traffic patterns
+- **Security Clearance**: Vulnerability assessment and penetration testing
+- **Monitoring Implementation**: Comprehensive observability coverage
 
 #### Operational Requirements
-**Documentation Completeness**: Architecture, API, and operational docs
-**Support Procedures**: Troubleshooting guides and escalation procedures
-**Backup & Recovery**: Data protection and disaster recovery validation
+- **Documentation Completeness**: Architecture, API, and operational docs
+- **Support Procedures**: Troubleshooting guides and escalation procedures
+- **Backup & Recovery**: Data protection and disaster recovery validation
 
 ## 8. Technical Debt Management
 
@@ -506,6 +506,248 @@
 **Conference Presentations**: Sharing insights and best practices
 **Publication Strategy**: Technical papers and case studies
 
----
+## 11. Architectural Weaknesses & Enhancement Proposals
 
-This comprehensive development strategy ensures the SDA Framework remains at the forefront of code analysis technology while maintaining enterprise-grade reliability, security, and performance. Regular review and updates of these guidelines ensure continuous alignment with evolving technical requirements and business objectives.
+### 11.1 Single Points of Failure Analysis
+
+#### Current Architecture Vulnerabilities
+
+**Database Dependencies**
+- **Weakness**: Single PostgreSQL instance creates availability bottleneck
+- **Impact**: Complete system failure on database unavailability
+- **Proposed Enhancement**: 
+  - Primary-replica PostgreSQL cluster with automatic failover
+  - Read-only mode operation during primary database outages
+  - Connection pooling with circuit breaker patterns
+
+**Dgraph Single Node**
+- **Weakness**: Graph database operates as single node
+- **Impact**: Loss of call graph and relationship data on failure
+- **Proposed Enhancement**:
+  - Dgraph clustering with data replication
+  - Graceful degradation without graph features
+  - Graph data reconstruction from PostgreSQL metadata
+
+**Application Instance**
+- **Weakness**: Single application instance handles all requests
+- **Impact**: No redundancy for web interface and processing
+- **Proposed Enhancement**:
+  - Stateless application design for horizontal scaling
+  - Load balancer with health checks and automatic failover
+  - Session state externalization to Redis or database
+
+### 11.2 Performance Bottlenecks & Optimization Opportunities
+
+#### Identified Performance Constraints
+
+**Cross-Schema Query Performance**
+- **Weakness**: Union operations across multiple schemas create performance degradation
+- **Current Impact**: Slower search performance for large repositories with many schemas
+- **Proposed Enhancement**:
+  - Materialized views for common cross-schema queries
+  - Distributed query optimization with parallel execution
+  - Schema-aware caching layer with intelligent invalidation
+
+**Vector Search Scalability**
+- **Weakness**: IVFFlat indexing becomes inefficient with very large datasets
+- **Current Impact**: Query performance degradation beyond 1M+ vectors
+- **Proposed Enhancement**:
+  - HNSW indexing implementation for sub-linear search complexity
+  - Hierarchical vector clustering for approximate nearest neighbor
+  - Dynamic index selection based on dataset characteristics
+
+**Memory Usage During Large Repository Processing**
+- **Weakness**: Peak memory usage during concurrent processing can exceed available resources
+- **Current Impact**: Processing limitations for repositories exceeding memory capacity
+- **Proposed Enhancement**:
+  - Advanced streaming processing with disk-based intermediate storage
+  - Dynamic memory allocation based on available system resources
+  - Intelligent workload distribution across processing nodes
+
+#### Embedding Generation Bottlenecks
+
+**Model Loading Overhead**
+- **Weakness**: Embedding model initialization causes startup delays
+- **Current Impact**: Cold start performance issues for embedding operations
+- **Proposed Enhancement**:
+  - Persistent embedding service with warm model pools
+  - Model quantization and optimization for faster inference
+  - Edge deployment for reduced latency
+
+### 11.3 Data Consistency & Integrity Challenges
+
+#### Cross-Database Synchronization
+
+**Schema Partitioning Consistency**
+- **Weakness**: No atomic operations across multiple PostgreSQL schemas
+- **Current Impact**: Potential data inconsistency during partial failures
+- **Proposed Enhancement**:
+  - Two-phase commit protocol for cross-schema transactions
+  - Compensating transaction patterns for rollback scenarios
+  - Event sourcing architecture for audit trail and recovery
+
+**PostgreSQL-Dgraph Synchronization**
+- **Weakness**: No guaranteed consistency between relational and graph data
+- **Current Impact**: Temporary inconsistency between AST metadata and relationships
+- **Proposed Enhancement**:
+  - Event-driven synchronization with message queues
+  - Periodic consistency verification and correction processes
+  - Write-ahead logging for cross-database transaction coordination
+
+### 11.4 Scalability Architecture Limitations
+
+#### Horizontal Scaling Constraints
+
+**Stateful Session Management**
+- **Weakness**: Current Gradio UI maintains server-side state
+- **Current Impact**: Prevents true horizontal scaling of application instances
+- **Proposed Enhancement**:
+  - Stateless REST API with JWT-based authentication
+  - Client-side state management in frontend applications
+  - External session storage with Redis clustering
+
+**Database Connection Pooling**
+- **Weakness**: Connection pools are instance-specific
+- **Current Impact**: Inefficient resource utilization across multiple application instances
+- **Proposed Enhancement**:
+  - External connection pooling with PgBouncer or similar
+  - Dynamic connection allocation based on workload
+  - Connection pool sharing across application instances
+
+#### Repository Processing Limitations
+
+**Sequential Repository Analysis**
+- **Weakness**: Each repository must be fully processed before starting the next
+- **Current Impact**: Reduced throughput for multiple repository analysis
+- **Proposed Enhancement**:
+  - Queue-based repository processing with worker pools
+  - Priority-based scheduling for urgent analysis requests
+  - Incremental processing for repository updates
+
+### 11.5 Security Architecture Weaknesses
+
+#### Authentication & Authorization Gaps
+
+**API Key Management**
+- **Weakness**: API keys stored in environment variables without rotation
+- **Current Impact**: Long-lived credentials increase security risk
+- **Proposed Enhancement**:
+  - Integration with external secret management systems (Vault, AWS Secrets Manager)
+  - Automatic API key rotation with zero-downtime updates
+  - Role-based access control with fine-grained permissions
+
+**Data Access Controls**
+- **Weakness**: Schema-level isolation is the only access control mechanism
+- **Current Impact**: Limited multi-tenant capabilities
+- **Proposed Enhancement**:
+  - Row-level security policies in PostgreSQL
+  - Repository-level access controls with user permissions
+  - Audit logging for all data access operations
+
+#### Network Security
+
+**Internal Communication**
+- **Weakness**: Database connections may not be encrypted
+- **Current Impact**: Potential data interception in multi-node deployments
+- **Proposed Enhancement**:
+  - TLS encryption for all database connections
+  - Certificate-based authentication between services
+  - Network segmentation with security groups
+
+### 11.6 Operational Complexity Challenges
+
+#### Deployment & Configuration Management
+
+**Configuration Drift**
+- **Weakness**: Manual configuration management across environments
+- **Current Impact**: Inconsistent behavior and deployment failures
+- **Proposed Enhancement**:
+  - Infrastructure as Code with Terraform or similar
+  - Configuration management with Ansible or similar tools
+  - Environment-specific configuration validation
+
+**Monitoring & Observability Gaps**
+- **Weakness**: Limited distributed tracing and log correlation
+- **Current Impact**: Difficult troubleshooting in complex processing scenarios
+- **Proposed Enhancement**:
+  - OpenTelemetry integration for distributed tracing
+  - Centralized log aggregation with ELK stack or similar
+  - Custom metrics and alerting for business-specific KPIs
+
+#### Backup & Recovery Procedures
+
+**Data Recovery Complexity**
+- **Weakness**: Multi-database backup coordination is manual
+- **Current Impact**: Potential data loss and extended recovery times
+- **Proposed Enhancement**:
+  - Coordinated backup procedures across all databases
+  - Point-in-time recovery capabilities with transaction log shipping
+  - Automated disaster recovery testing and validation
+
+### 11.7 Integration & Extensibility Limitations
+
+#### External System Integration
+
+**API Limitations**
+- **Weakness**: Currently limited to Gradio web interface
+- **Current Impact**: Restricted integration with external tools and workflows
+- **Proposed Enhancement**:
+  - RESTful API with OpenAPI specification
+  - Webhook support for event-driven integrations
+  - GraphQL endpoint for flexible data querying
+
+**Plugin Architecture**
+- **Weakness**: No standardized extension mechanism
+- **Current Impact**: Difficult to add custom analysis features
+- **Proposed Enhancement**:
+  - Plugin API with well-defined interfaces
+  - Sandboxed plugin execution for security
+  - Plugin marketplace for community contributions
+
+#### Language Support Extensibility
+
+**Parser Integration Complexity**
+- **Weakness**: Adding new language support requires core code modifications
+- **Current Impact**: Limited language ecosystem growth
+- **Proposed Enhancement**:
+  - Dynamic parser loading with standardized interfaces
+  - Language-specific configuration files
+  - Community-driven language parser contributions
+
+### 11.8 Future Architecture Evolution
+
+#### Microservices Decomposition Strategy
+
+**Service Boundaries**
+- **Current Monolithic Limitations**: All services tightly coupled in single deployment
+- **Proposed Decomposition**:
+  - Ingestion Service: Repository processing and analysis
+  - Query Service: Search and navigation operations
+  - AI Service: LLM and embedding operations
+  - Graph Service: Relationship analysis and traversal
+  - API Gateway: Authentication, routing, and rate limiting
+
+**Event-Driven Architecture**
+- **Current Synchronous Limitations**: Tight coupling between processing stages
+- **Proposed Enhancement**:
+  - Message queue integration (Apache Kafka, RabbitMQ)
+  - Event sourcing for audit trails and replay capabilities
+  - Asynchronous processing with eventual consistency guarantees
+
+#### Cloud-Native Transformation
+
+**Container Orchestration**
+- **Current Deployment Limitations**: Single-node deployment model
+- **Proposed Enhancement**:
+  - Kubernetes-native deployment with operators
+  - Helm charts for standardized deployments
+  - GitOps workflows for continuous deployment
+
+**Serverless Components**
+- **Current Always-On Architecture**: All services run continuously
+- **Proposed Enhancement**:
+  - Function-as-a-Service for infrequent operations
+  - Auto-scaling based on workload patterns
+  - Cost optimization through usage-based resource allocation
+
+This comprehensive analysis provides a roadmap for addressing current architectural limitations while maintaining system reliability and performance during evolution.
