@@ -18,7 +18,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Generator
+from typing import Dict, Any, List, Optional, Generator, Tuple # Added Tuple
 
 from PIL import Image
 from llama_index.core.llms import ChatMessage

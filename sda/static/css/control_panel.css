@@ -437,3 +437,51 @@ html.dark .stat-icon {
     color: var(--accent-color-primary-dark, #3b82f6); /* Accent color for dark mode */
     /* color: var(--body-text-color-subdued-dark, #9ca3af); */
 }
+
+/* Custom styles for status bar row */
+.sda-status-bar-row {
+    align-items: stretch !important; /* Try to make items stretch to the same height */
+    gap: var(--spacing-lg, 1rem) !important;
+}
+
+/* Target the wrapper Gradio puts around the Textbox when container=False */
+/* This is specific and might need adjustment if Gradio's structure changes. */
+.sda-status-bar-row > div[class*="gr-form"] { /* This targets the direct child div that wraps status_output */
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    align-self: center; /* Try to center this wrapper itself */
+}
+
+.sda-status-bar-row textarea {
+    min-height: var(--size-10, 40px) !important;
+    height: var(--size-10, 40px) !important;
+    line-height: var(--line-sm, 1.25rem) !important; /* Or 1 if text is small */
+    padding-top: var(--spacing-sm, 0.5rem) !important;
+    padding-bottom: var(--spacing-sm, 0.5rem) !important;
+    box-sizing: border-box; /* Ensure padding is included in height */
+    display: flex;
+    align-items: center; /* Center text vertically inside textarea */
+}
+
+/* Ensure the HTML button wrapper aligns well */
+.sda-status-bar-row .html-button-wrapper {
+    display: flex;
+    align-items: center; /* Vertically center the button itself */
+    height: var(--size-10, 40px); /* Match button height */
+}
+.sda-status-bar-row .html-button-wrapper > div { /* Gradio often adds an extra div */
+    height: 100%;
+    display: flex;
+    align-items: center;
+}
+
+.sda-status-bar-row .html-button-wrapper button.gr-button-lg {
+    height: var(--size-10, 40px) !important; /* Ensure button takes this height */
+    min-height: var(--size-10, 40px) !important;
+    padding-top: 0 !important; /* Adjust padding if icon/text are not centered */
+    padding-bottom: 0 !important;
+    display: inline-flex;
+    align-items: center;
+}

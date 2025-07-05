@@ -413,8 +413,8 @@ No active tasks.
 
         with gr.Blocks(theme=gr.themes.Default(primary_hue="blue", secondary_hue="sky"), title="SDA Framework", css=control_panel_css, head=tailwind_cdn + modal_js + fontawesome_cdn + dynamic_updates_js_link) as demo:
             gr.Markdown("# Software Development Analytics")
-            with gr.Row(elem_classes="control-button-row"): # Add a class for potential styling of the row
-                status_output = gr.Textbox(label="Status", interactive=False, placeholder="Status messages will appear here...", scale=4)
+            with gr.Row(elem_classes="control-button-row sda-status-bar-row"): # Added sda-status-bar-row for CSS targeting
+                status_output = gr.Textbox(interactive=False, placeholder="Status messages will appear here...", scale=4, lines=1, show_label=False, container=False) # Removed label, added lines=1, show_label=False, container=False
                 # view_status_modal_btn = gr.Button("View Control Panel", scale=1) # Original button
                 # Attempting HTML button with icon for "View Control Panel"
                 view_status_modal_btn_html = gr.HTML(
