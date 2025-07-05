@@ -1,5 +1,30 @@
 // sda/static/js/dynamic_updates.js
 
+function createProgressBarHTMLForJS(uniquePrefix, progress, message, taskName) {
+    // This function mimics the structure of progress_bar.html template
+    // Ensure class names and structure match for consistent styling.
+    const progressText = message ? `${message} (${progress.toFixed(0)}%)` : `(${progress.toFixed(0)}%)`;
+    const taskNameDisplay = taskName ? `<span id="${uniquePrefix}-task-name" class="text-xs font-semibold text-gray-700 dark:text-gray-300 truncate pr-2" title="${taskName}">${taskName}</span>` : "";
+
+    return `
+        <div class="progress-wrapper mb-1">
+            ${taskName || message ? `
+            <p class="text-xs text-gray-600 dark:text-gray-400 mb-0.5 flex justify-between items-center">
+                ${taskNameDisplay}
+                <span id="${uniquePrefix}-progress-text" class="text-xxs whitespace-nowrap">${progressText}</span>
+            </p>` : `
+            <p class="text-xs text-gray-600 dark:text-gray-400 mb-0.5 flex justify-end items-center">
+                 <span id="${uniquePrefix}-progress-text" class="text-xxs whitespace-nowrap">${progressText}</span>
+            </p>
+            `}
+            <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                <div id="${uniquePrefix}-progress-bar" class="bg-blue-500 h-2 rounded-full transition-width duration-300 ease-out" style="width: ${progress}%"></div>
+            </div>
+        </div>
+    `;
+}
+
+
 // --- Dynamic Update Helper Functions ---
 function updateTextContent(elementId, text, isHtml = false) {
     const element = document.getElementById(elementId);
@@ -9,8 +34,6 @@ function updateTextContent(elementId, text, isHtml = false) {
         } else {
             if (element.innerText !== text) element.innerText = text;
         }
-    } else {
-        // console.warn(`Element not found for text update: ${elementId}`);
     }
 }
 
@@ -18,18 +41,12 @@ function updateElementClass(elementId, newClass) {
     const element = document.getElementById(elementId);
     if (element && element.className !== newClass) {
         element.className = newClass;
-    } else if (!element) {
-        // console.warn(`Element not found for class update: ${elementId}`);
     }
 }
 
 function updateProgressUI(uniquePrefix, progress, message, taskName) {
     const barElement = document.getElementById(uniquePrefix + '-progress-bar');
-    if (barElement) {
-        barElement.style.width = (progress || 0) + '%';
-    } else {
-        // console.warn(`Progress bar element not found: ${uniquePrefix}-progress-bar`);
-    }
+    if (barElement) barElement.style.width = (progress || 0) + '%';
 
     const textElement = document.getElementById(uniquePrefix + '-progress-text');
     if (textElement) {
@@ -37,17 +54,13 @@ function updateProgressUI(uniquePrefix, progress, message, taskName) {
         const currentMessage = message || "";
         const newText = `${currentMessage} (${currentProgress}%)`;
         if (textElement.innerText !== newText) textElement.innerText = newText;
-    } else {
-        // console.warn(`Progress text element not found: ${uniquePrefix}-progress-text`);
     }
 
     const taskNameEl = document.getElementById(uniquePrefix + '-task-name');
-    if (taskNameEl && taskName) {
-        if(taskNameEl.innerText !== taskName) taskNameEl.innerText = taskName;
-        if(taskNameEl.title !== taskName) taskNameEl.title = taskName;
-    } else if (taskNameEl && !taskName) { // Clear if no task name
-        if(taskNameEl.innerText !== "") taskNameEl.innerText = "";
-        if(taskNameEl.title !== "") taskNameEl.title = "";
+    if (taskNameEl) { // Update task name if element exists
+        const currentTaskName = taskName || "";
+        if(taskNameEl.innerText !== currentTaskName) taskNameEl.innerText = currentTaskName;
+        if(taskNameEl.title !== currentTaskName) taskNameEl.title = currentTaskName;
     }
 }
 
@@ -74,7 +87,6 @@ function updateMainTaskDetails(detailsData) {
         for (const [key, value] of sortedDetails) {
             listContent += `<li class="text-xs text-gray-600 dark:text-gray-400"><strong class="font-medium text-gray-700 dark:text-gray-300">${key}:</strong> <span class="detail-value">${value}</span></li>`;
         }
-        // Only update if content actually changes to avoid unnecessary DOM manipulation
         if (detailsList.innerHTML !== listContent) detailsList.innerHTML = listContent;
     } else {
         detailsCard.style.display = 'none';
@@ -94,33 +106,61 @@ function updateMainTaskError(errorMessage) {
     }
 }
 
-function updateSubTaskUI(st) {
-    const prefix = `sub-task-${st.id}`;
-    updateTextContent(`${prefix}-name`, st.name);
-    updateElementClass(`${prefix}-status-badge`, st.status_class); // status_class includes all necessary classes
-    updateTextContent(`${prefix}-status-badge`, st.status_text);
-    updateProgressUI(prefix, st.progress, st.message, st.name);
+function updateOrCreateSubTaskElement(subTaskData, container) {
+    const prefix = `sub-task-${subTaskData.id}`;
+    let subTaskElement = document.getElementById(prefix);
 
-    const iconEl = document.getElementById(`${prefix}-status-icon`)?.querySelector('i');
+    if (!subTaskElement) { // Create new sub-task element
+        const template = document.getElementById('sub-task-template-js');
+        if (!template) {
+            console.error("Sub-task JS template not found!");
+            return;
+        }
+        const clone = template.content.firstElementChild.cloneNode(true);
+        clone.id = prefix;
+
+        // Set initial static parts from data if needed, or rely on updateSubTaskUI
+        clone.querySelector('[data-id="name"]').textContent = subTaskData.name;
+        clone.querySelector('[data-id="name"]').title = subTaskData.name;
+
+        // Inject progress bar HTML
+        const progressBarContainer = clone.querySelector('[data-id="progress-bar-container"]');
+        if (progressBarContainer) {
+            progressBarContainer.innerHTML = createProgressBarHTMLForJS(prefix, subTaskData.progress, subTaskData.message, subTaskData.name);
+        }
+        container.appendChild(clone);
+        subTaskElement = clone; // Use the newly created element
+    }
+
+    // Update all dynamic parts of the sub-task element (new or existing)
+    updateTextContent(`${prefix}-name`, subTaskData.name); // Redundant if just created with name, but harmless
+    updateElementClass(`${prefix}-status-badge`, subTaskData.status_class);
+    updateTextContent(`${prefix}-status-badge`, subTaskData.status_text);
+
+    // Update progress bar parts if it was created by template (or re-verify if createProgressBarHTMLForJS was called)
+    // If createProgressBarHTMLForJS was used, its internal elements are already set.
+    // If the progress bar container was empty and then filled by createProgressBarHTMLForJS, this call updates it.
+    updateProgressUI(prefix, subTaskData.progress, subTaskData.message, subTaskData.name);
+
+    const iconEl = subTaskElement.querySelector(`[data-id="status-icon"] i`); // Use data-id from template
     if(iconEl){
-        let newIconClass = "fas text-sm "; // Base classes for icon
-        if(st.status_text === 'running') newIconClass += "fa-sync fa-spin text-blue-500";
-        else if(st.status_text === 'completed') newIconClass += "fa-check-circle text-green-500";
-        else if(st.status_text === 'pending') newIconClass += "fa-hourglass-start text-yellow-500";
-        else newIconClass += "fa-times-circle text-red-500"; // Default for failed or other
+        let newIconClass = "fas text-sm ";
+        if(subTaskData.status_text === 'running') newIconClass += "fa-sync fa-spin text-blue-500";
+        else if(subTaskData.status_text === 'completed') newIconClass += "fa-check-circle text-green-500";
+        else if(subTaskData.status_text === 'pending') newIconClass += "fa-hourglass-start text-yellow-500";
+        else newIconClass += "fa-times-circle text-red-500";
         if(iconEl.className !== newIconClass) iconEl.className = newIconClass;
     }
 
-    const subDetailsContainer = document.getElementById(`${prefix}-details-container`);
-    const subDetailsList = document.getElementById(`${prefix}-details-list`);
+    const subDetailsContainer = subTaskElement.querySelector(`[data-id="details-container"]`);
+    const subDetailsList = subTaskElement.querySelector(`[data-id="details-list"]`);
     if(subDetailsContainer && subDetailsList) {
-        if (st.details && Object.keys(st.details).length > 0) {
+        if (subTaskData.details && Object.keys(subTaskData.details).length > 0) {
             subDetailsContainer.style.display = '';
             let subListContent = '';
-            const sortedSubDetails = Object.entries(st.details).sort((a, b) => a[0].localeCompare(b[0]));
+            const sortedSubDetails = Object.entries(subTaskData.details).sort((a, b) => a[0].localeCompare(b[0]));
             for (const [key, value] of sortedSubDetails) {
-                 // Added class to value span for potential future individual updates
-                subListContent += `<li class="text-gray-500 dark:text-gray-400"><strong class="font-medium text-gray-600 dark:text-gray-300">${key}:</strong> <span class="detail-value-${st.id}-${key.replace(/[^a-zA-Z0-9-_]/g, '')}">${value}</span></li>`;
+                subListContent += `<li class="text-gray-500 dark:text-gray-400"><strong class="font-medium text-gray-600 dark:text-gray-300">${key}:</strong> <span class="detail-value-${subTaskData.id}-${key.replace(/[^a-zA-Z0-9-_]/g, '')}">${value}</span></li>`;
             }
             if(subDetailsList.innerHTML !== subListContent) subDetailsList.innerHTML = subListContent;
         } else {
@@ -132,20 +172,10 @@ function updateSubTaskUI(st) {
 
 // Main function to apply updates from js_update_data
 function applyJSUpdates(data) {
-    if (!data) {
-        // console.log("applyJSUpdates called with no data or null data");
-        return;
-    }
-    // console.log("Applying JS Updates:", JSON.stringify(data, null, 2));
+    if (!data) { return; }
 
     if (data.external_progress_bar) {
         const epb = data.external_progress_bar;
-        // The external progress bar's HTML is simple and fully rendered by Python via _create_html_progress_bar.
-        // Python's handle_polling decides whether to send a new HTML string for it.
-        // So, direct JS manipulation of external-progress-bar's parts might be redundant if Python always sends full HTML for it.
-        // However, if Python sends gr.update() for main_progress_bar, then this JS is needed.
-        // The Python code was changed to send gr.update() for main_progress_bar if HTML string is same.
-        // So these JS updates ARE needed for the external bar.
          updateProgressUI('external', epb.progress, epb.message, epb.task_name);
     }
 
@@ -157,7 +187,10 @@ function applyJSUpdates(data) {
         }
 
         const mainTaskData = cp.main_task;
-        if (mainTaskData) { // If there's an active main task
+        const mainTaskDisplayContainer = document.getElementById('main-task-name-heading'); // A parent of main task specific elements
+
+        if (mainTaskData) {
+            if(mainTaskDisplayContainer) mainTaskDisplayContainer.style.display = ''; // Ensure parent is visible
             updateTextContent('main-task-name-value', mainTaskData.name);
             updateElementClass('main-task-status-badge', mainTaskData.status_class);
             updateTextContent('main-task-status-badge', mainTaskData.status_text);
@@ -166,28 +199,33 @@ function applyJSUpdates(data) {
             updateTextContent('main-task-time-duration', mainTaskData.time_duration || 'N/A');
             updateMainTaskDetails(mainTaskData.details);
             updateMainTaskError(mainTaskData.error_message);
+        } else { // No main task data, Python should have sent full HTML for "No Task"
+             if(mainTaskDisplayContainer) {
+                // If Python did NOT send a full HTML update and we need to hide the main task display via JS
+                // This part is tricky if Python's full HTML refresh is the primary way to show "No Task"
+             }
         }
-        // Note: If mainTaskData is null (no active task), Python's full HTML render of status_details_html
-        // (from _create_status_progress_html(None)) is expected to correctly show the "No active task" message.
-        // JS doesn't need to explicitly hide main task sections if Python handles the full structural change.
 
-
-        // Sub-task updates
-        // This simplified version assumes Python re-renders the sub-task list if tasks are added/removed.
-        // This JS part will only update values of *existing* sub-task DOM elements.
         const subTasksData = cp.sub_tasks || [];
-        subTasksData.forEach(st => {
-            // Check if the sub-task element exists before trying to update it
-            if (document.getElementById(`sub-task-${st.id}`)) {
-                updateSubTaskUI(st);
-            } else {
-                // console.warn(`Sub-task element not found for ID: sub-task-${st.id}. Python full render should handle this.`);
-            }
-        });
-        // TODO: More robust sub-task handling: if len(subTasksData) != number of rendered sub-task divs,
-        // it implies Python should have sent a full HTML update for status_details_html.
-        // If Python *didn't* send a full update but sub-task list changed, JS would need to add/remove divs.
-        // For now, we rely on Python's full update for structural changes in sub-task list.
+        const subTaskContainer = document.getElementById('main-task-children-container')?.querySelector('.space-y-2');
+
+        if (subTaskContainer) {
+            const existingSubTaskElements = new Map();
+            subTaskContainer.querySelectorAll('.sub-task-card[id^="sub-task-"]').forEach(el => {
+                existingSubTaskElements.set(el.id, el);
+            });
+
+            const dataSubTaskIds = new Set(subTasksData.map(st => `sub-task-${st.id}`));
+
+            // Update existing or add new
+            subTasksData.forEach(stData => {
+                updateOrCreateSubTaskElement(stData, subTaskContainer);
+                existingSubTaskElements.delete(`sub-task-${stData.id}`); // Remove from map as it's handled
+            });
+
+            // Remove old ones not in new data
+            existingSubTaskElements.forEach(el => el.remove());
+        }
     }
 }
 
@@ -198,14 +236,11 @@ window.addEventListener('DOMContentLoaded', (event) => {
         const observer = new MutationObserver(function(mutationsList, observer) {
             for(const mutation of mutationsList) {
                 if (mutation.type === 'childList' || mutation.type === 'characterData' || mutation.type === 'attributes') {
-                    // Check if the component itself or its content has changed
-                    // The actual JSON data is usually in a <pre> tag inside the Gradio component's wrapper
                     let rawText = "";
-                    const preElement = targetNode.querySelector('pre');
+                    const preElement = targetNode.querySelector('pre'); // Gradio JSON often has a <pre>
                     if (preElement) {
                         rawText = preElement.innerText || preElement.textContent;
                     } else {
-                         // Fallback for older Gradio or if structure changes
                         rawText = targetNode.innerText || targetNode.textContent;
                     }
 
@@ -217,15 +252,13 @@ window.addEventListener('DOMContentLoaded', (event) => {
                             console.error('Error parsing JS update data:', e, "Raw text:", rawText);
                         }
                     } else {
-                        // console.log("JSON data is null or empty, skipping update.");
-                         applyJSUpdates(null); // Call with null to potentially clear/hide elements if needed
+                         applyJSUpdates(null);
                     }
                     break;
                 }
             }
         });
         observer.observe(targetNode, { childList: true, characterData: true, subtree: true, attributes: true });
-        // console.log("JS Update Observer attached to js_update_data_json.");
     } else {
         console.warn('JS Update Data JSON element (js_update_data_json) not found on DOMContentLoaded.');
     }
@@ -248,12 +281,10 @@ function toggleCollapsible(contentId, chevronId) {
         chevronIcon.classList.add('fa-chevron-down');
     } else {
         contentElement.style.opacity = '1';
-        // Set max-height to scrollHeight for animation
-        // Ensure content is visible to calculate scrollHeight correctly if it was display:none
         const prevDisplay = contentElement.style.display;
-        contentElement.style.display = 'block'; // Temporarily ensure it's block for scrollHeight
+        contentElement.style.display = 'block';
         contentElement.style.maxHeight = contentElement.scrollHeight + 'px';
-        contentElement.style.display = prevDisplay; // Restore if needed, though class handles visibility
+        if(prevDisplay && prevDisplay !== 'block') contentElement.style.display = prevDisplay;
 
         contentElement.dataset.isOpen = 'true';
         chevronIcon.classList.remove('fa-chevron-down');
@@ -261,15 +292,13 @@ function toggleCollapsible(contentId, chevronId) {
 
         setTimeout(() => {
             if (contentElement.dataset.isOpen === 'true') {
-                 // Allow content to expand further if its internal size changes
-                contentElement.style.maxHeight = 'none'; // Or a very large fixed value like '500vh'
+                contentElement.style.maxHeight = 'none';
             }
-        }, 350); // Should be slightly longer than CSS transition duration
+        }, 350);
     }
 }
 
 document.addEventListener('DOMContentLoaded', function() {
-    // Initialize collapsible task section
     const initialTaskContent = document.getElementById('task-activity-content');
     if (initialTaskContent) {
         initialTaskContent.dataset.isOpen = 'true';
@@ -279,18 +308,14 @@ document.addEventListener('DOMContentLoaded', function() {
             initialChevron.classList.remove('fa-chevron-down');
             initialChevron.classList.add('fa-chevron-up');
         }
-        // Set max-height after a brief moment to allow rendering, ensuring scrollHeight is accurate
-        // And only if it's meant to be open
         setTimeout(() => {
             if (initialTaskContent.dataset.isOpen === 'true') {
                  if (initialTaskContent.scrollHeight > 0) {
                     initialTaskContent.style.maxHeight = initialTaskContent.scrollHeight + 'px';
                  } else {
-                    // Fallback if scrollHeight is 0 (e.g. if initially no task content)
-                    // but it's supposed to be open for future content.
-                    initialTaskContent.style.maxHeight = '500vh'; // Large enough
+                    initialTaskContent.style.maxHeight = '500vh';
                  }
-            } else { // Ensure it's visually collapsed if dataset.isOpen is false
+            } else {
                 initialTaskContent.style.maxHeight = '0px';
                 initialTaskContent.style.opacity = '0';
             }

@@ -357,6 +357,11 @@ No active tasks.
             task_log_offset_state = gr.State(0)
             current_task_log_html_state = gr.State("")
             js_update_data_output = gr.JSON(visible=False, label="JS Update Data", elem_id="js_update_data_json")
+            # States for tracking Control Panel structure
+            last_main_task_id_state = gr.State(None)
+            last_sub_task_ids_state = gr.State([])
+            last_main_task_has_details_state = gr.State(False)
+            last_main_task_has_error_state = gr.State(False)
 
 
             with gr.Column(elem_id="addRepoModal", elem_classes="modal-background"):
@@ -462,18 +467,23 @@ No active tasks.
             )
 
 
-            poll_inputs = [repo_id_state, branch_state, last_status_text_state, last_progress_html_state]
-            # Add branch_dropdown and branch_state to the outputs of handle_polling
-            # The old task_log_output (Textbox) is removed from poll_outputs as it's replaced by full_task_log_html (HTML)
-            # full_task_log_html is updated by its own handlers now, not by polling.
+            poll_inputs = [
+                repo_id_state, branch_state,
+                last_status_text_state, last_progress_html_state,
+                # New state inputs for polling structural changes
+                last_main_task_id_state, last_sub_task_ids_state,
+                last_main_task_has_details_state, last_main_task_has_error_state
+            ]
             poll_outputs = [
-                status_output, status_details_html, # task_log_output removed
+                status_output, status_details_html,
                 dead_code_df, duplicate_code_df, stats_df, lang_df,
                 last_status_text_state, main_progress_bar, progress_row, last_progress_html_state,
                 branch_dropdown, branch_state,
-                js_update_data_output # Added new JSON output for JS updates
+                js_update_data_output,
+                # New state outputs from polling
+                last_main_task_id_state, last_sub_task_ids_state,
+                last_main_task_has_details_state, last_main_task_has_error_state
             ] + self.task_buttons
-            # Old task_log_output also needs to be removed from handle_polling return tuple
             timer.tick(self.handle_polling, poll_inputs, poll_outputs)
 
 
@@ -572,16 +582,29 @@ No active tasks.
             # Yield the entire, correctly formatted history object
             yield history
 
-    def handle_polling(self, repo_id: int, branch: str, last_status_text: str, last_progress_html: str) -> Tuple:
+    def handle_polling(
+        self, repo_id: int, branch: str,
+        last_status_text: str, last_progress_html: str,
+        # New state inputs
+        last_main_task_id: Optional[int],
+        last_sub_task_ids: List[int],
+        last_main_task_has_details: bool,
+        last_main_task_has_error: bool
+    ) -> Tuple:
         branch_dropdown_update = gr.update()
         branch_state_update = gr.update()
+
+        # Initialize new state outputs
+        new_last_main_task_id = last_main_task_id
+        new_last_sub_task_ids = list(last_sub_task_ids) # Copy
+        new_last_main_task_has_details = last_main_task_has_details
+        new_last_main_task_has_error = last_main_task_has_error
 
         js_update_data = {
             "control_panel": {"main_task": None, "sub_tasks": [], "hardware_info": None},
             "external_progress_bar": {"task_name": "Idle", "progress": 0.0, "message": "Initializing..."}
         }
 
-        # Hardware info for JS (updated regardless of task)
         current_cpu_load = psutil.cpu_percent(interval=None)
         current_ram_percent = psutil.virtual_memory().percent
         current_ram_used_gb = psutil.virtual_memory().used / (1024**3)
@@ -592,47 +615,67 @@ No active tasks.
             "ram_absolute_text": f"{current_ram_used_gb:.1f} / {current_ram_total_gb:.1f} GB"
         }
 
+        full_html_update_needed_for_modal = False
+
         if not repo_id:
             js_update_data["external_progress_bar"]["message"] = "No repository selected"
-            # Note: _create_html_progress_bar was changed to accept unique_prefix.
-            # The old version (before this whole plan) did not.
-            # Assuming the version of _create_html_progress_bar is the one that expects unique_prefix.
             default_ext_progress_html = self._create_html_progress_bar(0, "No repository selected", "Idle", unique_prefix="external")
-            no_repo_status_html = self._create_status_progress_html(None)
 
-            no_repo_updates = (
-                "No repository selected.",
-                gr.update(value=no_repo_status_html) if no_repo_status_html != last_status_text else gr.update(),
+            if last_main_task_id is not None: # Was showing a task, now isn't
+                full_html_update_needed_for_modal = True
+                new_last_main_task_id = None
+                new_last_sub_task_ids = []
+                new_last_main_task_has_details = False
+                new_last_main_task_has_error = False
+
+            current_modal_html = self._create_status_progress_html(None)
+            status_details_update = gr.update(value=current_modal_html) if full_html_update_needed_for_modal or current_modal_html != last_status_text else gr.update()
+            new_last_status_text_for_state = current_modal_html
+
+            no_repo_updates_tuple = (
+                "No repository selected.", status_details_update,
                 gr.update(), gr.update(), gr.update(), gr.update(),
-                no_repo_status_html,
+                new_last_status_text_for_state,
                 gr.update(value=default_ext_progress_html) if default_ext_progress_html != last_progress_html else gr.update(),
                 gr.update(visible=False),
                 default_ext_progress_html,
                 branch_dropdown_update, branch_state_update,
-                js_update_data
+                js_update_data,
+                # New state outputs
+                new_last_main_task_id, new_last_sub_task_ids, new_last_main_task_has_details, new_last_main_task_has_error
             )
-            return no_repo_updates + self._get_task_button_updates(True)
+            return no_repo_updates_tuple + self._get_task_button_updates(True)
         
         task = self.framework.get_latest_task(repo_id)
 
         if not task:
             js_update_data["external_progress_bar"]["message"] = "No active tasks"
             default_ext_progress_html = self._create_html_progress_bar(0, "No active tasks", "Idle", unique_prefix="external")
-            no_task_status_html = self._create_status_progress_html(None)
 
-            no_task_updates = (
-                "No tasks found for this repository.",
-                gr.update(value=no_task_status_html) if no_task_status_html != last_status_text else gr.update(),
+            if last_main_task_id is not None: # Was showing a task, now isn't
+                full_html_update_needed_for_modal = True
+                new_last_main_task_id = None
+                new_last_sub_task_ids = []
+                new_last_main_task_has_details = False
+                new_last_main_task_has_error = False
+
+            current_modal_html = self._create_status_progress_html(None)
+            status_details_update = gr.update(value=current_modal_html) if full_html_update_needed_for_modal or current_modal_html != last_status_text else gr.update()
+            new_last_status_text_for_state = current_modal_html
+
+            no_task_updates_tuple = (
+                "No tasks found for this repository.", status_details_update,
                 gr.update(), gr.update(), gr.update(), gr.update(),
-                no_task_status_html,
+                new_last_status_text_for_state,
                 gr.update(value=default_ext_progress_html) if default_ext_progress_html != last_progress_html else gr.update(),
-                gr.update(visible=False),
-                default_ext_progress_html,
+                gr.update(visible=False), default_ext_progress_html,
                 branch_dropdown_update, branch_state_update,
-                js_update_data
+                js_update_data,
+                new_last_main_task_id, new_last_sub_task_ids, new_last_main_task_has_details, new_last_main_task_has_error
             )
-            return no_task_updates + self._get_task_button_updates(True)
+            return no_task_updates_tuple + self._get_task_button_updates(True)
 
+        # --- Task exists, populate js_update_data and determine updates ---
         status_msg = f"Task '{task.name}': {task.message} ({task.progress:.0f}%)"
         is_running = task.status in ['running', 'pending']
 
@@ -652,16 +695,28 @@ No active tasks.
         main_task_status_class += " px-3 py-1 text-xs font-semibold rounded-full"
 
         js_update_data["control_panel"]["main_task"] = {
-            "name": task.name,
-            "status_text": task.status,
-            "status_class": main_task_status_class,
-            "progress": task.progress,
-            "message": task.message,
-            "time_elapsed": elapsed_str,
-            "time_duration": duration_str,
+            "name": task.name, "status_text": task.status, "status_class": main_task_status_class,
+            "progress": task.progress, "message": task.message,
+            "time_elapsed": elapsed_str, "time_duration": duration_str,
             "details": task.details if task.details else {},
             "error_message": task.error_message,
         }
+
+        current_sub_task_ids = sorted([st.id for st in task.children]) if task.children else []
+        current_main_task_has_details = bool(task.details)
+        current_main_task_has_error = bool(task.error_message)
+
+        # Check for structural changes in the modal content
+        if (task.id != last_main_task_id or
+            set(current_sub_task_ids) != set(last_sub_task_ids) or # Order doesn't matter for set comparison, but JS might need sorted IDs
+            current_main_task_has_details != last_main_task_has_details or
+            current_main_task_has_error != last_main_task_has_error):
+            full_html_update_needed_for_modal = True
+
+        new_last_main_task_id = task.id
+        new_last_sub_task_ids = current_sub_task_ids
+        new_last_main_task_has_details = current_main_task_has_details
+        new_last_main_task_has_error = current_main_task_has_error
 
         sub_task_status_classes_map = {
             'running': "bg-blue-100 text-blue-700 dark:bg-blue-600 dark:text-blue-100",
@@ -676,22 +731,18 @@ No active tasks.
             for child_task in sorted(task.children, key=lambda t: t.started_at or datetime.min.replace(tzinfo=timezone.utc)):
                 child_status_class = sub_task_status_classes_map.get(child_task.status, default_sub_task_class_base) + sub_task_badge_common_classes
                 js_update_data["control_panel"]["sub_tasks"].append({
-                    "id": child_task.id,
-                    "name": child_task.name,
-                    "status_text": child_task.status,
-                    "status_class": child_status_class,
-                    "progress": child_task.progress,
-                    "message": child_task.message,
-                    "details": child_task.details if child_task.details else {}
+                    "id": child_task.id, "name": child_task.name, "status_text": child_task.status,
+                    "status_class": child_status_class, "progress": child_task.progress,
+                    "message": child_task.message, "details": child_task.details if child_task.details else {}
                 })
-        
-        current_modal_html_from_python = self._create_status_progress_html(task)
-        if current_modal_html_from_python != last_status_text:
-            status_details_update = gr.update(value=current_modal_html_from_python)
-            new_last_status_text_for_state = current_modal_html_from_python
-        else:
+
+        if full_html_update_needed_for_modal:
+            current_modal_html = self._create_status_progress_html(task)
+            status_details_update = gr.update(value=current_modal_html)
+            new_last_status_text_for_state = current_modal_html
+        else: # No structural change, only values might have changed. JS will handle.
             status_details_update = gr.update()
-            new_last_status_text_for_state = last_status_text
+            new_last_status_text_for_state = last_status_text # Keep old HTML state if not re-rendering
 
         current_ext_progress_html = self._create_html_progress_bar(
             js_update_data["external_progress_bar"]["progress"],
@@ -699,12 +750,8 @@ No active tasks.
             js_update_data["external_progress_bar"]["task_name"],
             unique_prefix="external"
         )
-        if current_ext_progress_html != last_progress_html:
-             main_progress_update = gr.update(value=current_ext_progress_html)
-             new_last_progress_html_for_state = current_ext_progress_html
-        else:
-            main_progress_update = gr.update()
-            new_last_progress_html_for_state = last_progress_html
+        main_progress_update = gr.update(value=current_ext_progress_html) if current_ext_progress_html != last_progress_html else gr.update()
+        new_last_progress_html_for_state = current_ext_progress_html if current_ext_progress_html != last_progress_html else last_progress_html
 
         progress_row_update = gr.update(visible=is_running)
         button_updates = self._get_task_button_updates(interactive=not is_running)
@@ -745,7 +792,9 @@ No active tasks.
             main_progress_update, progress_row_update,
             new_last_progress_html_for_state,
             branch_dropdown_update, branch_state_update,
-            js_update_data
+            js_update_data,
+            # New state outputs
+            new_last_main_task_id, new_last_sub_task_ids, new_last_main_task_has_details, new_last_main_task_has_error
         ) + button_updates
 
     def handle_initial_load(self) -> Tuple[gr.update, gr.update, Optional[int], Optional[str], List[Dict[str, str]], int, str]:
