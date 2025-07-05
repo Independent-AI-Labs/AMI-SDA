@@ -129,7 +129,13 @@ class AIConfig:
 class IngestionConfig:
     """Configuration for the ingestion and chunking process."""
     # Maps file extensions to their tree-sitter language name.
-    LANGUAGE_MAPPING = {'.py': 'python', '.js': 'javascript', '.ts': 'typescript', '.java': 'java', }
+    LANGUAGE_MAPPING = {
+        '.py': 'python', '.js': 'javascript', '.ts': 'typescript', '.java': 'java',
+        '.sh': 'bash', '.bash': 'bash',
+        '.md': 'markdown', '.markdown': 'markdown',
+        '.html': 'html', '.htm': 'html',
+        '.css': 'css',
+    }
     LANGUAGE_SETTINGS = {
         'python': {
             'CHUNKABLE_NODES': {'function_definition', 'class_definition'},
@@ -163,12 +169,37 @@ class IngestionConfig:
             'COMPLEXITY_NODES': {'if_statement', 'for_statement', 'for_in_statement', 'while_statement', 'do_statement',
                                  'switch_statement', 'catch_clause', 'throw_statement', 'await_expression',
                                  'ternary_expression'}
+        },
+        'bash': {
+            'CHUNKABLE_NODES': {'function_definition', 'command_substitution'}, # `command` itself is too broad.
+            'IDENTIFIER_NODES': {'function_definition', 'variable_assignment', 'command_name'},
+            'COMPLEXITY_NODES': {'if_statement', 'for_statement', 'while_statement', 'case_statement', 'pipeline'}
+        },
+        'markdown': {
+            # Markdown chunking might be better handled by semantic splitting or custom logic.
+            # These are placeholders if tree-sitter based chunking is attempted.
+            'CHUNKABLE_NODES': {'section', 'paragraph', 'block_quote', 'list_item', 'fenced_code_block'},
+            'IDENTIFIER_NODES': {'link_destination', 'image_description', 'atx_heading', 'setext_heading'},
+            'COMPLEXITY_NODES': {'fenced_code_block'} # e.g. if it contains complex code
+        },
+        'html': {
+            'CHUNKABLE_NODES': {'element', 'script_element', 'style_element'},
+            'IDENTIFIER_NODES': {'attribute_value', 'tag_name', 'script_element', 'style_element'}, # id/class often in attribute_value
+            'COMPLEXITY_NODES': {'script_element', 'style_element'}
+        },
+        'css': {
+            'CHUNKABLE_NODES': {'rule_set', 'style_rule', 'media_statement'},
+            'IDENTIFIER_NODES': {'class_selector', 'id_selector', 'custom_property_name', 'tag_name', 'feature_name'},
+            'COMPLEXITY_NODES': {'calc_function', 'media_query', 'supports_condition'}
         }
     }
     DEFAULT_IGNORE_DIRS = {".git", "__pycache__", "node_modules", "dist", "build", ".venv", "venv", ".idea", ".vscode",
                            "target", "docs"}
     DEFAULT_IGNORE_FILES = {".DS_Store"}
-    SUPPORTED_EXTENSIONS = {".py", ".md", ".txt", ".js", ".ts", ".java"}
+    SUPPORTED_EXTENSIONS = {
+        ".py", ".md", ".txt", ".js", ".ts", ".java",  # Existing
+        ".sh", ".bash", ".markdown", ".html", ".htm", ".css"  # New
+    }
     TOKENIZER_MODEL = "cl100k_base"
     MAX_CHUNK_TOKENS = AIConfig.get_active_embedding_config().max_tokens
     CHUNK_OVERLAP_RATIO = 0.1

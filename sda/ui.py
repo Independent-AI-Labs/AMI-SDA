@@ -1224,18 +1224,38 @@ No active tasks.
     def _generate_embedding_html(self, file_content: str, file_path_for_display: str) -> str: # Renamed arg
         logging.info(f"[_generate_embedding_html] Called for file: {file_path_for_display}. Content length: {len(file_content if file_content else '')}")
 
-        if file_content is not None and (file_content.startswith("// Error:") or file_content.startswith("Error:")):
-            # Style error messages differently to make them visible
+        if file_content is not None and file_content.startswith("Error: File"):
+            # Specific handling for "File not found in the database" error from framework.get_file_content_by_path
+            return f"""<div style='padding:10px; border:1px solid red; color: red; background-color: #ffe0e0; font-family:monospace; height: 580px; overflow-y:auto;'>
+                       <h3>Data Not Available</h3>
+                       <p>{file_content}</p>
+                       <p>This means the file's metadata was not found in the database for the current branch.
+                       This can happen if the file was not included in the last analysis/ingestion of this branch,
+                       or if it's a new file not yet processed.</p>
+                       <p><strong>Suggestion:</strong> Try re-analyzing the branch from the 'Repository & Agent' tab.</p>
+                       </div>"""
+        elif file_content is not None and (file_content.startswith("// Error:") or file_content.startswith("Error:")):
+            # Generic error from file reading or other issues
             return f"""<div style='padding:10px; border:1px solid red; color: red; background-color: #ffe0e0; font-family:monospace; height: 580px; overflow-y:auto;'>
                        <h3>Embedding View Error</h3><p>{file_content}</p>
                        </div>"""
-        if not file_path_for_display and (file_content is None or file_content == ""): # Check if both are empty/None
+
+        if not file_path_for_display and (file_content is None or file_content == ""):
              return "<div style='padding:10px; border:1px solid #ccc; height: 580px; overflow-y:auto;'><h2>Embedding Tab</h2><p>No file selected or content is empty.</p></div>"
 
-        # Return extremely simple HTML for testing the update mechanism
-        test_html = f"<h2>Embedding Test for {Path(file_path_for_display).name if file_path_for_display else 'Unknown File'}</h2><p>If you see this, HTML rendering for Embedding tab works.</p><p>Displaying first 200 chars of content:</p><pre style='white-space:pre-wrap; background:#f0f0f0; padding:5px;'>{str(file_content)[:200]}{'...' if len(str(file_content)) > 200 else ''}</pre>"
-        logging.info(f"[_generate_embedding_html] Returning diagnostic HTML for {file_path_for_display}.")
-        return test_html
+        # Placeholder for actual embedding visualization
+        placeholder_html = f"""
+        <div style='padding:10px; border:1px solid #ccc; height: 580px; overflow-y:auto;'>
+            <h2>Embedding Visualization for: {Path(file_path_for_display).name if file_path_for_display else 'Unknown File'}</h2>
+            <p><strong>Note:</strong> This is a placeholder. Actual interactive node embedding visualization is not yet implemented.</p>
+            <p>Once implemented, this view will display a breakdown of Abstract Syntax Tree (AST) nodes, their relationships, and associated embeddings for the selected file.</p>
+            <hr>
+            <h4>File Content Snippet:</h4>
+            <pre style='white-space:pre-wrap; background:#f0f0f0; padding:5px; max-height: 300px; overflow-y:auto;'>{str(file_content)[:1000]}{'...' if len(str(file_content)) > 1000 else ''}</pre>
+        </div>
+        """
+        logging.info(f"[_generate_embedding_html] Returning placeholder HTML for embedding visualization for {file_path_for_display}.")
+        return placeholder_html
 
     def handle_populate_change_analysis_inputs(self, repo_id: int, branch: str) -> gr.update:
         # Returns update for: branch_compare_older_version_ca
@@ -1370,9 +1390,11 @@ No active tasks.
             lang_fig = px.pie(lang_df_for_plot, names="Language", values="Files",
                               title="Language Breakdown (by File Count)",
                               hole=0.3) # Optional: for a donut chart effect
-            lang_fig.update_traces(textposition='inside', textinfo='percent+label')
+            # Removed in-pie labels for better readability with many languages
+            lang_fig.update_traces(textinfo='none') # Removes text from slices
+            lang_fig.update_layout(showlegend=True) # Ensure legend is visible
 
-        return stats_html, lang_fig # Corrected: stats_fig to stats_html
+        return stats_html, lang_fig
 
     def handle_run_dead_code(self, repo_id: int, branch: str) -> Tuple:
         if not repo_id or not branch:
