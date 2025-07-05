@@ -5,7 +5,7 @@ import logging
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple, Generator
+from typing import List, Dict, Any, Optional, Tuple, Generator, Callable
 
 from sqlalchemy.dialects.postgresql import insert
 import tiktoken # For _persist_chunks_for_schema tokenizer
@@ -233,7 +233,3 @@ def _process_graph_edges_streaming(db_manager: DatabaseManager, definitions_file
         total_edges += len(edge_batch)
     logging.info(f"Created {total_edges} graph edges from {processed_call_files} call files")
     return total_edges
-
-# Placeholder for StatusUpdater type if not defined elsewhere or to avoid circular dependency
-from typing import Callable
-StatusUpdater = Callable[[int, str, float, Optional[str], Optional[Dict[str, Any]]], None]
