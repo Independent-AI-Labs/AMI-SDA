@@ -217,3 +217,33 @@ class GitService:
             self._execute_command(repo_path, ['restore', '--staged', '--', file_path])
             # Then, discard changes in the working directory.
             return self._execute_command(repo_path, ['restore', '--', file_path]) is not None
+
+    def get_all_files_in_branch(self, repo_path_str: str, branch_name: Optional[str] = None) -> List[str]:
+        """
+        Lists all files in the specified branch (or current HEAD if no branch specified).
+        Returns a list of relative file paths.
+        """
+        with self.lock:
+            repo_path = Path(repo_path_str)
+            target_tree_ish = branch_name if branch_name else 'HEAD'
+
+            # Ensure the branch is available locally if specified
+            if branch_name:
+                # This is a simplification. A robust check would involve `git branch --list`
+                # and potentially `git fetch origin branch_name` if not found.
+                # For now, assume `git ls-tree` can handle valid branch names that exist.
+                pass
+
+            # Use `git ls-tree` to list all files in the given tree-ish (branch or commit)
+            # -r: recurse into subtrees
+            # --name-only: show only file names
+            # HEAD: can be replaced with a branch name or commit SHA
+            command = ['ls-tree', '-r', '--name-only', target_tree_ish]
+            output = self._execute_command(repo_path, command)
+
+            if output is None:
+                logging.error(f"Failed to list files for tree-ish '{target_tree_ish}' in {repo_path}")
+                return [] # Return empty list on error
+
+            files = [line.strip() for line in output.split('\n') if line.strip()]
+            return files

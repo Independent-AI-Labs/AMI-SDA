@@ -14,6 +14,7 @@ import asyncio # Added for asyncio.create_task
 import psutil # For CPU load and RAM
 import re # For _extract_progress_from_html
 from datetime import datetime, timezone # For time elapsed
+import logging # Added import for logging
 try:
     import torch
 except ImportError:
@@ -413,8 +414,8 @@ No active tasks.
 
         with gr.Blocks(theme=gr.themes.Default(primary_hue="blue", secondary_hue="sky"), title="SDA Framework", css=control_panel_css, head=tailwind_cdn + modal_js + fontawesome_cdn + dynamic_updates_js_link) as demo:
             gr.Markdown("# Software Development Analytics")
-            with gr.Row(elem_classes="control-button-row"): # Add a class for potential styling of the row
-                status_output = gr.Textbox(label="Status", interactive=False, placeholder="Status messages will appear here...", scale=4)
+            with gr.Row(elem_classes="control-button-row sda-status-bar-row"): # Added sda-status-bar-row for CSS targeting
+                status_output = gr.Textbox(interactive=False, placeholder="Status messages will appear here...", scale=4, lines=1, show_label=False, container=False) # Removed label, added lines=1, show_label=False, container=False
                 # view_status_modal_btn = gr.Button("View Control Panel", scale=1) # Original button
                 # Attempting HTML button with icon for "View Control Panel"
                 view_status_modal_btn_html = gr.HTML(
@@ -513,23 +514,64 @@ No active tasks.
                             duplicate_code_df = gr.DataFrame(headers=["File A", "Lines A", "File B", "Lines B", "Similarity"], interactive=False,
                                                              max_height=400)
 
-                with gr.TabItem("Code Browser & VC", id=2):
+                with gr.TabItem("Document Comprehension", id=2):
                     with gr.Row():
-                        with gr.Column(scale=1):
-                            gr.Markdown('#### <i class="fab fa-git-alt mr-1.5"></i>Git Status') # Icons in Markdown are OK
-                            modified_files_dropdown = gr.Dropdown(label="Select Modified File to View", interactive=True)
-                            revert_file_btn = gr.Button("Revert File")
-                            commit_message = gr.Textbox(label="Commit Message", placeholder="Enter commit message...")
-                            commit_btn = gr.Button("Commit All")
-                        with gr.Column(scale=3):
-                            code_viewer = gr.Code(label="File Content / Diff", language=None, interactive=False, visible=True)
-                            image_viewer = gr.Image(label="Image Content", interactive=False, visible=False)
+                        with gr.Column(scale=1): # File Explorer Column
+                            gr.Markdown("#### File Explorer")
+                            from sda.config import WORKSPACE_DIR as SDA_WORKSPACE_DIR
+                            file_explorer = gr.FileExplorer(
+                                root_dir=str(SDA_WORKSPACE_DIR),
+                                glob="**/*",
+                                label="Repository Files",
+                                interactive=True,
+                                file_count="single",
+                                elem_id="sda_file_explorer"
+                            )
+                        with gr.Column(scale=3): # Content Column
+                            with gr.Tabs() as content_tabs:
+                                with gr.TabItem("Embedding", id="embedding_tab"):
+                                    gr.Markdown("### Embedding View (Interactive HTML Node Breakdown)")
+                                    embedding_html_viewer = gr.HTML(label="Node Embedding Visualization")
+                                    # Placeholder for actual content
+                                with gr.TabItem("Change Analysis", id="change_analysis_tab"):
+                                    gr.Markdown("### Change Analysis (LLM Generated)")
+                                    with gr.Accordion("Analyze Current Changes for Selected File", open=True): # Title updated
+                                        gr.Markdown("Analyzes uncommitted changes for the file selected in the File Explorer (vs. current branch HEAD).")
+                                        # current_modified_files_dropdown_ca REMOVED from here
+                                        analyze_selected_file_current_changes_btn = gr.Button("Analyze Current Changes for Selected File", variant="secondary") # Renamed button
 
-            self.task_buttons = [analyze_branch_btn, analyze_dead_code_btn, analyze_duplicates_btn, add_repo_submit_btn, commit_btn]
+                                    with gr.Accordion("Compare Selected File with its Older Version", open=False): # Title emphasizes selected file
+                                        gr.Markdown("Compare the file selected in File Explorer (from current branch HEAD) with an older version of itself.")
+                                        # file_to_compare_dropdown_ca was already removed conceptually.
+
+                                        with gr.Row():
+                                            branch_compare_older_version_ca = gr.Dropdown(label="Branch of Older Version", interactive=True, info="Select branch of the older version.")
+                                            commit_older_version_ca = gr.Textbox(label="Older Version (Commit SHA/Tag)", placeholder="HEAD or commit SHA...", scale=1)
+
+                                        compare_with_older_btn = gr.Button("Analyze Difference with Older Version", variant="secondary")
+
+                                    change_analysis_output = gr.Markdown("LLM analysis of changes will appear here.")
+
+                                with gr.TabItem("Raw Diff", id="raw_diff_tab"):
+                                    gr.Markdown("### Raw File Diff")
+                                    code_viewer = gr.Code(label="Raw Diff Output", language=None, interactive=False, visible=True)
+                                    image_viewer = gr.Image(label="Image Content", interactive=False, visible=False)
+
+            self.task_buttons = [analyze_branch_btn, analyze_dead_code_btn, analyze_duplicates_btn, add_repo_submit_btn,
+                                 analyze_selected_file_current_changes_btn, compare_with_older_btn] # Added new CA buttons
             timer = gr.Timer(2)
 
-            all_insight_outputs = [stats_cards_html, lang_plot] # Updated: stats_plot to stats_cards_html
-            git_panel_outputs = [modified_files_dropdown, code_viewer, image_viewer, selected_file_state]
+            all_insight_outputs = [stats_cards_html, lang_plot]
+            doc_comp_outputs = [ # Updated to 7 items
+                file_explorer,
+                embedding_html_viewer,
+                change_analysis_output,
+                code_viewer,
+                image_viewer,
+                selected_file_state,
+                branch_compare_older_version_ca,
+            ]
+
 
             # Define these components early if they are needed by reference in poll_outputs
             # For this specific fix, we will pass them to handle_polling and it will return gr.update() for them.
@@ -542,10 +584,11 @@ No active tasks.
             # The task_log_output is now full_task_log_html
             demo.load(
                 self.handle_initial_load,
-                outputs=[repo_dropdown, branch_dropdown, repo_id_state, branch_state, chatbot] # Adjusted for removed states
+                outputs=[repo_dropdown, branch_dropdown, repo_id_state, branch_state, chatbot]
             ).then(
-                # Removed .then(self.handle_load_more_tasks, ...)
-                self.update_all_panels, [repo_id_state, branch_state], all_insight_outputs + git_panel_outputs
+                self.update_all_panels,
+                [repo_id_state, branch_state], # No current_path_state needed for update_all_panels now
+                all_insight_outputs + doc_comp_outputs
             )
 
 
@@ -553,19 +596,14 @@ No active tasks.
             poll_inputs = [
                 repo_id_state, branch_state,
                 last_status_text_state     # For overall status message logic
-                # last_progress_html_state REMOVED
             ]
 
             # Poll outputs updated: components and states for the old modal update mechanism are removed.
             poll_outputs = [
                 status_output,                      # Overall status message
-                # status_details_html,              # NO LONGER an output of polling for content change
                 dead_code_df, duplicate_code_df,    # Dataframe updates
                 stats_cards_html, lang_plot,        # Updated: stats_plot to stats_cards_html
                 last_status_text_state,             # Pass-through state for overall status
-                # main_progress_bar, REMOVED
-                # progress_row, REMOVED
-                # last_progress_html_state, REMOVED
                 branch_dropdown, branch_state       # Branch updates
             ] + self.task_buttons
             timer.tick(self.handle_polling, poll_inputs, poll_outputs)
@@ -574,40 +612,32 @@ No active tasks.
             open_add_repo_modal_btn.click(None, js="() => { const modal = document.getElementById('addRepoModal'); if (modal) modal.style.display = 'flex'; }")
             add_repo_cancel_btn.click(None, js="() => { const modal = document.getElementById('addRepoModal'); if (modal) modal.style.display = 'none'; }")
             modal_close_btn.click(None, js="() => { const modal = document.getElementById('codeViewerModal'); if (modal) modal.style.display = 'none'; }")
-            # view_status_modal_btn.click(...) line removed as onclick is in the HTML for view_status_modal_btn_html
             status_modal_close_btn.click(None, js="() => { const modal = document.getElementById('statusModal'); if (modal) modal.style.display = 'none'; }")
 
             add_repo_submit_btn.click(
                 self.handle_add_repo, [repo_url_modal], [status_output, repo_dropdown] + self.task_buttons
             ).then(None, js="() => { const modal = document.getElementById('addRepoModal'); if (modal) modal.style.display = 'none'; }").then(
                 self.handle_repo_select, [repo_dropdown],
-                [branch_dropdown, repo_id_state, branch_state, chatbot] # Adjusted outputs
-                # Removed .then(self.handle_load_more_tasks, ...)
+                [branch_dropdown, repo_id_state, branch_state, chatbot]
             )
 
             repo_dropdown.change(
                 self.handle_repo_select, [repo_dropdown],
-                [branch_dropdown, repo_id_state, branch_state, chatbot] # Adjusted outputs
-                # Removed .then(self.handle_load_more_tasks, ...)
+                [branch_dropdown, repo_id_state, branch_state, chatbot]
             ).then(
-                self.update_all_panels, [repo_id_state, branch_state], all_insight_outputs + git_panel_outputs
+                self.update_all_panels,
+                [repo_id_state, branch_state], # No current_path_state
+                all_insight_outputs + doc_comp_outputs
             )
 
-            # Branch change should also reset and reload task log if it's repo-specific
             branch_dropdown.change(
                 self.handle_branch_select, [branch_dropdown],
-                [branch_state, chatbot] # Adjusted outputs
-                # Removed .then(self.handle_load_more_tasks, ...)
+                [branch_state, chatbot]
             ).then(
-                self.update_all_panels, [repo_id_state, branch_state], all_insight_outputs + git_panel_outputs
+                self.update_all_panels,
+                [repo_id_state, branch_state], # No current_path_state
+                all_insight_outputs + doc_comp_outputs
             )
-
-            # Connect the "Load More Tasks" button - REMOVED
-            # load_more_tasks_btn.click(...) REMOVED
-
-            # Optional: Reload tasks when accordion is opened (if it was previously empty due to no repo)
-            # This requires knowing the accordion's open state or using its change event.
-            # For now, relying on repo/branch changes.
 
             analyze_branch_btn.click(self.handle_analyze_branch, [repo_id_state, branch_state], [status_output] + self.task_buttons)
             analyze_dead_code_btn.click(self.handle_run_dead_code, [repo_id_state, branch_state], [status_output] + self.task_buttons)
@@ -615,9 +645,42 @@ No active tasks.
 
             dead_code_df.select(self.handle_code_item_select, [repo_id_state, branch_state, dead_code_df], [modal_code_viewer]).then(
                 None, js="() => { const modal = document.getElementById('codeViewerModal'); if (modal) modal.style.display = 'flex'; }")
-            modified_files_dropdown.change(self.handle_view_diff, [repo_id_state, modified_files_dropdown], [code_viewer, image_viewer, selected_file_state])
-            revert_file_btn.click(self.handle_revert_file, [repo_id_state, selected_file_state], [status_output] + git_panel_outputs)
-            commit_btn.click(self.handle_commit, [repo_id_state, commit_message], [status_output, commit_message] + git_panel_outputs + self.task_buttons)
+
+            # New FileExplorer change event
+            file_explorer.change( # Changed from .select to .change
+                self.handle_file_explorer_select,
+                inputs=[repo_id_state, branch_state, file_explorer], # Pass file_explorer itself as input for its value
+                outputs=[
+                    embedding_html_viewer, code_viewer, image_viewer, selected_file_state
+                    # current_modified_files_dropdown_ca, file_to_compare_dropdown_ca REMOVED
+                ]
+            )
+
+            content_tabs.select(
+                self.handle_content_tab_select,
+                inputs=[repo_id_state, branch_state, selected_file_state],
+                outputs=[change_analysis_output]
+            )
+
+            # Connect Change Analysis buttons
+            # analyze_current_changes_btn was renamed to analyze_selected_file_current_changes_btn
+            # and its input current_modified_files_dropdown_ca was removed.
+            # It now uses selected_file_state.
+            analyze_selected_file_current_changes_btn.click(
+                self.handle_analyze_current_file_changes,
+                inputs=[repo_id_state, branch_state, selected_file_state], # Uses selected_file_state
+                outputs=[change_analysis_output]
+            )
+            compare_with_older_btn.click( # Renamed from compare_versions_btn
+                self.handle_analyze_version_comparison,
+                inputs=[ # Updated inputs
+                    repo_id_state, branch_state, selected_file_state, # current branch and file
+                    branch_compare_older_version_ca, commit_older_version_ca # older version details
+                ],
+                outputs=[change_analysis_output]
+            )
+
+            # Removed event handlers for modified_files_dropdown_diff, revert_file_btn_diff, commit_btn_diff
 
         return demo
 
@@ -961,10 +1024,286 @@ No active tasks.
         chatbot_msg = [{"role": "assistant", "content": f"Agent context switched to branch '{branch}'."}]
         return branch, chatbot_msg
 
+    def handle_populate_file_explorer(self, repo_id: int, branch: str) -> gr.update:
+        if not repo_id or not branch:
+            print(f"Debug: handle_populate_file_explorer called with no repo_id ({repo_id}) or branch ({branch})")
+            return gr.update(value=[])
+
+        print(f"Debug: Populating file explorer for repo {repo_id}, branch {branch} by calling framework.get_file_tree")
+        tree_data = self.framework.get_file_tree(repo_id, branch) # Calls the framework method
+
+        # Ensure tree_data is in the format List[Tuple[str, str]] or List[Any] for Gradio Tree.
+        # The framework.get_file_tree placeholder already returns this format.
+        # This method is no longer used directly by update_all_panels for the main file browser.
+        # It's still used by handle_populate_change_analysis_inputs.
+        return gr.update(value=tree_data)
+
+    # handle_populate_file_browser_radio, handle_file_browser_go_up, handle_file_browser_radio_select are removed.
+    # New handlers for gr.FileExplorer will be simpler.
+
+    def handle_file_explorer_select(self, repo_id: int, branch: str, selection_event_data: Any) -> Tuple[gr.update, gr.update, gr.update, str]: # Removed 2 gr.update from return type
+        # Returns updates for: embedding_html_viewer, code_viewer, image_viewer, selected_file_state
+        # selection_event_data is the value from FileExplorer's .change() event.
+        # If file_count="single", this should be a single path string when a user selects a file.
+        # If it's a list, it might be the initial population or a multi-select scenario we want to ignore for single-file processing.
+
+        file_path: Optional[str] = None
+        if isinstance(selection_event_data, str):
+            file_path = selection_event_data
+        elif isinstance(selection_event_data, list):
+            # If file_count="single" is truly effective, this case might only occur if the component's value
+            # (the whole list of files) is updated programmatically, triggering .change.
+            # In such a case, we don't have a single user-selected file to process.
+            logging.info(f"FileExplorer .change event triggered with a list (count: {len(selection_event_data)}). Assuming no single file selection by user. Skipping detailed view updates.")
+            # We still need to return the correct number of updates.
+            return gr.skip(), gr.skip(), gr.skip(), "" # Removed 2 gr.skip()
+
+        if not file_path: # Path could be None if deselected or if it was a list and we decided to skip.
+            embedding_html_update = gr.update(value="<div>Select a file for embedding visualization.</div>")
+            code_viewer_update = gr.update(value="// Select a file to view content/diff.", language=None, label="File Content / Diff", visible=True)
+            image_viewer_update = gr.update(value=None, visible=False)
+            # Removed updates for current_modified_files_ca_upd and file_to_compare_ca_upd
+            return embedding_html_update, code_viewer_update, image_viewer_update, "" # Removed 2 gr.update values
+
+        print(f"UI: FileExplorer selection changed to: '{file_path}' for repo {repo_id}, branch {branch}")
+
+        # Convert absolute path from FileExplorer to relative path for framework
+        repo = self.framework.get_repository_by_id(repo_id)
+        if not repo or not repo.path:
+            error_msg = "Error: Could not determine repository path to make file path relative."
+            logging.error(error_msg)
+            embedding_html_update = gr.update(value=self._generate_embedding_html(error_msg, file_path))
+            code_viewer_update = gr.update(value=error_msg, language=None, label="Error", visible=True)
+            image_viewer_update = gr.update(value=None, visible=False)
+            return embedding_html_update, code_viewer_update, image_viewer_update, file_path # Keep selected_file_state as the problematic path
+
+        try:
+            repo_root = Path(repo.path).resolve()
+            absolute_file_path = Path(file_path).resolve()
+            relative_file_path = str(absolute_file_path.relative_to(repo_root))
+            # Convert to forward slashes for consistency, as git typically uses them
+            relative_file_path = relative_file_path.replace("\\", "/")
+            logging.info(f"Converted absolute path '{absolute_file_path}' to relative path '{relative_file_path}' for repo '{repo_root}'")
+        except ValueError as e:
+            error_msg = f"Error: Could not make path relative: {e}. Absolute: {file_path}, Repo Root: {repo_root}"
+            logging.error(error_msg)
+            embedding_html_update = gr.update(value=self._generate_embedding_html(error_msg, file_path))
+            code_viewer_update = gr.update(value=error_msg, language=None, label="Error", visible=True)
+            image_viewer_update = gr.update(value=None, visible=False)
+            return embedding_html_update, code_viewer_update, image_viewer_update, file_path
+
+        new_selected_file_for_viewers = relative_file_path # This state should hold the relative path
+
+        # Get text content primarily for embedding view
+        raw_content = self.framework.get_file_content_by_path(repo_id, branch, relative_file_path)
+        if raw_content is None:
+            raw_content = f"// Error: Could not load content for {relative_file_path}"
+
+        is_image_for_embedding = relative_file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp'))
+        if not is_image_for_embedding:
+            generated_html_for_embedding = self._generate_embedding_html(raw_content, relative_file_path)
+            embedding_html_update = gr.update(value=generated_html_for_embedding)
+            logging.info(f"Generated embedding HTML for {relative_file_path}, length {len(generated_html_for_embedding)}")
+            if len(generated_html_for_embedding) < 300: # Log short HTML
+                 logging.info(f"Short HTML content: {generated_html_for_embedding}")
+        else:
+            generated_html_for_embedding = f"<div>Embedding visualization is not available for image: {relative_file_path}</div>"
+            embedding_html_update = gr.update(value=generated_html_for_embedding)
+            logging.info(f"Skipping embedding HTML for image {relative_file_path}")
+
+        # Handle Diff Tab (code_viewer and image_viewer)
+        # Use relative_file_path for framework calls
+        diff_content, image_obj = self.framework.get_file_diff_or_content(repo_id, relative_file_path, is_new_file_from_explorer=True)
+        lang = IngestionConfig.LANGUAGE_MAPPING.get(Path(relative_file_path).suffix.lower())
+
+        if image_obj:
+            code_viewer_update = gr.update(visible=False)
+            image_viewer_update = gr.update(value=image_obj, visible=True)
+        else:
+            if diff_content is None: diff_content = f"// Could not load content/diff for {relative_file_path}"
+            code_viewer_update = gr.update(value=diff_content, language=lang, label=f"Content/Diff: {relative_file_path}", visible=True)
+            image_viewer_update = gr.update(value=None, visible=False)
+
+        return embedding_html_update, code_viewer_update, image_viewer_update, new_selected_file_for_viewers
+
+    def handle_content_tab_select(self, evt: gr.SelectData, repo_id: int, branch: str, selected_file: str) -> gr.update:
+        # evt.value will be the ID of the selected tab_item (e.g., "change_analysis_tab")
+        # For gr.Tabs, evt.index gives the integer index, evt.value might be None or the id if provided to TabItem.
+        # Let's assume we check against the id="change_analysis_tab". Or index 1.
+        # Gradio's SelectData for Tabs usually gives `index` (int) and `value` (label of TabItem).
+
+        # Check if the "Change Analysis" tab is selected. Its ID is "change_analysis_tab".
+        # The gr.Tabs component itself is named `content_tabs`.
+        # The TabItems are "Embedding" (id="embedding_tab"), "Change Analysis" (id="change_analysis_tab"), "Diff" (id="diff_tab").
+        # Gradio's .select event on Tabs provides SelectData with evt.value being the *label* of the TabItem.
+
+        if evt.value == "Change Analysis": # evt.value is the label of the TabItem
+            logging.info(f"Change Analysis tab selected. Current file: {selected_file}")
+            if repo_id and branch and selected_file:
+                status = self.framework.get_repository_status(repo_id)
+                modified_files = []
+                if status:
+                    modified_files.extend(status.get('modified', []))
+                    modified_files.extend(status.get('new', []))
+
+                if selected_file in modified_files:
+                    logging.info(f"File {selected_file} is modified. Triggering analysis.")
+                    # Call the existing handler for analyzing current changes.
+                    # This handler uses gr.Progress, which should work here too.
+                    return self.handle_analyze_current_file_changes(repo_id, branch, selected_file)
+                else:
+                    logging.info(f"File {selected_file} is not in modified list for Change Analysis tab auto-trigger.")
+                    return gr.update(value="Selected file is not modified. Use controls below to analyze specific changes or compare versions.")
+            else:
+                return gr.update(value="Select a repository, branch, and file to enable automatic change analysis.")
+        return gr.skip() # No update for other tabs or if conditions not met
+
+
     def update_all_panels(self, repo_id: int, branch: str) -> Tuple:
         stats_upd, lang_upd = self.update_insights_dashboard(repo_id, branch)
-        mod_files_upd, code_view_upd, img_view_upd, sel_file_upd = self.update_git_status_panel(repo_id)
-        return stats_upd, lang_upd, mod_files_upd, code_view_upd, img_view_upd, sel_file_upd
+
+        file_explorer_upd = gr.skip() # Default to skipping update for file explorer
+        if repo_id and branch:
+            repo = self.framework.get_repository_by_id(repo_id)
+            if repo and Path(repo.path).is_dir():
+                # Ensure the correct branch is materialized by get_file_tree (which does checkout)
+                # get_file_tree also conveniently returns a list of files, but we ignore it here
+                # as FileExplorer will read from the filesystem.
+                self.framework.get_file_tree(repo_id, branch) # This call ensures checkout
+                file_explorer_upd = gr.update(root_dir=str(repo.path), glob="**/*") # Update root to selected repo
+            else:
+                # No valid repo selected, or repo path doesn't exist
+                from sda.config import WORKSPACE_DIR as SDA_WORKSPACE_DIR
+                file_explorer_upd = gr.update(root_dir=str(SDA_WORKSPACE_DIR), glob=None) # Show empty or base workspace
+        else:
+            # No repo/branch selected, reset FileExplorer to base workspace view or empty
+            from sda.config import WORKSPACE_DIR as SDA_WORKSPACE_DIR
+            file_explorer_upd = gr.update(root_dir=str(SDA_WORKSPACE_DIR), value=[], glob=None) # Show empty by default
+
+        initial_code_view_text = "// Select a file from the explorer."
+        code_view_upd = gr.update(value=initial_code_view_text, language=None, label="File Content / Diff", visible=True)
+        img_view_upd = gr.update(value=None, visible=False)
+        sel_file_upd = ""
+
+        embedding_html_upd = gr.update(value="<div>Select a non-image file for embedding visualization.</div>")
+        change_analysis_output_upd = gr.update(value="Select an analysis option.")
+
+        # Corrected: handle_populate_change_analysis_inputs now returns only one value
+        branch_compare_older_version_ca_upd = self.handle_populate_change_analysis_inputs(repo_id, branch)
+
+        # Removed call to obsolete self.update_git_status_panel and its result unpacking
+        # mod_files_dd_diff_upd, code_v_upd_from_git, img_v_upd_from_git, sel_file_s_upd_from_git = \
+        #     self.update_git_status_panel(repo_id)
+
+        # Default updates for these, as they are no longer set by update_git_status_panel
+        final_code_view_upd = code_view_upd # Use the default from earlier in the function
+        final_img_view_upd = img_view_upd   # Use the default
+        final_sel_file_upd = sel_file_upd   # Use the default
+
+        # commit_msg_diff_upd = gr.update(value="") # This component was removed
+
+        # Order must match all_insight_outputs + doc_comp_outputs
+        # all_insight_outputs = [stats_cards_html, lang_plot] (2)
+        # doc_comp_outputs = [ # Now 7 items
+        #     file_explorer,
+        #     embedding_html_viewer,
+        #     change_analysis_output,
+        #     code_viewer,
+        #     image_viewer,
+        #     selected_file_state,
+        #     branch_compare_older_version_ca,
+        # ] Total 2 + 7 = 9 outputs.
+
+        return (stats_upd, lang_upd,  # Insight outputs (2)
+                file_explorer_upd,   # Doc Comp (1/7)
+                embedding_html_upd, change_analysis_output_upd,  # Doc Comp (3/7)
+                final_code_view_upd, final_img_view_upd, final_sel_file_upd, # Doc Comp (6/7)
+                branch_compare_older_version_ca_upd) # Doc Comp (7/7)
+                # Total 2 + 7 = 9 outputs.
+
+    def _generate_embedding_html(self, file_content: str, file_path_for_display: str) -> str: # Renamed arg
+        logging.info(f"[_generate_embedding_html] Called for file: {file_path_for_display}. Content length: {len(file_content if file_content else '')}")
+
+        if file_content is not None and (file_content.startswith("// Error:") or file_content.startswith("Error:")):
+            # Style error messages differently to make them visible
+            return f"""<div style='padding:10px; border:1px solid red; color: red; background-color: #ffe0e0; font-family:monospace; height: 580px; overflow-y:auto;'>
+                       <h3>Embedding View Error</h3><p>{file_content}</p>
+                       </div>"""
+        if not file_path_for_display and (file_content is None or file_content == ""): # Check if both are empty/None
+             return "<div style='padding:10px; border:1px solid #ccc; height: 580px; overflow-y:auto;'><h2>Embedding Tab</h2><p>No file selected or content is empty.</p></div>"
+
+        # Return extremely simple HTML for testing the update mechanism
+        test_html = f"<h2>Embedding Test for {Path(file_path_for_display).name if file_path_for_display else 'Unknown File'}</h2><p>If you see this, HTML rendering for Embedding tab works.</p><p>Displaying first 200 chars of content:</p><pre style='white-space:pre-wrap; background:#f0f0f0; padding:5px;'>{str(file_content)[:200]}{'...' if len(str(file_content)) > 200 else ''}</pre>"
+        logging.info(f"[_generate_embedding_html] Returning diagnostic HTML for {file_path_for_display}.")
+        return test_html
+
+    def handle_populate_change_analysis_inputs(self, repo_id: int, branch: str) -> gr.update:
+        # Returns update for: branch_compare_older_version_ca
+        if not repo_id or not branch:
+            return gr.update(choices=[], value=None)
+
+        branches = self.framework.get_repository_branches(repo_id)
+        # Default older version branch to current branch, user can change it
+        branches_update = gr.update(choices=branches, value=branch)
+
+        return branches_update
+
+    def handle_analyze_current_file_changes(self, repo_id: int, branch: str, file_path: str, progress=gr.Progress(track_tqdm=True)) -> gr.update:
+        if not file_path:
+            return gr.update(value="Please select a modified file to analyze.")
+
+        progress(0, desc="Fetching diff for current changes...")
+        # In a real scenario:
+        # 1. Get the diff of file_path (e.g., using self.framework.get_file_diff_or_content)
+        # diff_text, _ = self.framework.get_file_diff_or_content(repo_id, file_path)
+        # 2. Send diff_text to an LLM with appropriate prompts.
+        # llm_response = self.framework.llm_analyze_diff(diff_text)
+        # For now, simulate:
+        diff_text, _ = self.framework.get_file_diff_or_content(repo_id, file_path, is_new_file_from_explorer=False) # Get diff
+        if diff_text is None: diff_text = "No textual changes found or file is binary."
+
+        progress(0.5, desc="LLM analyzing changes (simulated)...")
+        llm_response = f"### Analysis of Current Changes for `{file_path}` (Branch: `{branch}`):\n\n"
+        llm_response += "This is a **simulated** LLM analysis.\n\n"
+        llm_response += f"**Technical Assessment:**\n- The changes in `{file_path}` appear to be [simulated assessment: minor refactoring / significant feature addition / bug fix].\n"
+        llm_response += "- Potential impact on other modules: [simulated: Low / Medium / High].\n"
+        llm_response += "- Code quality: [simulated: Good, follows conventions / Needs improvement in XYZ areas].\n\n"
+        llm_response += "**Summary of Changes (based on diff):**\n```diff\n"
+        llm_response += diff_text[:1000] + ("..." if len(diff_text) > 1000 else "") # Show a snippet of the diff
+        llm_response += "\n```\n"
+        progress(1, desc="Analysis complete.")
+        return gr.update(value=llm_response)
+
+    def handle_analyze_version_comparison(self, repo_id: int, current_branch: str, file_to_compare: str,
+                                          older_branch: str, older_version: str,
+                                          progress=gr.Progress(track_tqdm=True)) -> gr.update:
+        if not file_to_compare or not older_branch or not older_version or not current_branch:
+            return gr.update(value="Please ensure a file is selected from the File Explorer, and specify the branch and version/commit for its older state.")
+
+        # Current version is implicitly HEAD of current_branch for file_to_compare
+        current_version_desc = f"{current_branch} @ HEAD"
+        older_version_desc = f"{older_branch} @ {older_version}"
+
+        progress(0, desc=f"Fetching versions of {Path(file_to_compare).name} for comparison...")
+
+        # Placeholder for actual framework calls to get file content at specific versions
+        # content_current = self.framework.get_file_content_at_version(repo_id, file_to_compare, current_branch, "HEAD")
+        # content_older = self.framework.get_file_content_at_version(repo_id, file_to_compare, older_branch, older_version)
+        # diff = generate_diff(content_older, content_current)
+        # llm_analysis_of_diff = self.framework.llm_analyze_diff(diff, context=f"Comparison of {file_to_compare}")
+
+        simulated_diff_snippet = f"--- a/{file_to_compare} ({older_version_desc})\n+++ b/{file_to_compare} ({current_version_desc})\n@@ -1,3 +1,3 @@\n- old line 1\n- old line 2\n+ new line 1\n+ new line 2\n  common line 3"
+
+        progress(0.5, desc="LLM analyzing differences (simulated)...")
+        llm_response = f"### Analysis of Differences for `{file_to_compare}`\n\n"
+        llm_response += f"Comparing **{older_version_desc}** (Older) vs. **{current_version_desc}** (Current)\n\n"
+        llm_response += "This is a **simulated** LLM analysis.\n\n"
+        llm_response += "**Key Simulated Differences Noted:**\n- Function `example_func` was modified.\n- Class `ImportantClass` had a method signature change.\n\n"
+        llm_response += "**Simulated Diff Snippet:**\n```diff\n"
+        llm_response += simulated_diff_snippet + "\n```\n"
+        progress(1, desc="Analysis complete.")
+        return gr.update(value=llm_response)
+
 
     def handle_analyze_branch(self, repo_id: int, branch: str) -> Tuple:
         if not repo_id or not branch:
@@ -1047,21 +1386,8 @@ No active tasks.
         self.framework.find_duplicate_code_for_repo(repo_id, branch, 'user')
         return ("Task to find duplicate code started.",) + self._get_task_button_updates(False)
 
-    def update_git_status_panel(self, repo_id: int) -> Tuple:
-        if not repo_id:
-            return gr.update(choices=[], value=None), "No repository selected.", gr.update(visible=False), None
-        status = self.framework.get_repository_status(repo_id)
-        all_changed_files = (status.get('modified', []) + status.get('new', []) + status.get('untracked', []) + status.get('renamed', [])) if status else []
-        dropdown_upd = gr.update(choices=all_changed_files, value=all_changed_files[0] if all_changed_files else None)
-        selected_file = all_changed_files[0] if all_changed_files else None
-        if selected_file:
-            diff_or_err, image = self.framework.get_file_diff_or_content(repo_id, selected_file)
-            if image:
-                return dropdown_upd, gr.update(visible=False), gr.update(value=image, visible=True), selected_file
-            else:
-                return dropdown_upd, diff_or_err or "No changes.", gr.update(visible=False), selected_file
-        else:
-            return dropdown_upd, "No uncommitted changes found.", gr.update(visible=False), None
+    # update_git_status_panel, handle_view_diff, handle_revert_file, handle_commit are removed
+    # as their UI components have been removed from the "Raw Diff" (formerly "Diff") tab.
 
     def handle_code_item_select(self, repo_id: int, branch: str, df: pd.DataFrame, evt: gr.SelectData) -> gr.update:
         if evt.value is None or not isinstance(evt.index, (list, tuple)) or len(evt.index) == 0:
@@ -1074,35 +1400,6 @@ No active tasks.
         content = self.framework.get_file_content_by_path(repo_id, branch, selected_file)
         lang = IngestionConfig.LANGUAGE_MAPPING.get(Path(selected_file).suffix)
         return gr.update(value=content, language=lang, label=f"Content of: {selected_file}")
-
-    def handle_view_diff(self, repo_id: int, file_path: str) -> Tuple:
-        if not repo_id or not file_path:
-            return gr.update(visible=True, value="Please select a file."), gr.update(visible=False), None
-        diff_or_err, image = self.framework.get_file_diff_or_content(repo_id, file_path)
-        if image:
-            return gr.update(visible=False), gr.update(value=image, visible=True), file_path
-        else:
-            return gr.update(value=diff_or_err or "No changes to display.", visible=True), gr.update(visible=False), file_path
-
-    def handle_revert_file(self, repo_id: int, file_path: str) -> Tuple:
-        if not repo_id or not file_path:
-            return ("Please select a file to revert.",) + tuple(self.update_git_status_panel(repo_id))
-        self.framework.revert_file_changes(repo_id, file_path)
-        status_msg = f"Reverted {file_path}."
-        return (status_msg,) + tuple(self.update_git_status_panel(repo_id))
-
-    def handle_commit(self, repo_id: int, commit_message: str) -> Tuple:
-        if not repo_id:
-            return ("No repository selected.", gr.update(value=commit_message)) + tuple(self.update_git_status_panel(repo_id)) + self._get_task_button_updates(True)
-        if not commit_message:
-            return ("Commit message cannot be empty.", gr.update(value=commit_message)) + tuple(self.update_git_status_panel(repo_id)) + self._get_task_button_updates(True)
-        repo = self.framework.get_repository_by_id(repo_id)
-        if not repo:
-            return ("Repository not found.", gr.update(value=commit_message)) + tuple(self.update_git_status_panel(repo_id)) + self._get_task_button_updates(True)
-        self.framework.git_service.stage_all(repo.path)
-        self.framework.git_service.commit(repo.path, commit_message)
-        status_msg = "Commit successful."
-        return (status_msg, "") + tuple(self.update_git_status_panel(repo_id)) + self._get_task_button_updates(True)
 
 
 if __name__ == "__main__":

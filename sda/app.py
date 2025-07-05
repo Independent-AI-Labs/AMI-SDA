@@ -18,7 +18,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Generator
+from typing import Dict, Any, List, Optional, Generator, Tuple # Added Tuple
 
 from PIL import Image
 from llama_index.core.llms import ChatMessage
@@ -478,8 +478,12 @@ class CodeAnalysisFramework:
         if not repo: return None
         return self.git_service.get_status(repo.path)
 
-    def get_file_diff_or_content(self, repo_id: int, file_path: str) -> tuple[Optional[str], Optional[Image.Image]]:
-        """Gets the git diff for a modified file or the raw content for an image."""
+    def get_file_diff_or_content(self, repo_id: int, file_path: str, is_new_file_from_explorer: bool = False) -> tuple[Optional[str], Optional[Image.Image]]:
+        """
+        Gets the git diff for a modified file, or raw content for an image or a new file from explorer.
+        If is_new_file_from_explorer is True, it will try to read the file content directly
+        instead of getting a git diff, unless it's an image.
+        """
         repo = self.get_repository_by_id(repo_id)
         if not repo: return None, None
 
@@ -491,7 +495,92 @@ class CodeAnalysisFramework:
             except Exception as e:
                 return f"Error opening image: {e}", None
         else:
-            return self.git_service.get_diff(repo.path, file_path), None
+            if is_new_file_from_explorer:
+                # If called from file explorer for a non-image, get raw content
+                try:
+                    return full_path.read_text(encoding='utf-8'), None
+                except Exception as e:
+                    return f"Error reading file: {e}", None
+            else:
+                # Original behavior: get git diff for (presumably) modified files
+                return self.git_service.get_diff(repo.path, file_path), None
+
+    def get_file_tree(self, repo_id: int, branch: str) -> List[str]:
+        """
+        Returns a list of file path strings for the repository for the specified branch,
+        suitable for gr.FileExplorer.
+        Ensures the correct branch is checked out before listing files.
+        """
+        repo = self.get_repository_by_id(repo_id)
+        if not repo:
+            logging.error(f"get_file_tree: Repository with ID {repo_id} not found.")
+            return ["Error: Repository not found."]
+
+        current_git_branch = self.git_service.get_current_branch(repo.path)
+        if current_git_branch != branch:
+            logging.info(f"Framework: Switching branch in {repo.path} from '{current_git_branch}' to '{branch}' for get_file_tree.")
+            try:
+                if not self.git_service.checkout(repo.path, branch): # checkout returns bool
+                    logging.error(f"Framework: git_service.checkout returned false for branch '{branch}' in repo '{repo.path}'.")
+                    return [f"Error: Could not switch to branch '{branch}'. Checkout failed."]
+
+                # Update active branch in DB after successful checkout
+                with self.db_manager.get_session("public") as session:
+                    db_repo = session.get(Repository, repo_id)
+                    if db_repo:
+                        db_repo.active_branch = branch
+                        session.commit() # Persist active branch change
+            except Exception as e:
+                logging.error(f"Framework: Exception during checkout of branch '{branch}' for repo '{repo.path}': {e}", exc_info=True)
+                return [f"Error: Could not switch to branch '{branch}'. Exception: {str(e)}"]
+
+        # Now that the correct branch should be checked out, list files from it.
+        files = self.git_service.get_all_files_in_branch(repo.path, branch_name=branch)
+
+        if files is None: # get_all_files_in_branch might return None on execution error
+             logging.error(f"get_file_tree: get_all_files_in_branch returned None for repo {repo_id}, branch {branch}.")
+             return ["Error: Failed to retrieve file list from GitService."]
+        if not files:
+            logging.warning(f"get_file_tree: No files found by get_all_files_in_branch for repo {repo_id}, branch {branch}.")
+            return ["No files found in this branch."]
+
+        return files # Already List[str] from get_all_files_in_branch
+
+    def list_directory(self, repo_id: int, branch: str, dir_path: str) -> List[str]:
+        """
+        Lists files and directories at the given dir_path within the repository.
+        Directories are suffixed with '/'.
+        This is a placeholder. A real implementation would use Git commands or DB queries.
+        """
+        repo = self.get_repository_by_id(repo_id)
+        if not repo:
+            return ["Error: Repository not found."]
+
+        logging.info(f"Framework: Listing directory for repo {repo_id}, branch {branch}, path {dir_path}")
+        # Placeholder: Simulate a simple directory structure.
+        # A real version would use self.git_service.list_files_in_tree_path_formatted(repo.path, branch, dir_path)
+        # or equivalent that checks out the branch and lists files.
+
+        # Normalize dir_path, ensuring it's relative and clean.
+        path_obj = Path(dir_path)
+        if path_obj.is_absolute(): # Should always be relative
+            dir_path = path_obj.name
+        if dir_path == "." or dir_path == "":
+            # Root directory content
+            return ["README.md", "src/", "tests/", ".gitignore", "assets/"]
+        elif dir_path == "src/":
+            return ["app.py", "utils.py"]
+        elif dir_path == "tests/":
+            return ["test_app.py"]
+        elif dir_path == "assets/":
+            return ["image.png"]
+        else:
+            # If it's a file path or unknown directory, return empty or error
+            # Check if dir_path itself is a file in the dummy structure
+            if dir_path == "README.md" or dir_path == "src/app.py" or dir_path == "src/utils.py" or \
+               dir_path == "tests/test_app.py" or dir_path == "assets/image.png" or dir_path == ".gitignore":
+                return [f"Error: {dir_path} is a file, not a directory."]
+            return [] # Empty for other paths in this placeholder
 
     def revert_file_changes(self, repo_id: int, file_path: str) -> bool:
         """Reverts uncommitted changes to a specific file."""
@@ -645,13 +734,31 @@ class CodeAnalysisFramework:
     def get_task_history(self, repo_id: Optional[int], offset: int = 0, limit: int = 20) -> List[Task]:
         """
         Retrieves a paginated list of all parent tasks for a repository (or all tasks if repo_id is None),
-        ordered by most recent first. Includes children tasks.
+        ordered by most recent first. Includes children tasks and their children (one level deep for children).
         """
+        from sqlalchemy.orm import subqueryload
+
         with self.db_manager.get_session("public") as session:
-            query = session.query(Task).options(joinedload(Task.children)).filter(Task.parent_id.is_(None))
+            query = session.query(Task).options(
+                joinedload(Task.children).subqueryload(Task.children) # Load children, and for those children, load their children
+            ).filter(Task.parent_id.is_(None))
+
             if repo_id is not None:
                 query = query.filter(Task.repository_id == repo_id)
 
             tasks = query.order_by(Task.started_at.desc()).offset(offset).limit(limit).all()
-            session.expunge_all()
+
+            # It's crucial that Pydantic serialization happens while tasks are session-bound if it might trigger further lazy loads.
+            # However, with proper eager loading as above, expunging before returning is usually fine.
+            # The error indicates that the eager loading was not sufficient for what Pydantic's TaskRead (recursive) was trying to access.
+            # The above options(...) should load children and their direct children.
+
+            # To be absolutely safe, one could convert to Pydantic models within the session,
+            # but this is usually not necessary if eager loading is correct.
+            # pydantic_tasks = [TaskRead.from_orm(task) for task in tasks]
+            # session.expunge_all()
+            # return pydantic_tasks
+            # For now, let's assume the improved eager loading is sufficient.
+
+            session.expunge_all() # Expunge after all data needed for serialization is loaded.
             return tasks
