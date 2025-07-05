@@ -17,6 +17,7 @@ psycopg2==2.9.10
 pgvector==0.4.1
 pyahocorasick==1.4.4
 pydgraph==24.2.1
+requests
 
 # For HuggingFace embeddings (CPU is default). Will be replaced by platform-specific implementations.
 #torch

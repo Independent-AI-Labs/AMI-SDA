@@ -10,7 +10,9 @@ instance of the CodeAnalysisFramework class.
 """
 
 import logging
+import json # For parsing Dgraph metrics response
 import queue
+import requests # Added for Dgraph metrics
 import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,9 +25,9 @@ from llama_index.core.llms import ChatMessage
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
-from sda.config import DB_URL, WORKSPACE_DIR, AIConfig, GOOGLE_API_KEY
+from sda.config import DB_URL, WORKSPACE_DIR, AIConfig, GOOGLE_API_KEY, DGRAPH_HOST # Added DGRAPH_HOST
 from sda.core.db_management import DatabaseManager
-from sda.core.models import Repository, File as DBFile, DBCodeChunk, Task, BillingUsage # Added BillingUsage
+from sda.core.models import Repository, File as DBFile, DBCodeChunk, Task, BillingUsage
 from sda.services.agent import AgentManager
 from sda.services.analysis import EnhancedAnalysisEngine
 from sda.services.chunking import TokenAwareChunker
@@ -516,8 +518,66 @@ class CodeAnalysisFramework:
         #    exec into the container to check disk usage of Dgraph's data directories (`p`, `w` folders).
         #    This is more complex and less portable.
         # 3. Check Dgraph documentation for recommended ways to monitor disk usage.
-        logging.info("get_dgraph_disk_usage is a placeholder. Dgraph disk usage not actively queried.")
-        return "Dgraph usage: N/A (placeholder)"
+
+        # Dgraph Alpha's default HTTP port is 8080. DGRAPH_PORT from config is the gRPC port (9080).
+        # We need to target the HTTP port for /debug/vars.
+        dgraph_http_port = 8080 # Common default, might need to be configurable if user changes it.
+        metrics_url = f"http://{DGRAPH_HOST}:{dgraph_http_port}/debug/vars"
+
+        try:
+            response = requests.get(metrics_url, timeout=5) # 5 second timeout
+            response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
+            data = response.json()
+
+            # Look for Badger specific metrics for data size (p directory)
+            # Common metrics are 'badger_lsm_size_bytes' and 'badger_vlog_size_bytes'
+            # Summing them gives an estimate of the 'p' (postings) directory.
+            # WAL ('w' directory) size is usually separate and might not be easily available here.
+
+            lsm_size = data.get("badger_lsm_size_bytes", 0)
+            vlog_size = data.get("badger_vlog_size_bytes", 0)
+
+            if isinstance(lsm_size, (int, float)) and isinstance(vlog_size, (int, float)):
+                total_badger_size_bytes = int(lsm_size + vlog_size)
+                if total_badger_size_bytes > 0:
+                    # Format the size
+                    if total_badger_size_bytes < 1024:
+                        return f"{total_badger_size_bytes} Bytes (Badger data)"
+                    elif total_badger_size_bytes < 1024**2:
+                        return f"{total_badger_size_bytes/1024:.2f} KB (Badger data)"
+                    elif total_badger_size_bytes < 1024**3:
+                        return f"{total_badger_size_bytes/1024**2:.2f} MB (Badger data)"
+                    else:
+                        return f"{total_badger_size_bytes/1024**3:.2f} GB (Badger data)"
+                else: # Metrics found but are zero
+                    return "Approx. 0 MB (Badger data)"
+
+            # Fallback if specific badger metrics aren't found directly,
+            # or if the structure is different. Some versions might have a total.
+            # This is highly speculative.
+            disk_used_metrics = [
+                "dgraph_disk_used_bytes", "badger_disk_usage", "disk_usage_bytes" # Add other potential keys
+            ]
+            for key in disk_used_metrics:
+                if key in data and isinstance(data[key], (int, float)) and data[key] > 0:
+                    size_bytes = int(data[key])
+                    # Format size (similar to above)
+                    if size_bytes < 1024: return f"{size_bytes} Bytes"
+                    # ... (add KB, MB, GB formatting)
+                    return f"{size_bytes/1024**3:.2f} GB (metric: {key})"
+
+            logging.warning(f"Dgraph metrics endpoint {metrics_url} accessible, but known disk usage keys (e.g., badger_lsm_size_bytes, badger_vlog_size_bytes) not found or zero. Full response keys: {list(data.keys())}")
+            return "Dgraph usage: N/A (Metrics found, specific keys missing)"
+
+        except requests.exceptions.RequestException as e:
+            logging.warning(f"Could not connect to Dgraph metrics endpoint at {metrics_url}: {e}")
+            return "Dgraph usage: N/A (Connection error)"
+        except json.JSONDecodeError:
+            logging.warning(f"Failed to decode JSON from Dgraph metrics endpoint {metrics_url}")
+            return "Dgraph usage: N/A (Invalid JSON response)"
+        except Exception as e:
+            logging.error(f"An unexpected error occurred while fetching Dgraph disk usage: {e}", exc_info=True)
+            return "Dgraph usage: N/A (Error)"
 
     def get_usage_statistics(self) -> Dict[str, Any]:
         """Retrieves general and AI usage statistics."""
