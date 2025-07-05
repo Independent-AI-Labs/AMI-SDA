@@ -487,12 +487,12 @@ No active tasks.
 
                 with gr.TabItem("Insights Dashboard", id=1):
                     with gr.Row():
-                        with gr.Column(scale=1):
-                            gr.Markdown('### <i class="fas fa-chart-bar"></i> Statistics')
-                            stats_plot = gr.Plot(label="Statistics")
+                        with gr.Column(scale=1): # This column will now hold the HTML stat cards
+                            gr.Markdown('### <i class="fas fa-chart-bar"></i> Key Statistics') # Title adjusted
+                            stats_cards_html = gr.HTML(label="Key Repository Statistics")
                         with gr.Column(scale=1):
                             gr.Markdown('### <i class="fas fa-code"></i> Language Breakdown')
-                            lang_plot = gr.Plot(label="Language Breakdown")
+                            lang_plot = gr.Plot(label="Language Breakdown") # This remains a plot
                     gr.Markdown('### <i class="fas fa-search-plus"></i> In-Depth Analysis (runs in background)')
                     with gr.Row():
                         analyze_dead_code_btn = gr.Button("Find Potentially Unused Code")
@@ -521,7 +521,7 @@ No active tasks.
             self.task_buttons = [analyze_branch_btn, analyze_dead_code_btn, analyze_duplicates_btn, add_repo_submit_btn, commit_btn]
             timer = gr.Timer(2)
 
-            all_insight_outputs = [stats_plot, lang_plot] # Changed df to plot
+            all_insight_outputs = [stats_cards_html, lang_plot] # Updated: stats_plot to stats_cards_html
             git_panel_outputs = [modified_files_dropdown, code_viewer, image_viewer, selected_file_state]
 
             # Define these components early if they are needed by reference in poll_outputs
@@ -554,7 +554,7 @@ No active tasks.
                 status_output,                      # Overall status message
                 # status_details_html,              # NO LONGER an output of polling for content change
                 dead_code_df, duplicate_code_df,    # Dataframe updates
-                stats_plot, lang_plot,              # Plot updates
+                stats_cards_html, lang_plot,        # Updated: stats_plot to stats_cards_html
                 last_status_text_state,             # Pass-through state for overall status
                 # main_progress_bar, REMOVED
                 # progress_row, REMOVED
@@ -852,8 +852,8 @@ No active tasks.
 
         button_updates = self._get_task_button_updates(interactive=not is_running)
         dead_code_update, dup_code_update = gr.update(), gr.update()
-        # Initialize plot updates to None, they will be updated if task completed and affects insights
-        stats_plot_update, lang_plot_update = gr.update(value=None), gr.update(value=None)
+        # Initialize updates for HTML stats and language plot
+        stats_html_update, lang_plot_update = gr.update(value=None), gr.update(value=None)
 
         task_could_change_branch = task.name.startswith("Ingest Branch:") or task.name == "analyze_branch"
         if task.status == 'completed':
@@ -882,20 +882,20 @@ No active tasks.
                 if branch != target_branch_for_insights : branch_state_update = target_branch_for_insights
 
                 # Update insight plots
-                s_plot, l_plot = self.update_insights_dashboard(repo_id, target_branch_for_insights)
-                stats_plot_update = gr.update(value=s_plot)
+                s_html, l_plot = self.update_insights_dashboard(repo_id, target_branch_for_insights)
+                stats_html_update = gr.update(value=s_html) # s_html is now the HTML string
                 lang_plot_update = gr.update(value=l_plot)
 
 
         elif task.status == 'failed':
             status_msg = f"Task '{task.name}' Failed: Check logs for details."
-            # Potentially clear or leave stale plots as is, or show an error state in plots
+            # Potentially clear or leave stale stats/plots as is, or show an error state
             # For now, they will retain their last state or be None if initialized that way.
 
         return (
             status_msg, # status_output
             # status_details_html output removed
-            dead_code_update, dup_code_update, stats_plot_update, lang_plot_update, # df_updates and plot_updates
+            dead_code_update, dup_code_update, stats_html_update, lang_plot_update, # df_updates and plot_updates
             last_status_text, # last_status_text_state (pass through)
             # main_progress_update, REMOVED
             # progress_row_update, REMOVED
@@ -965,33 +965,49 @@ No active tasks.
         self.framework.analyze_branch(repo_id, branch, 'user')
         return (f"Started re-analysis for branch '{branch}'.",) + self._get_task_button_updates(False)
 
-    def update_insights_dashboard(self, repo_id: int, branch: str) -> Tuple[Optional[px.bar], Optional[px.pie]]:
+    def update_insights_dashboard(self, repo_id: int, branch: str) -> Tuple[Optional[str], Optional[px.pie]]: # Return HTML string now
         if not repo_id or not branch:
-            return None, None # Return None for plots if no data
-
-        stats = self.framework.get_repository_stats(repo_id, branch)
-        if not stats: # Ensure stats is not None
             return None, None
 
-        # Prepare data for Statistics Bar Chart
-        # Ensure values are numerical for plotting
-        stats_metrics = ["File Count", "Total Lines", "Total Tokens", "Sub-modules (schemas)"]
-        stats_values = [
-            stats.get('file_count', 0),
-            stats.get('total_lines', 0),
-            stats.get('total_tokens', 0),
-            stats.get('schema_count', 0)
-        ]
+        stats = self.framework.get_repository_stats(repo_id, branch)
 
-        stats_fig = None
-        if any(v > 0 for v in stats_values): # Check if there's any data to plot
-            stats_df_for_plot = pd.DataFrame({"Metric": stats_metrics, "Value": stats_values})
-            stats_fig = px.bar(stats_df_for_plot, x="Metric", y="Value", title="Repository Statistics",
-                               text_auto=True) # Show values on bars
-            stats_fig.update_layout(showlegend=False)
+        stats_html = "" # Initialize HTML string
+        if not stats:
+            stats_html = "<div class='stat-cards-container'><p>No statistics available for this repository/branch.</p></div>"
+        else:
+            # Data for the stat cards
+            file_count = stats.get('file_count', 0)
+            total_lines = stats.get('total_lines', 0)
+            total_tokens = stats.get('total_tokens', 0)
+            schema_count = stats.get('schema_count', 0)
 
-        # Prepare data for Language Breakdown Pie Chart
-        lang_breakdown = stats.get('language_breakdown', {})
+            # HTML structure for stat cards
+            # Using f-strings for simplicity; for more complex HTML, a template engine might be better
+            # but Gradio's HTML component takes a string.
+            stats_html = f"""
+            <div class="stat-cards-container">
+                <div class="stat-card">
+                    <div class="stat-value">{file_count:,}</div>
+                    <div class="stat-label">FILES</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{total_lines:,}</div>
+                    <div class="stat-label">TOTAL LINES</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{total_tokens:,}</div>
+                    <div class="stat-label">TOTAL TOKENS</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{schema_count}</div>
+                    <div class="stat-label">SUB-MODULES</div>
+                </div>
+            </div>
+            """
+            # The :, adds thousand separators to the numbers if they are large.
+
+        # Prepare data for Language Breakdown Pie Chart (remains the same)
+        lang_breakdown = stats.get('language_breakdown', {}) if stats else {}
         lang_fig = None
         if lang_breakdown:
             lang_names = list(lang_breakdown.keys())

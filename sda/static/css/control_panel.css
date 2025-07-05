@@ -343,3 +343,55 @@ html.dark .modal-close-x {
 html.dark .modal-close-x:hover {
     color: var(--body-text-color-dark, #f3f4f6);
 }
+
+/* Stat Cards Styles */
+.stat-cards-container {
+    display: flex;
+    flex-wrap: wrap; /* Allow wrapping on smaller screens */
+    gap: 1rem; /* Spacing between cards */
+    margin-bottom: 1rem; /* Space below the container */
+}
+
+.stat-card {
+    flex: 1 1 180px; /* Flex grow, shrink, basis (min-width before wrapping) */
+    background-color: var(--background-fill-secondary, #f9fafb); /* Light background */
+    padding: 1.25rem; /* p-5 */
+    border-radius: 0.5rem; /* rounded-lg */
+    border: 1px solid var(--border-color-primary, #e5e7eb);
+    box-shadow: var(--shadow-drop); /* Use Gradio's shadow if available, or a default */
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 100px; /* Ensure a minimum height */
+}
+
+html.dark .stat-card {
+    background-color: var(--background-fill-secondary-dark, #374151); /* Darker background for dark mode */
+    border-color: var(--border-color-primary-dark, #4b5563);
+}
+
+.stat-value {
+    font-size: 2.25rem; /* text-4xl or similar */
+    font-weight: 700; /* font-bold */
+    color: var(--body-text-color, #111827);
+    line-height: 1.1;
+    margin-bottom: 0.25rem; /* mb-1 */
+}
+
+html.dark .stat-value {
+    color: var(--body-text-color-dark, #f3f4f6);
+}
+
+.stat-label {
+    font-size: 0.875rem; /* text-sm */
+    font-weight: 500; /* font-medium */
+    color: var(--body-text-color-subdued, #6b7280);
+    text-transform: uppercase;
+    letter-spacing: 0.05em; /* tracking-wider */
+}
+
+html.dark .stat-label {
+    color: var(--body-text-color-subdued-dark, #9ca3af);
+}
