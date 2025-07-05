@@ -538,6 +538,41 @@ class CodeAnalysisFramework:
             (".gitignore", ".gitignore")
         ]
 
+    def list_directory(self, repo_id: int, branch: str, dir_path: str) -> List[str]:
+        """
+        Lists files and directories at the given dir_path within the repository.
+        Directories are suffixed with '/'.
+        This is a placeholder. A real implementation would use Git commands or DB queries.
+        """
+        repo = self.get_repository_by_id(repo_id)
+        if not repo:
+            return ["Error: Repository not found."]
+
+        logging.info(f"Framework: Listing directory for repo {repo_id}, branch {branch}, path {dir_path}")
+        # Placeholder: Simulate a simple directory structure.
+        # A real version would use self.git_service.list_files_in_tree_path_formatted(repo.path, branch, dir_path)
+        # or equivalent that checks out the branch and lists files.
+
+        # Normalize dir_path, ensuring it's relative and clean.
+        path_obj = Path(dir_path)
+        if path_obj.is_absolute(): # Should always be relative
+            dir_path = path_obj.name
+        if dir_path == "." or dir_path == "":
+            # Root directory content
+            return ["README.md", "src/", "tests/", ".gitignore", "assets/"]
+        elif dir_path == "src/":
+            return ["app.py", "utils.py"]
+        elif dir_path == "tests/":
+            return ["test_app.py"]
+        elif dir_path == "assets/":
+            return ["image.png"]
+        else:
+            # If it's a file path or unknown directory, return empty or error
+            # Check if dir_path itself is a file in the dummy structure
+            if dir_path == "README.md" or dir_path == "src/app.py" or dir_path == "src/utils.py" or \
+               dir_path == "tests/test_app.py" or dir_path == "assets/image.png" or dir_path == ".gitignore":
+                return [f"Error: {dir_path} is a file, not a directory."]
+            return [] # Empty for other paths in this placeholder
 
     def revert_file_changes(self, repo_id: int, file_path: str) -> bool:
         """Reverts uncommitted changes to a specific file."""
