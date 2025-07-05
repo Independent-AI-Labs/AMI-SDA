@@ -30,9 +30,10 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 import uvicorn
+from fastapi import Query # Added for API endpoint query parameters
 
 from app import CodeAnalysisFramework
-from sda.core.models import Task
+from sda.core.models import Task # Already here, good.
 from sda.config import IngestionConfig, AIConfig, PG_DB_NAME, DGRAPH_HOST, DGRAPH_PORT
 from sda.utils.websocket_manager import control_panel_manager
 
@@ -317,16 +318,7 @@ No active tasks.
 
         return "".join(html_parts)
 
-    def handle_load_more_tasks(self, repo_id: Optional[int], offset: int, current_html: str, limit: int = 10) -> Tuple[str, int, gr.update]:
-        """Handles loading more tasks for the task log."""
-        tasks = self.framework.get_task_history(repo_id=repo_id, offset=offset, limit=limit)
-        new_html = self._format_task_log_html(tasks, existing_html=current_html if offset > 0 else "")
-        new_offset = offset + len(tasks)
-
-        # Disable "Load More" button if no more tasks were fetched this round
-        load_more_btn_update = gr.update(interactive=bool(tasks and len(tasks) == limit))
-
-        return new_html, new_offset, load_more_btn_update
+    # handle_load_more_tasks method REMOVED
 
     def create_ui(self) -> gr.Blocks:
         """Builds the Gradio Blocks UI."""
@@ -385,8 +377,8 @@ No active tasks.
             selected_file_state = gr.State()
             last_status_text_state = gr.State("") # Still used for overall status text, not modal HTML
             # last_progress_html_state REMOVED
-            task_log_offset_state = gr.State(0)
-            current_task_log_html_state = gr.State("")
+            # task_log_offset_state REMOVED
+            # current_task_log_html_state REMOVED
             # js_update_data_output = gr.JSON(visible=False, label="JS Update Data", elem_id="js_update_data_json") # REMOVED
             # States for tracking Control Panel structure - REMOVED as modal is now self-contained
             # last_main_task_id_state = gr.State(None)
@@ -451,9 +443,7 @@ No active tasks.
                     with gr.Row():
                         analyze_dead_code_btn = gr.Button("Find Potentially Unused Code")
                         analyze_duplicates_btn = gr.Button("Find Potentially Duplicate Code")
-                    with gr.Accordion("Full Task History", open=False) as task_history_accordion:
-                        full_task_log_html = gr.HTML("No tasks loaded yet.")
-                        load_more_tasks_btn = gr.Button("Load More Tasks")
+                    # Full Task History Accordion REMOVED
                     with gr.Tabs():
                         with gr.TabItem("Unused Code Results"):
                             dead_code_df = gr.DataFrame(headers=["File", "Symbol", "Type", "Lines"], interactive=False, max_height=400,
@@ -491,12 +481,9 @@ No active tasks.
             # The task_log_output is now full_task_log_html
             demo.load(
                 self.handle_initial_load,
-                outputs=[repo_dropdown, branch_dropdown, repo_id_state, branch_state, chatbot, task_log_offset_state, current_task_log_html_state]
+                outputs=[repo_dropdown, branch_dropdown, repo_id_state, branch_state, chatbot] # Adjusted for removed states
             ).then(
-                self.handle_load_more_tasks, # Initial load of tasks after states are reset
-                inputs=[repo_id_state, task_log_offset_state, current_task_log_html_state],
-                outputs=[full_task_log_html, task_log_offset_state, load_more_tasks_btn]
-            ).then( # This then block might be redundant if update_all_panels doesn't affect task log
+                # Removed .then(self.handle_load_more_tasks, ...)
                 self.update_all_panels, [repo_id_state, branch_state], all_insight_outputs + git_panel_outputs
             )
 
@@ -533,20 +520,14 @@ No active tasks.
                 self.handle_add_repo, [repo_url_modal], [status_output, repo_dropdown] + self.task_buttons
             ).then(None, js="() => { const modal = document.getElementById('addRepoModal'); if (modal) modal.style.display = 'none'; }").then(
                 self.handle_repo_select, [repo_dropdown],
-                [branch_dropdown, repo_id_state, branch_state, chatbot, task_log_offset_state, current_task_log_html_state] # task_log_output removed, states added
-            ).then(
-                self.handle_load_more_tasks, # Reload tasks for new repo
-                inputs=[repo_id_state, task_log_offset_state, current_task_log_html_state],
-                outputs=[full_task_log_html, task_log_offset_state, load_more_tasks_btn]
+                [branch_dropdown, repo_id_state, branch_state, chatbot] # Adjusted outputs
+                # Removed .then(self.handle_load_more_tasks, ...)
             )
 
             repo_dropdown.change(
                 self.handle_repo_select, [repo_dropdown],
-                [branch_dropdown, repo_id_state, branch_state, chatbot, task_log_offset_state, current_task_log_html_state] # task_log_output removed, states added
-            ).then(
-                self.handle_load_more_tasks, # Reload tasks for new repo selection
-                inputs=[repo_id_state, task_log_offset_state, current_task_log_html_state],
-                outputs=[full_task_log_html, task_log_offset_state, load_more_tasks_btn]
+                [branch_dropdown, repo_id_state, branch_state, chatbot] # Adjusted outputs
+                # Removed .then(self.handle_load_more_tasks, ...)
             ).then(
                 self.update_all_panels, [repo_id_state, branch_state], all_insight_outputs + git_panel_outputs
             )
@@ -554,21 +535,14 @@ No active tasks.
             # Branch change should also reset and reload task log if it's repo-specific
             branch_dropdown.change(
                 self.handle_branch_select, [branch_dropdown],
-                [branch_state, chatbot, task_log_offset_state, current_task_log_html_state] # task_log_output removed, states added
-            ).then(
-                self.handle_load_more_tasks, # Reload tasks for new branch selection
-                inputs=[repo_id_state, task_log_offset_state, current_task_log_html_state], # Assuming repo_id_state is still valid
-                outputs=[full_task_log_html, task_log_offset_state, load_more_tasks_btn]
+                [branch_state, chatbot] # Adjusted outputs
+                # Removed .then(self.handle_load_more_tasks, ...)
             ).then(
                 self.update_all_panels, [repo_id_state, branch_state], all_insight_outputs + git_panel_outputs
             )
 
-            # Connect the "Load More Tasks" button
-            load_more_tasks_btn.click(
-                self.handle_load_more_tasks,
-                inputs=[repo_id_state, task_log_offset_state, current_task_log_html_state],
-                outputs=[full_task_log_html, task_log_offset_state, load_more_tasks_btn]
-            )
+            # Connect the "Load More Tasks" button - REMOVED
+            # load_more_tasks_btn.click(...) REMOVED
 
             # Optional: Reload tasks when accordion is opened (if it was previously empty due to no repo)
             # This requires knowing the accordion's open state or using its change event.
@@ -639,6 +613,7 @@ No active tasks.
             # or keep it separate if only the old Gradio main_progress_bar needs it.
             # For full decoupling, the new HTML page should handle its own version of external progress bar.
             # "external_progress_bar_data" REMOVED from WebSocket data
+            "current_repo_id": repo_id, # Added current_repo_id for JS
             "system_info": { # For model, storage, usage stats
                 "model_info": {},
                 "storage_info": {},
@@ -763,11 +738,13 @@ No active tasks.
         main_task_status_class += " px-3 py-1 text-xs font-semibold rounded-full"
 
         control_panel_ws_data["main_task"] = {
+            "id": task.id, # Added task ID
             "name": task.name, "status_text": task.status, "status_class": main_task_status_class,
             "progress": task.progress, "message": task.message,
             "time_elapsed": elapsed_str, "time_duration": duration_str,
             "details": task.details if task.details else {},
             "error_message": task.error_message,
+            # Children will be added below
         }
 
         # current_sub_task_ids = sorted([st.id for st in task.children]) if task.children else [] # Not directly needed for Gradio return
@@ -779,23 +756,36 @@ No active tasks.
         # new_last_main_task_has_details = current_main_task_has_details
         # new_last_main_task_has_error = current_main_task_has_error
 
-        sub_task_status_classes_map = {
-            'running': "bg-blue-100 text-blue-700 dark:bg-blue-600 dark:text-blue-100",
-            'completed': "bg-green-100 text-green-700 dark:bg-green-600 dark:text-green-100",
-            'failed': "bg-red-100 text-red-700 dark:bg-red-600 dark:text-red-100",
-            'pending': "bg-yellow-100 text-yellow-700 dark:bg-yellow-600 dark:text-yellow-100"
-        }
-        default_sub_task_class_base = "bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-100"
-        sub_task_badge_common_classes = " text-xxs px-1.5 py-0.5 rounded-full whitespace-nowrap flex-shrink-0"
+        # Prepare children data to be nested if task exists
+        children_list_for_main_task = []
+        if task and task.children:
+            sub_task_status_classes_map = {
+                'running': "bg-blue-100 text-blue-700 dark:bg-blue-600 dark:text-blue-100",
+                'completed': "bg-green-100 text-green-700 dark:bg-green-600 dark:text-green-100",
+                'failed': "bg-red-100 text-red-700 dark:bg-red-600 dark:text-red-100",
+                'pending': "bg-yellow-100 text-yellow-700 dark:bg-yellow-600 dark:text-yellow-100"
+            }
+            default_sub_task_class_base = "bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-100"
+            sub_task_badge_common_classes = " text-xxs px-1.5 py-0.5 rounded-full whitespace-nowrap flex-shrink-0"
 
-        if task.children:
-            for child_task in sorted(task.children, key=lambda t: t.started_at or datetime.min.replace(tzinfo=timezone.utc)):
-                child_status_class = sub_task_status_classes_map.get(child_task.status, default_sub_task_class_base) + sub_task_badge_common_classes
-                control_panel_ws_data["sub_tasks"].append({
-                    "id": child_task.id, "name": child_task.name, "status_text": child_task.status,
-                    "status_class": child_status_class, "progress": child_task.progress,
-                    "message": child_task.message, "details": child_task.details if child_task.details else {}
+            for child_task_obj in sorted(task.children, key=lambda t: t.started_at or datetime.min.replace(tzinfo=timezone.utc)):
+                child_status_class = sub_task_status_classes_map.get(child_task_obj.status, default_sub_task_class_base) + sub_task_badge_common_classes
+                children_list_for_main_task.append({
+                    "id": child_task_obj.id,
+                    "name": child_task_obj.name,
+                    "status_text": child_task_obj.status,
+                    "status_class": child_status_class,
+                    "progress": child_task_obj.progress,
+                    "message": child_task_obj.message,
+                    "details": child_task_obj.details if child_task_obj.details else {},
+                    # Note: error_message for subtasks is not explicitly handled in current JS template, but can be added
+                    "error_message": child_task_obj.error_message
                 })
+
+        # Update main_task in WebSocket data, now including children
+        if task: # task is the result of self.framework.get_latest_task(repo_id)
+            control_panel_ws_data["main_task"]["children"] = children_list_for_main_task
+        # The top-level "sub_tasks" key in control_panel_ws_data is no longer populated or needed.
 
         if main_event_loop:
             asyncio.run_coroutine_threadsafe(control_panel_manager.broadcast(control_panel_ws_data), main_event_loop)
@@ -860,21 +850,20 @@ No active tasks.
             # js_update_data_output and modal states removed
         ) + button_updates
 
-    def handle_initial_load(self) -> Tuple[gr.update, gr.update, Optional[int], Optional[str], List[Dict[str, str]], int, str]:
+    def handle_initial_load(self) -> Tuple[gr.update, gr.update, Optional[int], Optional[str], List[Dict[str, str]]]:
         repos = self.framework.get_all_repositories()
         repo_choices = [(f"{repo.name} ({repo.path})", repo.id) for repo in repos]
         initial_repo_id = repo_choices[0][1] if repo_choices else None
         repo_upd = gr.update(choices=repo_choices, value=initial_repo_id)
 
         # Outputs for handle_initial_load are:
-        # repo_dropdown, branch_dropdown, repo_id_state, branch_state, chatbot,
-        # task_log_offset_state (to reset for handle_load_more_tasks), current_task_log_html_state (to reset)
+        # repo_dropdown, branch_dropdown, repo_id_state, branch_state, chatbot
         if not initial_repo_id:
-            return repo_upd, gr.update(choices=[], value=None), None, None, [{"role": "assistant", "content": "Welcome! Please add a repository to begin."}], 0, ""
+            return repo_upd, gr.update(choices=[], value=None), None, None, [{"role": "assistant", "content": "Welcome! Please add a repository to begin."}]
 
-        # Call handle_repo_select to get most of the values, then add task log resets
-        branch_upd, repo_id_val, branch_val, chatbot_val, _offset_reset, _html_reset = self.handle_repo_select(initial_repo_id) # type: ignore
-        return repo_upd, branch_upd, repo_id_val, branch_val, chatbot_val, 0, ""
+        # Call handle_repo_select to get most of the values
+        branch_upd, repo_id_val, branch_val, chatbot_val = self.handle_repo_select(initial_repo_id) # type: ignore
+        return repo_upd, branch_upd, repo_id_val, branch_val, chatbot_val
 
 
     def handle_add_repo(self, repo_identifier: str) -> Tuple:
@@ -894,22 +883,22 @@ No active tasks.
             status_msg = f"Added '{repo.name}'. Please select a branch to analyze."
             return (status_msg, new_repo_update) + self._get_task_button_updates(True)
 
-    def handle_repo_select(self, repo_id: int) -> Tuple[gr.update, Optional[int], Optional[str], List[Dict[str,str]], int, str]:
-        # Returns: branch_dropdown_update, repo_id_state, branch_state, chatbot_update, task_log_offset_state, current_task_log_html_state
+    def handle_repo_select(self, repo_id: int) -> Tuple[gr.update, Optional[int], Optional[str], List[Dict[str,str]]]:
+        # Returns: branch_dropdown_update, repo_id_state, branch_state, chatbot_update
         if not repo_id:
-            return gr.update(choices=[], value=None), None, None, [{"role": "assistant", "content": "Please select a repository."}], 0, ""
+            return gr.update(choices=[], value=None), None, None, [{"role": "assistant", "content": "Please select a repository."}]
         repo = self.framework.get_repository_by_id(int(repo_id))
         if not repo:
-            return gr.update(choices=[], value=None), repo_id, None, [], 0, ""
+            return gr.update(choices=[], value=None), repo_id, None, []
         branches = self.framework.get_repository_branches(repo_id)
         active_branch = repo.active_branch if repo.active_branch in branches else (branches[0] if branches else None)
         chatbot_reset = [{"role": "assistant", "content": f"Agent ready for '{repo.name}' on branch '{active_branch}'."}]
-        return gr.update(choices=branches, value=active_branch), repo_id, active_branch, chatbot_reset, 0, "" # Reset offset and HTML
+        return gr.update(choices=branches, value=active_branch), repo_id, active_branch, chatbot_reset
 
-    def handle_branch_select(self, branch: str) -> Tuple[str, List[Dict[str,str]], int, str]:
-        # Returns: branch_state, chatbot_update, task_log_offset_state, current_task_log_html_state
+    def handle_branch_select(self, branch: str) -> Tuple[str, List[Dict[str,str]]]:
+        # Returns: branch_state, chatbot_update
         chatbot_msg = [{"role": "assistant", "content": f"Agent context switched to branch '{branch}'."}]
-        return branch, chatbot_msg, 0, "" # Reset offset and HTML
+        return branch, chatbot_msg
 
     def update_all_panels(self, repo_id: int, branch: str) -> Tuple:
         stats_upd, lang_upd = self.update_insights_dashboard(repo_id, branch)
@@ -1056,6 +1045,18 @@ if __name__ == "__main__":
 
     # Add the WebSocket route
     app.add_api_websocket_route("/ws/controlpanel", websocket_control_panel_endpoint)
+
+    # --- API Endpoint for Task History ---
+    @app.get("/api/repositories/{repo_id}/tasks_history", response_model=List[Task])
+    async def api_get_task_history(
+        repo_id: int,
+        offset: int = Query(0, ge=0),
+        limit: int = Query(10, ge=1, le=50) # Max 50 tasks per request
+    ):
+        # framework_instance is accessible here as it's defined in the same __main__ scope
+        tasks = framework_instance.get_task_history(repo_id=repo_id, offset=offset, limit=limit)
+        return tasks
+    # --- End API Endpoint ---
 
     # Mount static files (for control_panel.html, css, js)
     # Ensure the path is correct relative to where the script is run

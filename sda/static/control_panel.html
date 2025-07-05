@@ -117,7 +117,7 @@
         <div class="p-3 bg-gray-100 dark:bg-gray-800 rounded-lg shadow-md"> <!-- Section: Darker BG -->
             <div id="task-activity-toggle" class="flex justify-between items-center cursor-pointer mb-2 pb-2 border-b border-gray-300 dark:border-gray-600">
                 <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-100 flex items-center mb-0 pb-0 border-none"> <!-- Section Title: Lighter text in dark -->
-                    <i class="fas fa-tasks mr-2 text-gray-500 dark:text-gray-400"></i>Current Task Activity
+                    <i class="fas fa-history mr-2 text-gray-500 dark:text-gray-400"></i>Task Activity & History
                 </h3>
                 <span id="task-activity-chevron" class="text-gray-500 dark:text-gray-400 transform transition-transform duration-200"><i class="fas fa-chevron-down"></i></span>
             </div>
@@ -176,25 +176,87 @@
                         <pre id="main-task-error-message-content" class="mt-1.5 text-xs bg-red-200/50 dark:bg-red-800/40 p-2 rounded overflow-x-auto"></pre> <!-- Adjusted pre background -->
                     </div>
                 </div>
+
+                <!-- Container for Historical Tasks -->
+                <div id="historical-tasks-container" class="mt-4 pt-4 border-t border-gray-300 dark:border-gray-600">
+                    <h4 class="text-md font-semibold mb-3 text-gray-700 dark:text-gray-100">Task History:</h4>
+                    <div id="task-history-list" class="space-y-3">
+                        <!-- Historical tasks will be injected here by JS -->
+                        <p id="no-history-message" class="text-sm text-gray-500 dark:text-gray-400" style="display: none;">No historical tasks found.</p>
+                    </div>
+                    <button id="load-more-tasks-btn" class="mt-4 w-full bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-md text-sm transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed">
+                        <i class="fas fa-plus mr-1"></i> Load More Tasks
+                    </button>
+                </div>
             </div>
         </div>
     </div>
 
-    <template id="sub-task-template-js">
-        <div class="sub-task-card bg-white dark:bg-gray-700 shadow-sm rounded-lg p-3 my-1 border border-gray-200 dark:border-gray-600"> <!-- Card: Lighter BG -->
-            <div class="flex items-center justify-between mb-1">
-                <div class="flex items-center min-w-0 mr-2">
-                    <span data-id="status-icon" class="mr-2 flex-shrink-0"><i class="fas text-sm"></i></span>
-                    <span data-id="name" class="text-xs font-semibold text-gray-700 dark:text-gray-100 truncate" title="">SubTask Name</span> <!-- Lighter text -->
+    <template id="task-entry-template-js">
+        <div class="task-entry-card bg-white dark:bg-gray-700 shadow-md rounded-lg mb-3 overflow-hidden">
+            <div class="task-summary p-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors duration-150 ease-in-out">
+                <div class="flex justify-between items-center">
+                    <h4 class="task-name-heading text-lg font-semibold text-gray-800 dark:text-gray-100 flex items-center truncate">
+                        <i class="task-icon fas fa-flag-checkered mr-2 text-indigo-500"></i>
+                        <span class="task-name-placeholder">Task Name</span>
+                    </h4>
+                    <span class="task-status-badge px-3 py-1 text-xs font-semibold rounded-full">Status</span>
                 </div>
-                <span data-id="status-badge" class="text-xs px-2 py-1 rounded-full whitespace-nowrap flex-shrink-0">status</span> <!-- Adjusted size and padding -->
+                <div class="task-progress-bar-container progress-wrapper mt-2 mb-1" style="display: none;"> <!-- Initially hidden, shown if task is running/pending -->
+                    <p class="text-xs text-gray-600 dark:text-gray-300 mb-0.5 flex justify-between items-center">
+                        <span class="task-progress-name-placeholder text-xs font-semibold text-gray-700 dark:text-gray-200 truncate pr-2" title="Task">Task</span>
+                        <span class="task-progress-text-placeholder text-xxs whitespace-nowrap text-gray-500 dark:text-gray-300">0%</span>
+                    </p>
+                    <div class="w-full bg-gray-200 dark:bg-gray-500 rounded-full h-2">
+                        <div class="task-progress-bar bg-blue-500 dark:bg-blue-400 h-2 rounded-full transition-width duration-300 ease-out" style="width: 0%"></div>
+                    </div>
+                </div>
+                 <div class="task-timing-placeholder text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    <!-- Timing info like elapsed/duration -->
+                </div>
             </div>
-            <div data-id="progress-bar-container" class="mt-1">
-                <!-- JS will render progress_bar.html content here -->
+            <div class="task-content-collapsible" style="display: none;"> <!-- Collapsible content area -->
+                <div class="p-3 border-t border-gray-200 dark:border-gray-600">
+                    <div class="task-details-card mb-2" style="display: none;">
+                        <h5 class="text-sm font-medium mb-1 text-gray-700 dark:text-gray-200">Details:</h5>
+                        <ul class="task-details-list list-disc list-inside pl-2 space-y-0.5 text-xs text-gray-600 dark:text-gray-300"></ul>
+                    </div>
+                    <div class="task-children-container mb-2" style="display: none;">
+                        <h5 class="text-sm font-medium mb-1 text-gray-700 dark:text-gray-200">Sub-Tasks:</h5>
+                        <div class="sub-tasks-list space-y-1">
+                            <!-- Collapsible sub-tasks will be injected here -->
+                        </div>
+                    </div>
+                    <div class="task-error-card bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700 text-red-700 dark:text-red-200 px-3 py-2 rounded-lg relative" style="display: none;">
+                        <strong class="font-bold flex items-center text-sm"><i class="fas fa-exclamation-triangle mr-1.5"></i>Error</strong>
+                        <pre class="task-error-message-content mt-1.5 text-xs bg-red-200/50 dark:bg-red-800/40 p-2 rounded overflow-x-auto"></pre>
+                    </div>
+                </div>
             </div>
-            <div data-id="details-container" class='mt-2 bg-gray-100 dark:bg-slate-600 p-2 rounded text-xxs' style="display: none;"> <!-- Details container slightly different dark -->
-                <p class="font-semibold text-gray-600 dark:text-gray-200 mb-0.5">Details:</p> <!-- Lighter text -->
-                <ul data-id="details-list" class="list-disc list-inside pl-2 space-y-0.5 text-gray-500 dark:text-gray-300"></ul> <!-- Default text -->
+        </div>
+    </template>
+
+    <template id="sub-task-template-js">
+        <div class="sub-task-entry-card bg-gray-50 dark:bg-gray-700 shadow-sm rounded-md mb-2 overflow-hidden border border-gray-200 dark:border-gray-600">
+            <div class="sub-task-summary p-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors duration-150 ease-in-out">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center min-w-0 mr-2">
+                        <span class="subtask-status-icon mr-2 flex-shrink-0"><i class="fas text-xs"></i></span>
+                        <span class="subtask-name text-xs font-semibold text-gray-700 dark:text-gray-100 truncate" title="SubTask Name">SubTask Name</span>
+                    </div>
+                    <span class="subtask-status-badge text-xxs px-1.5 py-0.5 rounded-full whitespace-nowrap flex-shrink-0">status</span>
+                </div>
+            </div>
+            <div class="sub-task-content-collapsible" style="display: none;"> <!-- Collapsible content area for sub-task -->
+                <div class="p-2 border-t border-gray-200 dark:border-gray-500">
+                    <div class="subtask-progress-bar-container progress-wrapper mt-1 mb-1">
+                        <!-- JS will render progress_bar.html content here, or simplified progress -->
+                    </div>
+                    <div class="subtask-details-container mt-1 bg-gray-100 dark:bg-slate-600 p-1.5 rounded text-xxs" style="display: none;">
+                        <p class="font-semibold text-gray-600 dark:text-gray-200 mb-0.5">Details:</p>
+                        <ul class="subtask-details-list list-disc list-inside pl-2 space-y-0.5 text-gray-500 dark:text-gray-300"></ul>
+                    </div>
+                </div>
             </div>
         </div>
     </template>
