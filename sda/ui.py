@@ -14,6 +14,7 @@ import asyncio # Added for asyncio.create_task
 import psutil # For CPU load and RAM
 import re # For _extract_progress_from_html
 from datetime import datetime, timezone # For time elapsed
+import logging # Added import for logging
 try:
     import torch
 except ImportError:
