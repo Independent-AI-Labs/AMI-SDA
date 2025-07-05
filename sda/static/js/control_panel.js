@@ -135,9 +135,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.gpu_info) {
             const gpu = data.gpu_info;
             if (gpu.torch_available && gpu.cuda_available) {
+                // Ensured space after colon for GPU info
                 gpuHtml = `<p class="text-xs text-gray-600 dark:text-gray-300 mb-0 leading-tight flex items-center">
                                <i class="fas fa-tv mr-1.5 text-gray-400 dark:text-gray-500"></i>
-                               <strong>GPU:</strong>&nbsp;CUDA ${gpu.cuda_version} | ${gpu.num_gpus} Device(s)
+                               <strong>GPU:</strong> CUDA ${gpu.cuda_version} | ${gpu.num_gpus} Device(s)
                            </p>`;
                 if (gpu.num_gpus > 0 && gpu.gpu_names && gpu.gpu_names.length > 0) {
                     gpuHtml += '<ul class="list-none pl-5 mt-0.5">';
