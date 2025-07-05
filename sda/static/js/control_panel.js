@@ -338,8 +338,8 @@ document.addEventListener('DOMContentLoaded', () => {
         taskActivityContent.style.maxHeight = taskActivityContent.scrollHeight + 'px';
         taskActivityContent.style.opacity = '1';
         taskActivityContent.dataset.isOpen = 'true';
-        task_activity_chevron.classList.remove('fa-chevron-down');
-        task_activity_chevron.classList.add('fa-chevron-up');
+        taskActivityChevron.classList.remove('fa-chevron-down'); // Corrected variable name
+        taskActivityChevron.classList.add('fa-chevron-up');     // Corrected variable name
          setTimeout(() => { // Ensure scrollHeight is calculated after full render
             if (taskActivityContent.dataset.isOpen === 'true') {
                  taskActivityContent.style.maxHeight = 'none'; // Allow dynamic content

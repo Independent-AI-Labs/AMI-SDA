@@ -9,16 +9,15 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
-        print(f"WebSocket {websocket.client} connected. Total connections: {len(self.active_connections)}")
+        # print(f"WebSocket {websocket.client} connected. Total connections: {len(self.active_connections)}") # Disabled
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
-            print(f"WebSocket {websocket.client} disconnected. Total connections: {len(self.active_connections)}")
+            # print(f"WebSocket {websocket.client} disconnected. Total connections: {len(self.active_connections)}") # Disabled
 
     async def broadcast(self, data: Dict[str, Any]):
         if not self.active_connections:
-            # print("No active WebSocket connections to broadcast to.") # Can be noisy
             return
 
         # Create a list of tasks for sending messages
