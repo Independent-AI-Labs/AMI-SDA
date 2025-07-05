@@ -284,3 +284,19 @@ class DatabaseManager:
         except Exception as e:
             logging.error(f"Dgraph query failed: {e}", exc_info=True)
             return None
+
+    def get_database_size(self) -> Optional[int]:
+        """
+        Retrieves the total size of the current PostgreSQL database.
+
+        Returns:
+            The database size in bytes, or None if an error occurs.
+        """
+        try:
+            with self.engine.connect() as conn:
+                # No need to set search_path for this query as pg_database_size works on current_database()
+                result = conn.execute(text("SELECT pg_database_size(current_database())")).scalar_one_or_none()
+                return result
+        except Exception as e:
+            logging.error(f"Failed to get database size: {e}", exc_info=True)
+            return None

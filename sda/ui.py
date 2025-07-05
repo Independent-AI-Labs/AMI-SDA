@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import List, Tuple, Dict, Any, Generator
 import os
 import psutil # For CPU load and RAM
+from datetime import datetime, timezone # For time elapsed
 try:
     import torch
 except ImportError:
@@ -81,30 +82,37 @@ No active tasks.
     <p><strong>Embedding Devices:</strong> {AIConfig.EMBEDDING_DEVICES}</p>
 </div>
 {self._get_hardware_info_html()}
+{self._get_storage_info_html()}
 </div>"""
         
         html_parts = []
         html_parts.append(f"""
         <div class="status-container">
-            <div class='model-info-container'>
-                <h4>Model Information</h4>
-                <p><strong>LLM:</strong> {AIConfig.ACTIVE_LLM_MODEL}</p>
-                <p><strong>Embedding Model:</strong> {AIConfig.ACTIVE_EMBEDDING_MODEL}</p>
-                <p><strong>Embedding Devices:</strong> {AIConfig.EMBEDDING_DEVICES}</p>
+            <div class='model-info-container section-card'>
+                <h4><i class="fas fa-brain"></i> Model Information</h4>
+                <p><i class="fas fa-comments"></i> <strong>LLM:</strong> {AIConfig.ACTIVE_LLM_MODEL}</p>
+                <p><i class="fas fa-project-diagram"></i> <strong>Embedding Model:</strong> {AIConfig.ACTIVE_EMBEDDING_MODEL}</p>
+                <p><i class="fas fa-cogs"></i> <strong>Embedding Devices:</strong> {AIConfig.EMBEDDING_DEVICES}</p>
             </div>
             {self._get_hardware_info_html()}
-            <h3>Main Task: {task.name}</h3>
-            <div class="task-status-card">
-                <div class="status-header">
-                    <span class="status-label">Status:</span>
+            {self._get_storage_info_html()}
+            <div class="main-task-section-card section-card">
+                <h3><i class="fas fa-tasks"></i> Main Task: {task.name}</h3>
+                <div class="task-status-card"> <!-- Keep this for specific task content styling -->
+                    <div class="status-header">
+                        <span class="status-label">Status:</span>
                     <span class="status-value">{task.status}</span>
                 </div>
                 {self._create_html_progress_bar(task.progress, task.message, task.name)}
-            </div>
+                    <div class="task-timing-info">
+                        {self._get_task_timing_html(task)}
+                    </div>
+                </div> <!-- End of task-status-card -->
+            </div> <!-- End of main-task-section-card -->
         """)
         
         if task.details:
-            html_parts.append("<div class='task-details'><strong>Details:</strong><ul>")
+            html_parts.append("<div class='task-details section-card'><strong>Details:</strong><ul>")
             for k, v in sorted(task.details.items()):
                 html_parts.append(f"<li><strong>{k}:</strong> {v}</li>")
             html_parts.append("</ul></div>")
@@ -148,6 +156,58 @@ No active tasks.
         html_parts.append("</div>")
         return "".join(html_parts)
 
+    def _get_task_timing_html(self, task) -> str:
+        """Generates HTML for displaying task timing information (elapsed/remaining)."""
+        if not task or not hasattr(task, 'started_at') or task.started_at is None:
+            return ""
+
+        now = datetime.now(timezone.utc)
+
+        # Ensure started_at is timezone-aware (assume UTC if naive)
+        started_at = task.started_at
+        if isinstance(started_at, (int, float)): # Handle timestamps
+            started_at = datetime.fromtimestamp(started_at, timezone.utc)
+        elif started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+
+        elapsed_seconds = (now - started_at).total_seconds()
+
+        if elapsed_seconds < 0: # Clock sync issues or future start time
+             elapsed_seconds = 0
+
+        # Format elapsed time
+        hours, remainder = divmod(elapsed_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        elapsed_str = ""
+        if hours > 0:
+            elapsed_str += f"{int(hours)}h "
+        if minutes > 0 or hours > 0: # Show minutes if hours are shown or if minutes > 0
+            elapsed_str += f"{int(minutes)}m "
+        elapsed_str += f"{int(seconds)}s"
+
+        timing_html = f"<p><strong>Time Elapsed:</strong> {elapsed_str}</p>"
+
+        # Placeholder for Estimated Time Remaining (ETR)
+        # ETR calculation would require task.progress and a stable progress rate.
+        # For now, we'll just show elapsed.
+        # if task.status == 'running' and task.progress > 0 and task.progress < 100:
+        #     try:
+        #         # This is a very basic ETR, assumes linear progress
+        #         total_estimated_time = elapsed_seconds / (task.progress / 100)
+        #         remaining_seconds = total_estimated_time - elapsed_seconds
+        #         if remaining_seconds > 0:
+        #             r_hours, r_remainder = divmod(remaining_seconds, 3600)
+        #             r_minutes, r_seconds = divmod(r_remainder, 60)
+        #             etr_str = ""
+        #             if r_hours > 0: etr_str += f"{int(r_hours)}h "
+        #             if r_minutes > 0 or r_hours > 0: etr_str += f"{int(r_minutes)}m "
+        #             etr_str += f"{int(r_seconds)}s"
+        #             timing_html += f"<p><strong>Est. Time Remaining:</strong> {etr_str}</p>"
+        #     except ZeroDivisionError:
+        #         pass # Progress is 0, cannot estimate
+
+        return timing_html
+
     def _get_hardware_info_html(self) -> str:
         """Generates HTML for displaying hardware and worker information."""
         num_cpus = os.cpu_count()
@@ -178,13 +238,50 @@ No active tasks.
         worker_details_parts.append("</ul>")
         worker_html = "".join(worker_details_parts)
 
+        # System Load
+        cpu_load = psutil.cpu_percent(interval=None) # Non-blocking, gets the last measurement
+        ram = psutil.virtual_memory()
+        ram_total_gb = ram.total / (1024**3)
+        ram_used_gb = ram.used / (1024**3)
+        ram_percent_used = ram.percent
+
         return f"""
-        <div class='hardware-info-container'>
-            <h4>System & Worker Information</h4>
-            <p><strong>Logical CPUs:</strong> {num_cpus}</p>
+        <div class='hardware-info-container section-card'>
+            <h4><i class="fas fa-server"></i> System & Worker Information</h4>
+            <p><i class="fas fa-microchip"></i> <strong>Logical CPUs:</strong> {num_cpus}</p>
+            <p><i class="fas fa-tachometer-alt"></i> <strong>Current CPU Load:</strong> {cpu_load:.1f}%</p>
+            <p><i class="fas fa-memory"></i> <strong>RAM Usage:</strong> {ram_used_gb:.2f} GB / {ram_total_gb:.2f} GB ({ram_percent_used:.1f}%)</p>
             {gpu_html}
-            <p><strong>Total Allowed Application Workers:</strong> {total_allowed_workers}</p>
+            <p><i class="fas fa-users-cog"></i> <strong>Total Allowed Application Workers:</strong> {total_allowed_workers}</p>
             {worker_html}
+        </div>
+        """
+
+    def _get_storage_info_html(self) -> str:
+        """Generates HTML for displaying storage usage information."""
+        # Postgres
+        pg_size_bytes = self.framework.get_postgres_db_size()
+        pg_size_str = "N/A"
+        if pg_size_bytes is not None:
+            if pg_size_bytes < 1024:
+                pg_size_str = f"{pg_size_bytes} Bytes"
+            elif pg_size_bytes < 1024**2:
+                pg_size_str = f"{pg_size_bytes/1024:.2f} KB"
+            elif pg_size_bytes < 1024**3:
+                pg_size_str = f"{pg_size_bytes/1024**2:.2f} MB"
+            else:
+                pg_size_str = f"{pg_size_bytes/1024**3:.2f} GB"
+
+        # Dgraph (currently placeholder)
+        dgraph_usage_str = self.framework.get_dgraph_disk_usage()
+        if dgraph_usage_str is None:
+            dgraph_usage_str = "N/A"
+
+        return f"""
+        <div class='storage-info-container section-card'>
+            <h4><i class="fas fa-database"></i> Storage Usage</h4>
+            <p><i class="fas fa-hdd"></i> <strong>Postgres ({PG_DB_NAME}):</strong> {pg_size_str}</p>
+            <p><i class="fas fa-project-diagram"></i> <strong>Dgraph ({DGRAPH_HOST}:{DGRAPH_PORT}):</strong> {dgraph_usage_str}</p>
         </div>
         """
 
@@ -238,22 +335,27 @@ No active tasks.
             margin-bottom: 20px;
             border: 1px solid var(--border-color-primary);
         }}
-        .model-info-container h4 {{
+        .model-info-container h4, .hardware-info-container h4, .storage-info-container h4 {{
             margin-top: 0;
             margin-bottom: 10px;
             color: var(--body-text-color);
         }}
-        .model-info-container p {{
+        .model-info-container p, .hardware-info-container p, .storage-info-container p {{
             margin: 5px 0;
             font-size: 0.9em;
             color: var(--body-text-color-subdued);
         }}
-        .hardware-info-container {{
+        .model-info-container i, .hardware-info-container i, .storage-info-container i {{
+            margin-right: 8px;
+            color: var(--accent-color-primary); /* Or a specific color */
+        }}
+        .section-card {{
             background: var(--background-fill-secondary);
             border-radius: 8px;
             padding: 15px;
             margin-bottom: 20px;
             border: 1px solid var(--border-color-primary);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         }}
         .hardware-info-container h4 {{
             margin-top: 0;
@@ -271,6 +373,16 @@ No active tasks.
         }}
         .hardware-info-container li {{
             font-size: 0.9em;
+            color: var(--body-text-color-subdued);
+        }}
+        .task-timing-info {{
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid var(--border-color-primary);
+        }}
+        .task-timing-info p {{
+            margin: 4px 0;
+            font-size: 0.85em;
             color: var(--body-text-color-subdued);
         }}
         #addRepoModal .modal-content-wrapper { max-width: 500px; width: 100%; }
@@ -334,10 +446,28 @@ No active tasks.
         .status-container {
             font-family: var(--font-sans); line-height: 1.5;
         }
-        .task-status-card, .subtask-card {
+        .main-task-section-card h3 {
+            margin-top: 0; /* Already part of .section-card h4, but good to be explicit for h3 */
+            margin-bottom: 15px;
+            color: var(--body-text-color);
+            font-size: 1.2em; /* Slightly larger for main task title */
+        }
+        .main-task-section-card h3 i {
+            margin-right: 8px;
+            color: var(--accent-color-primary);
+        }
+        .task-status-card { /* This is nested inside main-task-section-card */
+            background: var(--background-fill-primary); /* Keep its own slightly different bg if needed */
+            border-radius: 6px; /* Inner card might have slightly smaller radius */
+            padding: 15px;
+            margin: 0; /* No margin as it's inside a section-card padding */
+            border: 1px solid var(--border-color-secondary); /* Subtle inner border */
+        }
+        .subtask-card { /* Subtasks can also be section-cards or have similar styling */
             background: var(--background-fill-primary); 
-            border-radius: 8px; padding: 15px; margin: 10px 0;
+            border-radius: 8px; padding: 15px; margin: 15px 0; /* Added more margin for separation */
             border: 1px solid var(--border-color-primary);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.03);
         }
         .status-header, .subtask-header {
             display: flex; align-items: center; gap: 10px; margin-bottom: 10px;

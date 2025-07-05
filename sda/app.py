@@ -496,3 +496,25 @@ class CodeAnalysisFramework:
         repo = self.get_repository_by_id(repo_id)
         if not repo: return False
         return self.git_service.reset_file_changes(repo.path, file_path)
+
+    # --- System Information ---
+    def get_postgres_db_size(self) -> Optional[int]:
+        """Retrieves the total size of the PostgreSQL database."""
+        return self.db_manager.get_database_size()
+
+    def get_dgraph_disk_usage(self) -> Optional[str]:
+        """
+        Retrieves Dgraph disk usage.
+        Currently, this is a placeholder as direct Dgraph disk usage query is complex.
+        Future: Implement querying Dgraph's /state endpoint or metrics.
+        """
+        # Placeholder implementation.
+        # For a real implementation, you might:
+        # 1. Use `requests` to hit Dgraph's /state endpoint (if available and provides disk info).
+        #    Example: requests.get(f"http://{DGRAPH_HOST}:8080/state") and parse.
+        # 2. Or, if Dgraph is running in a known environment (e.g., Docker),
+        #    exec into the container to check disk usage of Dgraph's data directories (`p`, `w` folders).
+        #    This is more complex and less portable.
+        # 3. Check Dgraph documentation for recommended ways to monitor disk usage.
+        logging.info("get_dgraph_disk_usage is a placeholder. Dgraph disk usage not actively queried.")
+        return "Dgraph usage: N/A (placeholder)"
