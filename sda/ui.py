@@ -33,7 +33,7 @@ import uvicorn
 from fastapi import Query # Added for API endpoint query parameters
 
 from app import CodeAnalysisFramework
-from sda.core.models import Task as SQLA_Task # Alias to avoid confusion if TaskRead is also named Task
+from sda.core.models import Task as SQLA_Task, Task  # Alias to avoid confusion if TaskRead is also named Task
 from sda.core.data_models import TaskRead # Import the new Pydantic model
 from sda.config import IngestionConfig, AIConfig, PG_DB_NAME, DGRAPH_HOST, DGRAPH_PORT
 from sda.utils.websocket_manager import control_panel_manager
