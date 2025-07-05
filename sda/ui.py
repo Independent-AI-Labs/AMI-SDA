@@ -523,7 +523,7 @@ No active tasks.
                             # For dynamic updates based on repo/branch, populating 'value' is more flexible.
                             # The actual API (root_dir vs value) needs to be confirmed from docs.
                             # For now, I'll assume it can take `value` as a list of strings.
-                            file_explorer = gr.FileExplorer(label="Repository Files", interactive=True, file_count="single") # Added file_count="single"
+                            file_explorer = gr.FileExplorer(label="Repository Files", interactive=True, file_count="single", elem_id="sda_file_explorer") # Added elem_id
                             # Removed current_path_display, file_browser_radio, file_browser_back_btn, current_path_state
                         with gr.Column(scale=3): # Content Column
                             with gr.Tabs() as content_tabs:
@@ -674,7 +674,6 @@ No active tasks.
             file_explorer.change( # Changed from .select to .change
                 self.handle_file_explorer_select,
                 inputs=[repo_id_state, branch_state, file_explorer], # Pass file_explorer itself as input for its value
-                outputs=[
                 outputs=[
                     embedding_html_viewer, code_viewer, image_viewer, selected_file_state,
                     current_modified_files_dropdown_ca, file_to_compare_dropdown_ca

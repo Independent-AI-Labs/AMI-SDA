@@ -312,8 +312,6 @@
     display: flex;
     align-items: center; /* Vertically center the button */
     justify-content: flex-end; /* Align the button to the right end of the wrapper */
-    /* flex-grow: 0; /* Ensure wrapper does not grow if there's extra space in header */
-    /* flex-shrink: 0; /* Ensure wrapper does not shrink */
 }
 
 .modal-close-x {
@@ -324,89 +322,74 @@
     cursor: pointer;
     padding: 0.25rem; /* Add some padding for easier clicking */
     line-height: 1; /* Ensure icon is centered */
-    /* margin-left: auto; Removed, now on wrapper */
 }
 
 .modal-close-x:hover {
     color: var(--body-text-color, #1f2937); /* Use var or fallback */
 }
 
-/* Dark mode considerations (if not covered by Gradio variables) */
 html.dark .modal-header {
-    border-bottom-color: var(--border-color-primary-dark, #374151); /* Example dark mode border */
+    border-bottom-color: var(--border-color-primary-dark, #374151);
 }
 
 html.dark .modal-close-x {
     color: var(--body-text-color-subdued-dark, #9ca3af);
 }
 
+html.dark .modal-close-x:hover {
+    color: var(--body-text-color-dark, #f3f4f6);
+}
+
 /* Styles for HTML-based button with icon */
 .html-button-wrapper {
-    /* Gradio's gr.HTML component is often wrapped in a div.
-       This class targets that wrapper. We might want it to not take full width if in a row. */
-    /* display: inline-block; /* Or flex, depending on context */
-    /* margin-left: 0.5rem; /* Example if it's next to something */
 }
 
 .button-with-icon-content {
-    /* Replicate Gradio button styles as much as possible if needed,
-       or define a distinct look.
-       The classes 'gr-button gr-button-lg gr-button-secondary' attempt to do this.
-       This class is for fine-tuning. */
-    display: inline-flex; /* Align icon and text */
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 0.375rem; /* space between icon and text, similar to mr-1.5 */
-    white-space: nowrap; /* Prevent text wrapping */
-    /* Ensure cursor is pointer if not inherited from .gr-button */
+    gap: 0.375rem;
+    white-space: nowrap;
     cursor: pointer;
 }
 
-/* Ensure the icon within this custom button is vertically aligned if needed,
-   though `align-items: center` on the button should handle it. */
 .button-with-icon-content i {
-    /* font-size: 1em; /* Adjust if icon size needs to match text better */
-    /* line-height: inherit; */
-}
-
-html.dark .modal-close-x:hover {
-    color: var(--body-text-color-dark, #f3f4f6);
 }
 
 /* Stat Cards Styles */
 .stat-cards-container {
     display: flex;
-    flex-wrap: wrap; /* Allow wrapping on smaller screens */
-    gap: 1rem; /* Spacing between cards */
-    margin-bottom: 1rem; /* Space below the container */
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-bottom: 1rem;
 }
 
 .stat-card {
-    flex: 1 1 180px; /* Flex grow, shrink, basis (min-width before wrapping) */
-    background-color: var(--background-fill-secondary, #f9fafb); /* Light background */
-    padding: 1.25rem; /* p-5 */
-    border-radius: 0.5rem; /* rounded-lg */
+    flex: 1 1 180px;
+    background-color: var(--background-fill-secondary, #f9fafb);
+    padding: 1.25rem;
+    border-radius: 0.5rem;
     border: 1px solid var(--border-color-primary, #e5e7eb);
-    box-shadow: var(--shadow-drop); /* Use Gradio's shadow if available, or a default */
+    box-shadow: var(--shadow-drop);
     text-align: center;
     display: flex;
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    min-height: 100px; /* Ensure a minimum height */
+    min-height: 100px;
 }
 
 html.dark .stat-card {
-    background-color: var(--background-fill-secondary-dark, #374151); /* Darker background for dark mode */
+    background-color: var(--background-fill-secondary-dark, #374151);
     border-color: var(--border-color-primary-dark, #4b5563);
 }
 
 .stat-value {
-    font-size: 2.25rem; /* text-4xl or similar */
-    font-weight: 700; /* font-bold */
+    font-size: 2.25rem;
+    font-weight: 700;
     color: var(--body-text-color, #111827);
     line-height: 1.1;
-    margin-bottom: 0.25rem; /* mb-1 */
+    margin-bottom: 0.25rem;
 }
 
 html.dark .stat-value {
@@ -414,11 +397,11 @@ html.dark .stat-value {
 }
 
 .stat-label {
-    font-size: 0.875rem; /* text-sm */
-    font-weight: 500; /* font-medium */
+    font-size: 0.875rem;
+    font-weight: 500;
     color: var(--body-text-color-subdued, #6b7280);
     text-transform: uppercase;
-    letter-spacing: 0.05em; /* tracking-wider */
+    letter-spacing: 0.05em;
 }
 
 html.dark .stat-label {
@@ -426,62 +409,67 @@ html.dark .stat-label {
 }
 
 .stat-icon {
-    font-size: 1.75rem; /* Adjust size as needed, e.g., text-3xl */
-    margin-bottom: 0.75rem; /* mb-3, space between icon and value */
-    color: var(--accent-color-primary, #007bff); /* Use accent color or a specific theme color */
-    /* Alternative: Use a more subdued color if accent is too strong for all cards */
-    /* color: var(--body-text-color-subdued, #6b7280); */
+    font-size: 1.75rem;
+    margin-bottom: 0.75rem;
+    color: var(--accent-color-primary, #007bff);
 }
 
 html.dark .stat-icon {
-    color: var(--accent-color-primary-dark, #3b82f6); /* Accent color for dark mode */
-    /* color: var(--body-text-color-subdued-dark, #9ca3af); */
+    color: var(--accent-color-primary-dark, #3b82f6);
 }
 
 /* Custom styles for status bar row */
 .sda-status-bar-row {
-    align-items: stretch !important; /* Try to make items stretch to the same height */
+    align-items: stretch !important;
     gap: var(--spacing-lg, 1rem) !important;
 }
 
-/* Target the wrapper Gradio puts around the Textbox when container=False */
-/* This is specific and might need adjustment if Gradio's structure changes. */
-.sda-status-bar-row > div[class*="gr-form"] { /* This targets the direct child div that wraps status_output */
+.sda-status-bar-row > div[class*="gr-form"] {
     border: none !important;
     padding: 0 !important;
     margin: 0 !important;
     background: transparent !important;
-    align-self: center; /* Try to center this wrapper itself */
+    align-self: center;
 }
 
 .sda-status-bar-row textarea {
     min-height: var(--size-10, 40px) !important;
     height: var(--size-10, 40px) !important;
-    line-height: var(--line-sm, 1.25rem) !important; /* Or 1 if text is small */
-    padding-top: var(--spacing-sm, 0.5rem) !important;
-    padding-bottom: var(--spacing-sm, 0.5rem) !important;
-    box-sizing: border-box; /* Ensure padding is included in height */
-    display: flex;
-    align-items: center; /* Center text vertically inside textarea */
+    /* Vertically center text in single-line textarea: */
+    line-height: calc(var(--size-10, 40px) - 2 * var(--spacing-xxs, 4px)) !important; /* text height */
+    padding-top: var(--spacing-xxs, 4px) !important; /* Adjust to center */
+    padding-bottom: var(--spacing-xxs, 4px) !important; /* Adjust to center */
+    box-sizing: border-box !important;
+    resize: none !important;
+    overflow: hidden !important;
+    white-space: nowrap !important;
 }
 
-/* Ensure the HTML button wrapper aligns well */
 .sda-status-bar-row .html-button-wrapper {
     display: flex;
-    align-items: center; /* Vertically center the button itself */
-    height: var(--size-10, 40px); /* Match button height */
+    align-items: center;
+    height: var(--size-10, 40px);
 }
-.sda-status-bar-row .html-button-wrapper > div { /* Gradio often adds an extra div */
+.sda-status-bar-row .html-button-wrapper > div {
     height: 100%;
     display: flex;
     align-items: center;
 }
 
 .sda-status-bar-row .html-button-wrapper button.gr-button-lg {
-    height: var(--size-10, 40px) !important; /* Ensure button takes this height */
+    height: var(--size-10, 40px) !important;
     min-height: var(--size-10, 40px) !important;
-    padding-top: 0 !important; /* Adjust padding if icon/text are not centered */
+    padding-top: 0 !important;
     padding-bottom: 0 !important;
     display: inline-flex;
     align-items: center;
 }
+
+/* Style for FileExplorer height */
+#sda_file_explorer,
+#sda_file_explorer > div:first-child { /* Attempt to target the main scrollable container */
+    height: 600px !important;
+    min-height: 400px !important; /* Minimum height */
+}
+/* If FileExplorer uses a specific class for its scrollable area, that would be better to target. */
+/* Example: #sda_file_explorer .file-explorer-list-area { height: 100% !important; } */
