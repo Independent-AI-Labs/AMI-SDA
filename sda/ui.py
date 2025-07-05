@@ -520,11 +520,17 @@ No active tasks.
                             # Replace radio browser with FileExplorer
                             # Assuming gr.FileExplorer can be populated with a list of file paths using 'value'
                             # or by setting 'root_dir' and 'glob' if it operates on server filesystem directly.
-                            # For dynamic updates based on repo/branch, populating 'value' is more flexible.
-                            # The actual API (root_dir vs value) needs to be confirmed from docs.
-                            # For now, I'll assume it can take `value` as a list of strings.
-                            file_explorer = gr.FileExplorer(label="Repository Files", interactive=True, file_count="single", elem_id="sda_file_explorer") # Added elem_id
-                            # Removed current_path_display, file_browser_radio, file_browser_back_btn, current_path_state
+                            # Initialize FileExplorer with a base path and update root_dir dynamically.
+                            # WORKSPACE_DIR needs to be available here.
+                            from sda.config import WORKSPACE_DIR as SDA_WORKSPACE_DIR # Import for use
+                            file_explorer = gr.FileExplorer(
+                                root_dir=str(SDA_WORKSPACE_DIR), # Initial root, will be updated
+                                glob="**/*", # Show all files initially, might be narrowed by repo path later
+                                label="Repository Files",
+                                interactive=True,
+                                file_count="single",
+                                elem_id="sda_file_explorer"
+                            )
                         with gr.Column(scale=3): # Content Column
                             with gr.Tabs() as content_tabs:
                                 with gr.TabItem("Embedding", id="embedding_tab"):
@@ -1188,11 +1194,23 @@ No active tasks.
     def update_all_panels(self, repo_id: int, branch: str) -> Tuple:
         stats_upd, lang_upd = self.update_insights_dashboard(repo_id, branch)
 
-        file_list_for_explorer = []
+        file_explorer_upd = gr.skip() # Default to skipping update for file explorer
         if repo_id and branch:
-            # get_file_tree now returns List[str] directly suitable for FileExplorer's value
-            file_list_for_explorer = self.framework.get_file_tree(repo_id, branch)
-        file_explorer_upd = gr.update(value=file_list_for_explorer) # For gr.FileExplorer
+            repo = self.framework.get_repository_by_id(repo_id)
+            if repo and Path(repo.path).is_dir():
+                # Ensure the correct branch is materialized by get_file_tree (which does checkout)
+                # get_file_tree also conveniently returns a list of files, but we ignore it here
+                # as FileExplorer will read from the filesystem.
+                self.framework.get_file_tree(repo_id, branch) # This call ensures checkout
+                file_explorer_upd = gr.update(root_dir=str(repo.path), glob="**/*") # Update root to selected repo
+            else:
+                # No valid repo selected, or repo path doesn't exist
+                from sda.config import WORKSPACE_DIR as SDA_WORKSPACE_DIR
+                file_explorer_upd = gr.update(root_dir=str(SDA_WORKSPACE_DIR), glob=None) # Show empty or base workspace
+        else:
+            # No repo/branch selected, reset FileExplorer to base workspace view or empty
+            from sda.config import WORKSPACE_DIR as SDA_WORKSPACE_DIR
+            file_explorer_upd = gr.update(root_dir=str(SDA_WORKSPACE_DIR), value=[], glob=None) # Show empty by default
 
         initial_code_view_text = "// Select a file from the explorer."
         code_view_upd = gr.update(value=initial_code_view_text, language=None, label="File Content / Diff", visible=True)
