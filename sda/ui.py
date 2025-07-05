@@ -59,7 +59,7 @@ class DashboardUI:
             pass
         return 0.0
 
-    def _create_html_progress_bar(self, progress: float, message: str = "", task_name: str = "") -> str:
+    def _create_html_progress_bar(self, progress: float, message: str = "", task_name: str = "", unique_prefix: str = "generic") -> str:
         """Creates an HTML progress bar with CSS styling and JavaScript animations."""
         progress = max(0, min(100, progress))
         
@@ -67,7 +67,7 @@ class DashboardUI:
         # or could be handled differently if Gradio's HTML component updates efficiently.
         # For now, we remove it from the template itself.
         template = self.jinja_env.get_template("progress_bar.html")
-        return template.render(progress=progress, message=message, task_name=task_name)
+        return template.render(progress=progress, message=message, task_name=task_name, unique_prefix=unique_prefix)
 
     def _create_status_progress_html(self, task) -> str:
         """Creates detailed HTML progress display for the status modal."""
@@ -114,10 +114,11 @@ No active tasks.
             embedding_devices=AIConfig.EMBEDDING_DEVICES
         )
 
-    def _get_task_timing_html(self, task) -> str:
-        """Generates HTML for displaying task timing information (elapsed/remaining)."""
+    def _get_task_timing_values(self, task) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Helper to calculate elapsed, ETR (currently None), and duration strings."""
         if not task or not hasattr(task, 'started_at') or task.started_at is None:
-            return self.jinja_env.get_template("status_modal_parts/task_timing.html").render(elapsed_str=None, etr_str=None, duration_str="N/A")
+            is_ended_task = task and task.status in ['completed', 'failed']
+            return None, None, "N/A" if is_ended_task else None
 
         started_at = task.started_at
         if isinstance(started_at, (int, float)):
@@ -137,14 +138,15 @@ No active tasks.
             if hours > 0: elapsed_str_val += f"{int(hours)}h "
             if minutes > 0 or hours > 0: elapsed_str_val += f"{int(minutes)}m "
             elapsed_str_val += f"{int(seconds)}s"
-            # ETR logic was commented out, so etr_str_val remains None
-        elif task.status in ['completed', 'failed']:
+
+        if task.status in ['completed', 'failed']:
             if hasattr(task, 'completed_at') and task.completed_at is not None:
                 completed_at = task.completed_at
                 if isinstance(completed_at, (int, float)):
                     completed_at = datetime.fromtimestamp(completed_at, timezone.utc)
                 elif hasattr(completed_at, 'tzinfo') and completed_at.tzinfo is None:
                     completed_at = completed_at.replace(tzinfo=timezone.utc)
+
                 if started_at and completed_at:
                     total_duration_seconds = (completed_at - started_at).total_seconds()
                     if total_duration_seconds < 0: total_duration_seconds = 0
@@ -159,8 +161,22 @@ No active tasks.
             else:
                 duration_str_val = "N/A"
 
+        if task.status not in ['running', 'pending'] and not duration_str_val:
+            duration_str_val = "N/A"
+
+        return elapsed_str_val, etr_str_val, duration_str_val
+
+    def _get_task_timing_html(self, task, unique_prefix: str = "generic") -> str:
+        """Generates HTML for displaying task timing information (elapsed/remaining)."""
+        elapsed_str_val, etr_str_val, duration_str_val = self._get_task_timing_values(task)
+
         template = self.jinja_env.get_template("status_modal_parts/task_timing.html")
-        return template.render(elapsed_str=elapsed_str_val, etr_str=etr_str_val, duration_str=duration_str_val)
+        return template.render(
+            elapsed_str=elapsed_str_val,
+            etr_str=etr_str_val,
+            duration_str=duration_str_val,
+            unique_prefix=unique_prefix
+        )
 
     def _get_hardware_info_html(self) -> str:
         """Renders hardware info using a Jinja2 template."""
@@ -328,8 +344,8 @@ No active tasks.
             # HTML-based progress bar with elem_classes to prevent flicker
             with gr.Row(visible=False) as progress_row:
                 main_progress_bar = gr.HTML(
-                    value=self._create_html_progress_bar(0, "Ready", "No active task"),
-                    elem_id="main-progress-bar",
+                    value=self._create_html_progress_bar(0, "Ready", "No active task", unique_prefix="external"),
+                    elem_id="main-progress-bar", # This ID is for the overall container of the HTML content
                     elem_classes=["progress-wrapper"]
                 )
 
