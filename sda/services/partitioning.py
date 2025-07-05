@@ -7,27 +7,11 @@ logical, architecturally-significant database schemas.
 import logging
 import math
 import re
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Set, Optional, Tuple
 
 from sda.config import PartitioningConfig
-
-@dataclass
-class DirectoryNode:
-    """Represents a directory in the repository's file tree."""
-    path: Path
-    parent: Optional['DirectoryNode'] = None
-    children: Dict[str, 'DirectoryNode'] = field(default_factory=dict)
-    file_count: int = 0
-    total_size: int = 0
-
-    @property
-    def depth(self) -> int:
-        return len(self.path.parts)
-
-    def __repr__(self):
-        return f"<DirectoryNode path={self.path} files={self.file_count} size={self.total_size}>"
+from sda.core.data_models import DirectoryNode # Added import
 
 class SmartPartitioningService:
     """
@@ -40,14 +24,17 @@ class SmartPartitioningService:
 
     def _build_tree(self, file_paths: List[Tuple[Path, int]]) -> DirectoryNode:
         """Builds an in-memory tree representing the directory structure."""
-        root = DirectoryNode(path=Path('.'))
-        for file_path, file_size in file_paths:
+        root = DirectoryNode(path='.')
+        for file_path, file_size in file_paths: # file_path is Path object
             current = root
+            # Convert current.path (str) to Path for manipulation, then back to str for storage
+            current_path_obj = Path(current.path)
             for part in file_path.parent.parts:
                 if part not in current.children:
-                    new_path = current.path / part if str(current.path) != '.' else Path(part)
-                    current.children[part] = DirectoryNode(path=new_path, parent=current)
+                    new_path_obj = current_path_obj / part if current.path != '.' else Path(part)
+                    current.children[part] = DirectoryNode(path=str(new_path_obj), parent=current)
                 current = current.children[part]
+                current_path_obj = Path(current.path) # Update for next iteration
             current.file_count += 1
             current.total_size += file_size
         return root
@@ -123,14 +110,15 @@ class SmartPartitioningService:
         # This prioritizes partitions that best fit the target size.
         candidates.sort(key=lambda d: (cost_function(d), d.depth))
 
-        selected_partitions: Set[Path] = set()
+        selected_partitions: Set[str] = set() # Store paths as strings
         for candidate in candidates:
+            candidate_path_obj = Path(candidate.path)
             # Check if this candidate is already a child of a selected partition
-            is_sub_partition = any(candidate.path.is_relative_to(p) for p in selected_partitions)
+            is_sub_partition = any(candidate_path_obj.is_relative_to(Path(p)) for p in selected_partitions)
             if not is_sub_partition:
-                selected_partitions.add(candidate.path)
+                selected_partitions.add(candidate.path) # Add the string path
         
-        return selected_partitions
+        return {Path(p) for p in selected_partitions} # Convert back to Path objects for return
 
     def generate_schema_map(self, repo_path_str: str, all_files: List[Path], repo_uuid: str) -> Dict[Path, str]:
         """

@@ -2,7 +2,6 @@
 
 import logging
 import os
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple, Callable
 
@@ -11,6 +10,7 @@ from llama_index.core.text_splitter import TokenTextSplitter
 from tree_sitter import Parser, Node, Language
 
 from sda.config import IngestionConfig
+from sda.core.data_models import TransientNode, TransientChunk # Added import
 
 # It's assumed that the necessary tree-sitter language packages are installed,
 # e.g., 'pip install tree-sitter-python tree-sitter-java'
@@ -28,36 +28,6 @@ except ImportError as e:
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-
-@dataclass
-class TransientNode:
-    """A temporary, serializable representation of an AST node for pipeline processing."""
-    node_id: str
-    node_type: str
-    name: Optional[str]
-    start_line: int
-    start_column: int
-    end_line: int
-    end_column: int
-    text_content: str
-    signature: Optional[str]
-    docstring: Optional[str]
-    depth: int
-    complexity_score: Optional[float]
-    parent_id: Optional[str] = None
-    repo_metadata: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class TransientChunk:
-    """A temporary, serializable representation of a code chunk for pipeline processing."""
-    chunk_id: str
-    content: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    importance_score: float = 0.5
-    ast_node_ids: List[str] = field(default_factory=list)
-    parent_chunk_id: Optional[str] = None
 
 
 class Lazy:

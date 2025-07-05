@@ -21,9 +21,10 @@ import gradio as gr
 import pandas as pd
 from PIL import Image
 from llama_index.core.llms import ChatMessage
+from jinja2 import Environment, FileSystemLoader, select_autoescape # Added Jinja2 imports
 
 from app import CodeAnalysisFramework
-from sda.core.models import Task # Added Task import
+from sda.core.models import Task
 from sda.config import IngestionConfig, AIConfig, PG_DB_NAME, DGRAPH_HOST, DGRAPH_PORT
 
 
@@ -33,6 +34,12 @@ class DashboardUI:
     def __init__(self, framework: CodeAnalysisFramework):
         self.framework = framework
         self.task_buttons: List[gr.Button] = []
+        # Setup Jinja2 environment
+        template_dir = Path(__file__).parent / "templates"
+        self.jinja_env = Environment(
+            loader=FileSystemLoader(template_dir),
+            autoescape=select_autoescape(['html', 'xml'])
+        )
 
     def _get_task_button_updates(self, interactive: bool) -> Tuple[gr.update, ...]:
         """Helper to generate a tuple of updates for all task-related buttons."""
@@ -55,21 +62,11 @@ class DashboardUI:
         """Creates an HTML progress bar with CSS styling and JavaScript animations."""
         progress = max(0, min(100, progress))
         
-        # Create a unique hash for the content to help with comparison
-        content_hash = f"{progress:.1f}_{message}_{task_name}"
-        
-        return f"""
-        <div class="progress-container" data-content-hash="{content_hash}">
-            <div class="progress-header">
-                <span class="progress-task-name">{task_name}</span>
-                <span class="progress-percentage">{progress:.1f}%</span>
-            </div>
-            <div class="progress-bar-bg">
-                <div class="progress-bar-fill" style="width: {progress}%"></div>
-            </div>
-            <div class="progress-message">{message}</div>
-        </div>
-        """
+        # The content_hash logic for diffing might be less relevant now,
+        # or could be handled differently if Gradio's HTML component updates efficiently.
+        # For now, we remove it from the template itself.
+        template = self.jinja_env.get_template("progress_bar.html")
+        return template.render(progress=progress, message=message, task_name=task_name)
 
     def _create_status_progress_html(self, task) -> str:
         """Creates detailed HTML progress display for the status modal."""
@@ -85,351 +82,184 @@ No active tasks.
 {self._get_hardware_info_html()}
 {self._get_storage_info_html()}
 {self._get_usage_stats_html()}
-</div>"""
+</div>""" # This was the end of the 'if not task:' block
+
+        # Prepare context for the main template
+        context = {
+            "task": task,
+            "model_info_html": self._get_model_info_html(),
+            "hardware_info_html": self._get_hardware_info_html(),
+            "storage_info_html": self._get_storage_info_html(),
+            "usage_stats_html": self._get_usage_stats_html(),
+            "main_task_progress_html": self._create_html_progress_bar(task.progress, task.message, task.name),
+            "task_timing_html": self._get_task_timing_html(task),
+            "render_sub_task": self._render_sub_task_html # Pass method to render sub_tasks
+        }
         
-        html_parts = []
-        html_parts.append(f"""
-        <div class="status-container">
-            <div class='model-info-container section-card'>
-                <h4><i class="fas fa-brain"></i> Model Information</h4>
-                <p><i class="fas fa-comments"></i> <strong>LLM:</strong> {AIConfig.ACTIVE_LLM_MODEL}</p>
-                <p><i class="fas fa-project-diagram"></i> <strong>Embedding Model:</strong> {AIConfig.ACTIVE_EMBEDDING_MODEL}</p>
-                <p><i class="fas fa-cogs"></i> <strong>Embedding Devices:</strong> {AIConfig.EMBEDDING_DEVICES}</p>
-            </div>
-            {self._get_hardware_info_html()}
-            {self._get_storage_info_html()}
-            {self._get_usage_stats_html()}
-            <div class="main-task-section-card section-card">
-                <h3><i class="fas fa-tasks"></i> Main Task: {task.name}</h3>
-                <div class="task-status-card"> <!-- Keep this for specific task content styling -->
-                    <div class="status-header">
-                        <span class="status-label">Status:</span>
-                    <span class="status-value">{task.status}</span>
-                </div>
-                {self._create_html_progress_bar(task.progress, task.message, task.name)}
-                    <div class="task-timing-info">
-                        {self._get_task_timing_html(task)}
-                    </div>
-                </div> <!-- End of task-status-card -->
-            </div> <!-- End of main-task-section-card -->
-        """)
-        
-        if task.details:
-            html_parts.append("<div class='task-details section-card'><strong>Details:</strong><ul>")
-            for k, v in sorted(task.details.items()):
-                html_parts.append(f"<li><strong>{k}:</strong> {v}</li>")
-            html_parts.append("</ul></div>")
-        
-        if task.children:
-            html_parts.append("<h4>Sub-Tasks</h4>")
-            for child in sorted(task.children, key=lambda t: t.started_at):
-                if child.status == 'running':
-                    status_icon = '<i class="fas fa-sync fa-spin"></i>'
-                elif child.status == 'completed':
-                    status_icon = '<i class="fas fa-check-circle" style="color: green;"></i>'
-                else: # Error or other states
-                    status_icon = '<i class="fas fa-times-circle" style="color: red;"></i>'
-                html_parts.append(f"""
-                <div class="subtask-card">
-                    <div class="subtask-header">
-                        <span class="status-icon">{status_icon}</span>
-                        <span class="subtask-name">{child.name}</span>
-                        <span class="subtask-status">({child.status})</span>
-                    </div>
-                    {self._create_html_progress_bar(child.progress, child.message, child.name)}
-                    """)
-                
-                if child.details:
-                    html_parts.append("<div class='subtask-details'><strong>Details:</strong><ul>")
-                    for k, v in sorted(child.details.items()):
-                        html_parts.append(f"<li><strong>{k}:</strong> {v}</li>")
-                    html_parts.append("</ul></div>")
-                
-                html_parts.append("</div>")
-        
-        if task.error_message:
-            error_icon = '<i class="fas fa-exclamation-triangle" style="color: orange;"></i>'
-            html_parts.append(f"""
-            <div class="error-section">
-                <h4>{error_icon} Error</h4>
-                <pre class="error-message">{task.error_message}</pre>
-            </div>
-            """)
-        
-        html_parts.append("</div>")
-        return "".join(html_parts)
+        template = self.jinja_env.get_template("status_container_base.html")
+        return template.render(context)
+
+    def _render_sub_task_html(self, child_task: Task) -> str:
+        """Renders a single sub-task using its template."""
+        progress_bar_html = self._create_html_progress_bar(child_task.progress, child_task.message, child_task.name)
+        template = self.jinja_env.get_template("status_modal_parts/sub_task.html")
+        return template.render(task=child_task, progress_bar_html=progress_bar_html)
+
+    def _get_model_info_html(self) -> str:
+        template = self.jinja_env.get_template("status_modal_parts/model_info.html")
+        return template.render(
+            active_llm_model=AIConfig.ACTIVE_LLM_MODEL,
+            active_embedding_model=AIConfig.ACTIVE_EMBEDDING_MODEL,
+            embedding_devices=AIConfig.EMBEDDING_DEVICES
+        )
 
     def _get_task_timing_html(self, task) -> str:
         """Generates HTML for displaying task timing information (elapsed/remaining)."""
         if not task or not hasattr(task, 'started_at') or task.started_at is None:
-            return ""
+            return self.jinja_env.get_template("status_modal_parts/task_timing.html").render(elapsed_str=None, etr_str=None, duration_str="N/A")
 
-        # Ensure started_at is a timezone-aware datetime object
         started_at = task.started_at
-        if isinstance(started_at, (int, float)): # Handle timestamps
+        if isinstance(started_at, (int, float)):
             started_at = datetime.fromtimestamp(started_at, timezone.utc)
         elif hasattr(started_at, 'tzinfo') and started_at.tzinfo is None:
             started_at = started_at.replace(tzinfo=timezone.utc)
 
-        timing_html = ""
+        elapsed_str_val, etr_str_val, duration_str_val = None, None, None
 
         if task.status in ['running', 'pending']:
             now = datetime.now(timezone.utc)
             elapsed_seconds = (now - started_at).total_seconds()
             if elapsed_seconds < 0: elapsed_seconds = 0
-
             hours, remainder = divmod(elapsed_seconds, 3600)
             minutes, seconds = divmod(remainder, 60)
-            elapsed_str = ""
-            if hours > 0: elapsed_str += f"{int(hours)}h "
-            if minutes > 0 or hours > 0: elapsed_str += f"{int(minutes)}m "
-            elapsed_str += f"{int(seconds)}s"
-            timing_html = f"<p><i class='far fa-clock'></i> <strong>Time Elapsed:</strong> {elapsed_str}</p>"
-
-            # Placeholder for Estimated Time Remaining (ETR)
-            # ETR calculation would require task.progress and a stable progress rate.
-            # For now, we'll just show elapsed.
-            # if task.status == 'running' and task.progress > 0 and task.progress < 100:
-            #     try:
-            #         # This is a very basic ETR, assumes linear progress
-            #         total_estimated_time = elapsed_seconds / (task.progress / 100)
-            #         remaining_seconds = total_estimated_time - elapsed_seconds
-            #         if remaining_seconds > 0:
-            #             r_hours, r_remainder = divmod(remaining_seconds, 3600)
-            #             r_minutes, r_seconds = divmod(r_remainder, 60)
-            #             etr_str = ""
-            #             if r_hours > 0: etr_str += f"{int(r_hours)}h "
-            #             if r_minutes > 0 or r_hours > 0: etr_str += f"{int(r_minutes)}m "
-            #             etr_str += f"{int(r_seconds)}s"
-            #             timing_html += f"<p><i class='fas fa-hourglass-half'></i> <strong>Est. Time Remaining:</strong> {etr_str}</p>"
-            #     except ZeroDivisionError:
-            #         pass # Progress is 0, cannot estimate
-
+            elapsed_str_val = ""
+            if hours > 0: elapsed_str_val += f"{int(hours)}h "
+            if minutes > 0 or hours > 0: elapsed_str_val += f"{int(minutes)}m "
+            elapsed_str_val += f"{int(seconds)}s"
+            # ETR logic was commented out, so etr_str_val remains None
         elif task.status in ['completed', 'failed']:
             if hasattr(task, 'completed_at') and task.completed_at is not None:
                 completed_at = task.completed_at
-                if isinstance(completed_at, (int, float)): # Handle timestamps
+                if isinstance(completed_at, (int, float)):
                     completed_at = datetime.fromtimestamp(completed_at, timezone.utc)
                 elif hasattr(completed_at, 'tzinfo') and completed_at.tzinfo is None:
                     completed_at = completed_at.replace(tzinfo=timezone.utc)
-
                 if started_at and completed_at:
                     total_duration_seconds = (completed_at - started_at).total_seconds()
-                    if total_duration_seconds < 0: total_duration_seconds = 0 # Should not happen
-
+                    if total_duration_seconds < 0: total_duration_seconds = 0
                     hours, remainder = divmod(total_duration_seconds, 3600)
                     minutes, seconds = divmod(remainder, 60)
-                    duration_str = ""
-                    if hours > 0: duration_str += f"{int(hours)}h "
-                    if minutes > 0 or hours > 0: duration_str += f"{int(minutes)}m "
-                    duration_str += f"{int(seconds)}s"
-                    timing_html = f"<p><i class='fas fa-stopwatch'></i> <strong>Total Duration:</strong> {duration_str}</p>"
+                    duration_str_val = ""
+                    if hours > 0: duration_str_val += f"{int(hours)}h "
+                    if minutes > 0 or hours > 0: duration_str_val += f"{int(minutes)}m "
+                    duration_str_val += f"{int(seconds)}s"
                 else:
-                    timing_html = "<p><i class='fas fa-stopwatch'></i> <strong>Total Duration:</strong> N/A</p>"
+                    duration_str_val = "N/A"
             else:
-                timing_html = "<p><i class='fas fa-stopwatch'></i> <strong>Total Duration:</strong> N/A</p>"
+                duration_str_val = "N/A"
 
-        return timing_html
-
-    def _get_hardware_info_html(self) -> str:
-        # For now, we'll just show elapsed.
-        # if task.status == 'running' and task.progress > 0 and task.progress < 100:
-        #     try:
-        #         # This is a very basic ETR, assumes linear progress
-        #         total_estimated_time = elapsed_seconds / (task.progress / 100)
-        #         remaining_seconds = total_estimated_time - elapsed_seconds
-        #         if remaining_seconds > 0:
-        #             r_hours, r_remainder = divmod(remaining_seconds, 3600)
-        #             r_minutes, r_seconds = divmod(r_remainder, 60)
-        #             etr_str = ""
-        #             if r_hours > 0: etr_str += f"{int(r_hours)}h "
-        #             if r_minutes > 0 or r_hours > 0: etr_str += f"{int(r_minutes)}m "
-        #             etr_str += f"{int(r_seconds)}s"
-        #             timing_html += f"<p><strong>Est. Time Remaining:</strong> {etr_str}</p>"
-        #     except ZeroDivisionError:
-        #         pass # Progress is 0, cannot estimate
-
-        return timing_html
+        template = self.jinja_env.get_template("status_modal_parts/task_timing.html")
+        return template.render(elapsed_str=elapsed_str_val, etr_str=etr_str_val, duration_str=duration_str_val)
 
     def _get_hardware_info_html(self) -> str:
-        """Generates HTML for displaying hardware and worker information."""
+        """Renders hardware info using a Jinja2 template."""
         num_cpus = os.cpu_count()
-
         allowed_db_workers = sum(IngestionConfig.MAX_DB_WORKERS_PER_TARGET.values())
         allowed_embedding_workers = AIConfig.MAX_EMBEDDING_WORKERS
         total_allowed_workers = allowed_db_workers + allowed_embedding_workers
 
-        # GPU Info
-        gpu_info_parts = []
-        if torch and torch.cuda.is_available():
-            gpu_info_parts.append(f"<p><strong>CUDA Version:</strong> {torch.version.cuda}</p>")
-            num_gpus = torch.cuda.device_count()
-            gpu_info_parts.append(f"<p><strong>Available GPUs:</strong> {num_gpus}</p>")
-            for i in range(num_gpus):
-                gpu_name = torch.cuda.get_device_name(i)
-                gpu_info_parts.append(f"<p>  - GPU {i}: {gpu_name}</p>")
-        else:
-            gpu_info_parts.append("<p><strong>GPU:</strong> CUDA not available or PyTorch not installed with CUDA support.</p>")
+        gpu_context = {
+            "torch_available": torch is not None,
+            "cuda_available": False,
+            "cuda_version": None,
+            "num_gpus": 0,
+            "gpu_names": []
+        }
+        if gpu_context["torch_available"] and torch.cuda.is_available():
+            gpu_context["cuda_available"] = True
+            gpu_context["cuda_version"] = torch.version.cuda
+            gpu_context["num_gpus"] = torch.cuda.device_count()
+            gpu_context["gpu_names"] = [torch.cuda.get_device_name(i) for i in range(gpu_context["num_gpus"])]
 
-        gpu_html = "".join(gpu_info_parts)
-
-        # Worker details
-        worker_details_parts = ["<p><strong>Worker Pool Configuration:</strong></p><ul>"]
-        for target, num_workers in IngestionConfig.MAX_DB_WORKERS_PER_TARGET.items():
-            worker_details_parts.append(f"<li>{target.capitalize()} Workers: {num_workers}</li>")
-        worker_details_parts.append(f"<li>Embedding Workers: {AIConfig.MAX_EMBEDDING_WORKERS}</li>")
-        worker_details_parts.append("</ul>")
-        worker_html = "".join(worker_details_parts)
-
-        # System Load
-        cpu_load = psutil.cpu_percent(interval=None) # Non-blocking, gets the last measurement
+        cpu_load = psutil.cpu_percent(interval=None)
         ram = psutil.virtual_memory()
-        ram_total_gb = ram.total / (1024**3)
-        ram_used_gb = ram.used / (1024**3)
-        ram_percent_used = ram.percent
 
-        return f"""
-        <div class='hardware-info-container section-card'>
-            <h4><i class="fas fa-server"></i> System & Worker Information</h4>
-            <p><i class="fas fa-microchip"></i> <strong>Logical CPUs:</strong> {num_cpus}</p>
-            <p><i class="fas fa-tachometer-alt"></i> <strong>Current CPU Load:</strong> {cpu_load:.1f}%</p>
-            <p><i class="fas fa-memory"></i> <strong>RAM Usage:</strong> {ram_used_gb:.2f} GB / {ram_total_gb:.2f} GB ({ram_percent_used:.1f}%)</p>
-            {gpu_html}
-            <p><i class="fas fa-users-cog"></i> <strong>Total Allowed Application Workers:</strong> {total_allowed_workers}</p>
-            {worker_html}
-        </div>
-        """
+        context = {
+            "num_cpus": num_cpus,
+            "cpu_load": cpu_load,
+            "ram_used_gb": ram.used / (1024**3),
+            "ram_total_gb": ram.total / (1024**3),
+            "ram_percent_used": ram.percent,
+            "total_allowed_workers": total_allowed_workers,
+            "db_workers_per_target": IngestionConfig.MAX_DB_WORKERS_PER_TARGET,
+            "max_embedding_workers": AIConfig.MAX_EMBEDDING_WORKERS,
+            **gpu_context
+        }
+        template = self.jinja_env.get_template("status_modal_parts/hardware_info.html")
+        return template.render(context)
 
     def _get_storage_info_html(self) -> str:
-        """Generates HTML for displaying storage usage information."""
-        # Postgres
+        """Renders storage info using a Jinja2 template."""
         pg_size_bytes = self.framework.get_postgres_db_size()
         pg_size_str = "N/A"
         if pg_size_bytes is not None:
-            if pg_size_bytes < 1024:
-                pg_size_str = f"{pg_size_bytes} Bytes"
-            elif pg_size_bytes < 1024**2:
-                pg_size_str = f"{pg_size_bytes/1024:.2f} KB"
-            elif pg_size_bytes < 1024**3:
-                pg_size_str = f"{pg_size_bytes/1024**2:.2f} MB"
-            else:
-                pg_size_str = f"{pg_size_bytes/1024**3:.2f} GB"
+            if pg_size_bytes < 1024: pg_size_str = f"{pg_size_bytes} Bytes"
+            elif pg_size_bytes < 1024**2: pg_size_str = f"{pg_size_bytes/1024:.2f} KB"
+            elif pg_size_bytes < 1024**3: pg_size_str = f"{pg_size_bytes/1024**2:.2f} MB"
+            else: pg_size_str = f"{pg_size_bytes/1024**3:.2f} GB"
 
-        # Dgraph (currently placeholder)
-        dgraph_usage_str = self.framework.get_dgraph_disk_usage()
-        if dgraph_usage_str is None:
-            dgraph_usage_str = "N/A"
+        dgraph_usage_str = self.framework.get_dgraph_disk_usage() or "N/A"
 
-        return f"""
-        <div class='storage-info-container section-card'>
-            <h4><i class="fas fa-database"></i> Storage Usage</h4>
-            <p><i class="fas fa-hdd"></i> <strong>Postgres ({PG_DB_NAME}):</strong> {pg_size_str}</p>
-            <p><i class="fas fa-project-diagram"></i> <strong>Dgraph ({DGRAPH_HOST}:{DGRAPH_PORT}):</strong> {dgraph_usage_str}</p>
-        </div>
-        """
+        context = {
+            "pg_db_name": PG_DB_NAME,
+            "pg_size_str": pg_size_str,
+            "dgraph_host": DGRAPH_HOST,
+            "dgraph_port": DGRAPH_PORT,
+            "dgraph_usage_str": dgraph_usage_str
+        }
+        template = self.jinja_env.get_template("status_modal_parts/storage_info.html")
+        return template.render(context)
 
     def _get_usage_stats_html(self) -> str:
-        """Generates HTML for displaying usage statistics."""
+        """Renders usage stats using a Jinja2 template."""
         stats = self.framework.get_usage_statistics()
-
-        general_stats_html = f"""
-            <p><i class="fas fa-folder-open"></i> <strong>Repositories Managed:</strong> {stats['general']['num_repositories']}</p>
-        """
-        # Add more general stats here if they get implemented in the backend, e.g.:
-        # <p><i class="far fa-file-alt"></i> <strong>Total Files Analyzed:</strong> {stats['general']['total_files_analyzed']:,}</p>
-        # <p><i class="fas fa-stream"></i> <strong>Total Lines Analyzed:</strong> {stats['general']['total_lines_analyzed']:,}</p>
-
-
-        ai_models_html_parts = ["<ul>"]
-        if stats['ai']['models_used']:
-            for model, data in stats['ai']['models_used'].items():
-                ai_models_html_parts.append(f"<li><strong>{model}:</strong> {data['calls']:,} calls, {data['tokens']:,} tokens, ${data['cost']:.4f}</li>")
-        else:
-            ai_models_html_parts.append("<li>No AI model usage tracked yet.</li>")
-        ai_models_html_parts.append("</ul>")
-        ai_models_html = "".join(ai_models_html_parts)
-
-        ai_stats_html = f"""
-            <p><i class="fas fa-robot"></i> <strong>Total LLM Calls:</strong> {stats['ai']['total_llm_calls']:,}</p>
-            <p><i class="fas fa-brain"></i> <strong>Total Tokens Processed (LLM):</strong> {stats['ai']['total_tokens_processed']:,}</p>
-            <p><i class="fas fa-dollar-sign"></i> <strong>Estimated LLM Cost:</strong> ${stats['ai']['estimated_cost']:.4f}</p>
-            <div><strong>Model Breakdown:</strong>{ai_models_html}</div>
-        """
-
-        return f"""
-        <div class='usage-stats-container section-card'>
-            <h4><i class="fas fa-chart-line"></i> Usage Statistics</h4>
-            <div class="usage-section">
-                <h5>General</h5>
-                {general_stats_html}
-            </div>
-            <div class="usage-section">
-                <h5>AI Usage (LLM)</h5>
-                {ai_stats_html}
-            </div>
-        </div>
-        """
+        template = self.jinja_env.get_template("status_modal_parts/usage_stats.html")
+        return template.render(stats=stats)
 
     def _format_task_log_html(self, tasks: List[Task], existing_html: str = "") -> str:
-        """Formats a list of tasks into an HTML string for the log."""
-        if not tasks and not existing_html: # No tasks ever and nothing existing
-            return "<div class='task-log-entry'>No task history found.</div>"
-        if not tasks and existing_html: # No new tasks, return existing
+        """Formats a list of tasks into an HTML string for the log using Jinja2 templates."""
+        if not tasks and not existing_html:
+            return "<div class='task-log-entry section-card'>No task history found.</div>" # Kept simple for no tasks
+        if not tasks and existing_html:
              return existing_html
 
-        html_parts = [existing_html] if existing_html else []
+        html_parts = [existing_html] if existing_html and existing_html != "<div class='task-log-entry section-card'>No task history found.</div>" else []
+
+        template = self.jinja_env.get_template("task_log_entry.html")
 
         for task in tasks:
-            status_icon_map = {
-                'running': '<i class="fas fa-sync fa-spin" style="color: #007bff;"></i>',
-                'pending': '<i class="fas fa-hourglass-start" style="color: #ffc107;"></i>',
-                'completed': '<i class="fas fa-check-circle" style="color: green;"></i>',
-                'failed': '<i class="fas fa-times-circle" style="color: red;"></i>',
-            }
-            status_icon = status_icon_map.get(task.status, '<i class="fas fa-question-circle"></i>')
-
-            started_at_str = task.started_at.strftime('%Y-%m-%d %H:%M:%S UTC') if task.started_at else "N/A"
-            completed_at_str = task.completed_at.strftime('%Y-%m-%d %H:%M:%S UTC') if task.completed_at else "N/A"
             duration_str = ""
             if task.started_at and task.completed_at:
-                duration_seconds = (task.completed_at - task.started_at).total_seconds()
+                # Ensure timezone awareness for subtraction if not already
+                started_at = task.started_at
+                if hasattr(started_at, 'tzinfo') and started_at.tzinfo is None:
+                    started_at = started_at.replace(tzinfo=timezone.utc)
+
+                completed_at = task.completed_at
+                if hasattr(completed_at, 'tzinfo') and completed_at.tzinfo is None:
+                    completed_at = completed_at.replace(tzinfo=timezone.utc)
+
+                duration_seconds = (completed_at - started_at).total_seconds()
                 if duration_seconds < 0: duration_seconds = 0
                 h, rem = divmod(duration_seconds, 3600)
                 m, s = divmod(rem, 60)
-                duration_str = f" ({int(h)}h {int(m)}m {int(s)}s)" if h > 0 else f" ({int(m)}m {int(s)}s)"
+                duration_parts = []
+                if h > 0: duration_parts.append(f"{int(h)}h")
+                if m > 0 or h > 0 : duration_parts.append(f"{int(m)}m") # show minutes if hours or minutes > 0
+                duration_parts.append(f"{int(s)}s")
+                duration_str = f" ({' '.join(duration_parts)})" if any(duration_parts) else ""
 
-            entry = f"""
-            <div class="task-log-entry section-card">
-                <div class="task-log-header">
-                    <span class="task-log-status-icon">{status_icon}</span>
-                    <span class="task-log-name">{task.name} (ID: {task.id})</span>
-                    <span class="task-log-status">Status: {task.status}</span>
-                </div>
-                <div class="task-log-body">
-                    <p><strong>Created by:</strong> {task.created_by}</p>
-                    <p><strong>Started:</strong> {started_at_str}</p>
-                    """
-            if task.status in ['completed', 'failed']:
-                entry += f"<p><strong>Completed:</strong> {completed_at_str}{duration_str}</p>"
-
-            entry += f"<p><strong>Message:</strong> {task.message or 'N/A'}</p>"
-
-            if task.details:
-                details_str = ", ".join([f"<strong>{k}:</strong> {v}" for k,v in task.details.items()])
-                entry += f"<p><strong>Details:</strong> {details_str}</p>"
-
-            if task.error_message:
-                entry += f"<div class='task-log-error'><strong>Error:</strong> <pre>{task.error_message}</pre></div>"
-
-            if task.log_history: # The detailed log from the task itself
-                 entry += f"""
-                    <details class="task-log-history-details">
-                        <summary>View Raw Log Output</summary>
-                        <pre class="task-log-raw-output">{task.log_history}</pre>
-                    </details>
-                 """
-            entry += "</div></div>"
-            html_parts.append(entry)
+            html_parts.append(template.render(task=task, duration_str=duration_str))
 
         return "".join(html_parts)
 
@@ -474,296 +304,20 @@ No active tasks.
         """
 
         fontawesome_cdn = '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">'
+        tailwind_cdn = '<script src="https://cdn.tailwindcss.com"></script>'
 
-        modal_css = """
-        .modal-background { 
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-            background-color: rgba(0,0,0,0.6); display: none; 
-            justify-content: center; align-items: center; z-index: 1000; 
-        }
-        .modal-content-wrapper { 
-            background-color: var(--panel-background-fill); 
-            color: var(--body-text-color); padding: 2rem; 
-            border-radius: 0.5rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
-            height: auto; 
-        }
-        .model-info-container {{
-            background: var(--background-fill-secondary);
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 20px;
-            border: 1px solid var(--border-color-primary);
-        }}
-        .model-info-container h4, .hardware-info-container h4, .storage-info-container h4 {{
-            margin-top: 0;
-            margin-bottom: 10px;
-            color: var(--body-text-color);
-        }}
-        .model-info-container p, .hardware-info-container p, .storage-info-container p {{
-            margin: 5px 0;
-            font-size: 0.9em;
-            color: var(--body-text-color-subdued);
-        }}
-        .model-info-container i, .hardware-info-container i, .storage-info-container i, .usage-stats-container i {{
-            margin-right: 8px;
-            color: var(--accent-color-primary); /* Or a specific color */
-        }}
-        .usage-stats-container h4 i {{ /* Icon in the main title of usage stats */
-             color: var(--body-text-color); /* Or keep accent if preferred */
-        }}
-        .usage-stats-container .usage-section {{
-            margin-top: 10px;
-            padding-top: 10px;
-            border-top: 1px solid var(--border-color-primary-muted); /* Muted border for inner sections */
-        }}
-        .usage-stats-container .usage-section:first-of-type {{
-            margin-top: 0;
-            padding-top: 0;
-            border-top: none;
-        }}
-        .usage-stats-container h5 {{
-            margin-bottom: 8px;
-            color: var(--body-text-color);
-            font-size: 1em;
-            font-weight: 600;
-        }}
-        .usage-stats-container ul {{
-            list-style-type: none;
-            padding-left: 10px;
-            margin-top: 5px;
-        }}
-        .usage-stats-container li {{
-            font-size: 0.85em;
-            margin-bottom: 3px;
-            color: var(--body-text-color-subdued);
-        }}
-        .section-card {{
-            background: var(--background-fill-secondary);
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 20px;
-            border: 1px solid var(--border-color-primary);
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        }}
-        .hardware-info-container h4 {{
-            margin-top: 0;
-            margin-bottom: 10px;
-            color: var(--body-text-color);
-        }}
-        .hardware-info-container p {{
-            margin: 5px 0;
-            font-size: 0.9em;
-            color: var(--body-text-color-subdued);
-        }}
-        .hardware-info-container ul {{
-            padding-left: 20px;
-            margin: 5px 0;
-        }}
-        .hardware-info-container li {{
-            font-size: 0.9em;
-            color: var(--body-text-color-subdued);
-        }}
-        .task-timing-info {{
-            margin-top: 10px;
-            padding-top: 10px;
-            border-top: 1px solid var(--border-color-primary);
-        }}
-        .task-timing-info p {{
-            margin: 4px 0;
-            font-size: 0.85em;
-            color: var(--body-text-color-subdued);
-        }}
-        /* Task Log Styles */
-        .task-log-entry {
-            margin-bottom: 15px;
-            padding: 12px;
-        }
-        .task-log-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-            padding-bottom: 8px;
-            border-bottom: 1px solid var(--border-color-primary-muted);
-        }
-        .task-log-status-icon {
-            margin-right: 10px;
-            font-size: 1.1em;
-        }
-        .task-log-name {
-            font-weight: 600;
-            color: var(--body-text-color);
-            flex-grow: 1;
-        }
-        .task-log-status {
-            font-size: 0.9em;
-            color: var(--body-text-color-subdued);
-        }
-        .task-log-body p {
-            margin: 4px 0;
-            font-size: 0.9em;
-            color: var(--body-text-color-subdued);
-        }
-        .task-log-body strong {
-            color: var(--body-text-color);
-        }
-        .task-log-error {
-            margin-top: 8px;
-            padding: 8px;
-            background-color: rgba(220, 53, 69, 0.05); /* Light red background */
-            border: 1px solid rgba(220, 53, 69, 0.2);
-            border-radius: 4px;
-        }
-        .task-log-error pre {
-            white-space: pre-wrap;
-            word-break: break-all;
-            font-size: 0.85em;
-            max-height: 150px;
-            overflow-y: auto;
-        }
-        .task-log-history-details {
-            margin-top: 8px;
-        }
-        .task-log-history-details summary {
-            cursor: pointer;
-            font-size: 0.9em;
-            color: var(--link-text-color);
-            margin-bottom: 5px;
-        }
-        .task-log-raw-output {
-            background-color: var(--code-background-fill);
-            padding: 8px;
-            border-radius: 4px;
-            font-size: 0.8em;
-            max-height: 200px;
-            overflow-y: auto;
-            border: 1px solid var(--border-color-primary);
-        }
-        #addRepoModal .modal-content-wrapper { max-width: 500px; width: 100%; }
-        #codeViewerModal .modal-content-wrapper { 
-            max-width: 80vw; width: 100%; max-height: 80vh; overflow-y: auto; 
-        }
-        #statusModal .modal-content-wrapper { 
-            max-width: 70vw; max-height: 80vh; overflow-y: auto; width: 100%; 
-        }
-        .model-info { 
-            font-size: 0.8rem; color: var(--body-text-color-subdued); 
-        }
-        
-        /* Prevent flicker on HTML component updates */
-        .progress-wrapper {
-            transition: none !important;
-            animation: none !important;
-        }
-        
-        /* Progress Bar Styles */
-        .progress-container {
-            width: 100%; margin: 10px 0; padding: 8px; 
-            background: var(--background-fill-secondary); 
-            border-radius: 8px; border: 1px solid var(--border-color-primary);
-            transition: none !important;
-        }
-        .progress-header {
-            display: flex; justify-content: space-between; 
-            align-items: center; margin-bottom: 8px;
-        }
-        .progress-task-name {
-            font-weight: 600; color: var(--body-text-color);
-        }
-        .progress-percentage {
-            font-weight: 500; color: var(--body-text-color-subdued);
-        }
-        .progress-bar-bg {
-            width: 100%; height: 20px; background-color: var(--background-fill-primary); 
-            border-radius: 10px; overflow: hidden; position: relative;
-        }
-        .progress-bar-fill {
-            height: 100%; background: linear-gradient(90deg, #007bff, #0056b3); 
-            transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
-            position: relative;
-        }
-        .progress-bar-fill::after {
-            content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
-            animation: shimmer 2s infinite;
-        }
-        @keyframes shimmer {
-            0% { transform: translateX(-100%); }
-            100% { transform: translateX(100%); }
-        }
-        .progress-message {
-            margin-top: 8px; font-size: 0.85rem; 
-            color: var(--body-text-color-subdued); font-style: italic;
-        }
-        
-        /* Status Modal Styles */
-        .status-container {
-            font-family: var(--font-sans); line-height: 1.5;
-        }
-        .main-task-section-card h3 {
-            margin-top: 0; /* Already part of .section-card h4, but good to be explicit for h3 */
-            margin-bottom: 15px;
-            color: var(--body-text-color);
-            font-size: 1.2em; /* Slightly larger for main task title */
-        }
-        .main-task-section-card h3 i {
-            margin-right: 8px;
-            color: var(--accent-color-primary);
-        }
-        .task-status-card { /* This is nested inside main-task-section-card */
-            background: var(--background-fill-primary); /* Keep its own slightly different bg if needed */
-            border-radius: 6px; /* Inner card might have slightly smaller radius */
-            padding: 15px;
-            margin: 0; /* No margin as it's inside a section-card padding */
-            border: 1px solid var(--border-color-secondary); /* Subtle inner border */
-        }
-        .subtask-card { /* Subtasks can also be section-cards or have similar styling */
-            background: var(--background-fill-primary); 
-            border-radius: 8px; padding: 15px; margin: 15px 0; /* Added more margin for separation */
-            border: 1px solid var(--border-color-primary);
-            box-shadow: 0 1px 3px rgba(0,0,0,0.03);
-        }
-        .status-header, .subtask-header {
-            display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
-        }
-        .status-label {
-            font-weight: 600;
-        }
-        .status-value {
-            padding: 2px 8px; border-radius: 4px; 
-            background: var(--background-fill-secondary);
-        }
-        .status-icon {
-            font-size: 1.2em;
-        }
-        .subtask-name {
-            font-weight: 500; flex-grow: 1;
-        }
-        .subtask-status {
-            color: var(--body-text-color-subdued);
-        }
-        .task-details, .subtask-details {
-            margin-top: 10px; padding: 10px; 
-            background: var(--background-fill-secondary); 
-            border-radius: 4px; font-size: 0.9em;
-        }
-        .task-details ul, .subtask-details ul {
-            margin: 5px 0; padding-left: 20px;
-        }
-        .error-section {
-            margin-top: 15px; padding: 15px; 
-            background: rgba(220, 53, 69, 0.1); 
-            border: 1px solid rgba(220, 53, 69, 0.3); 
-            border-radius: 8px;
-        }
-        .error-message {
-            background: var(--background-fill-primary); 
-            padding: 10px; border-radius: 4px; 
-            font-size: 0.85em; overflow-x: auto;
-        }
-        """
 
-        with gr.Blocks(theme=gr.themes.Default(primary_hue="blue", secondary_hue="sky"), title="SDA Framework", css=modal_css, head=modal_js + fontawesome_cdn) as demo:
+        # Load CSS from file
+        css_file_path = Path(__file__).parent / "static" / "css" / "control_panel.css"
+        try:
+            with open(css_file_path, "r") as f:
+                control_panel_css = f.read()
+        except FileNotFoundError:
+            control_panel_css = "/* CSS file not found. Styles will be missing. */"
+            print(f"Warning: CSS file not found at {css_file_path}")
+
+
+        with gr.Blocks(theme=gr.themes.Default(primary_hue="blue", secondary_hue="sky"), title="SDA Framework", css=control_panel_css, head=tailwind_cdn + modal_js + fontawesome_cdn) as demo:
             gr.Markdown("# Software Development Analytics")
             with gr.Row():
                 status_output = gr.Textbox(label="Status", interactive=False, placeholder="Status messages will appear here...", scale=4)

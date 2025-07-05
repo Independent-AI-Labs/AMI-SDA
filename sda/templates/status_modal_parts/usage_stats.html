@@ -1,0 +1,30 @@
+{# sda/templates/status_modal_parts/usage_stats.html #}
+<div class="bg-white dark:bg-gray-800 shadow-lg rounded-lg p-6 mb-6">
+    <h4 class="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-200"><i class="fas fa-chart-line mr-2 text-blue-500"></i>Usage Statistics</h4>
+
+    <div class="mb-4 pb-4 border-b border-gray-200 dark:border-gray-700">
+        <h5 class="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">General</h5>
+        <p class="text-gray-700 dark:text-gray-300 mb-1"><i class="fas fa-folder-open mr-2 text-gray-500"></i><strong>Repositories Managed:</strong> {{ stats.general.num_repositories }}</p>
+        {# Add more general stats here if they get implemented #}
+    </div>
+
+    <div>
+        <h5 class="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">AI Usage (LLM)</h5>
+        <p class="text-gray-700 dark:text-gray-300 mb-1"><i class="fas fa-robot mr-2 text-gray-500"></i><strong>Total LLM Calls:</strong> {{ stats.ai.total_llm_calls|default(0, true):, }}</p>
+        <p class="text-gray-700 dark:text-gray-300 mb-1"><i class="fas fa-brain mr-2 text-gray-500"></i><strong>Total Tokens Processed (LLM):</strong> {{ stats.ai.total_tokens_processed|default(0, true):, }}</p>
+        <p class="text-gray-700 dark:text-gray-300 mb-3"><i class="fas fa-dollar-sign mr-2 text-gray-500"></i><strong>Estimated LLM Cost:</strong> ${{ "%.4f"|format(stats.ai.estimated_cost|default(0.0, true)) }}</p>
+
+        <div>
+            <p class="text-gray-700 dark:text-gray-300 font-medium">Model Breakdown:</p>
+            <ul class="list-disc list-inside pl-4 mt-1">
+            {% if stats.ai.models_used %}
+                {% for model, data in stats.ai.models_used.items() %}
+                <li class="text-sm text-gray-600 dark:text-gray-400"><strong>{{ model }}:</strong> {{ data.calls|default(0, true):, }} calls, {{ data.tokens|default(0, true):, }} tokens, ${{ "%.4f"|format(data.cost|default(0.0, true)) }}</li>
+                {% endfor %}
+            {% else %}
+                <li class="text-sm text-gray-600 dark:text-gray-400">No AI model usage tracked yet.</li>
+            {% endif %}
+            </ul>
+        </div>
+    </div>
+</div>

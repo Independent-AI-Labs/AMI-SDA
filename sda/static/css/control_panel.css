@@ -1,0 +1,286 @@
+/* CSS from sda/ui.py modal_css */
+.modal-background {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background-color: rgba(0,0,0,0.6); display: none;
+    justify-content: center; align-items: center; z-index: 1000;
+}
+.modal-content-wrapper {
+    background-color: var(--panel-background-fill);
+    color: var(--body-text-color); padding: 2rem;
+    border-radius: 0.5rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    height: auto;
+}
+.model-info-container {
+    background: var(--background-fill-secondary);
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 20px;
+    border: 1px solid var(--border-color-primary);
+}
+.model-info-container h4, .hardware-info-container h4, .storage-info-container h4 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: var(--body-text-color);
+}
+.model-info-container p, .hardware-info-container p, .storage-info-container p {
+    margin: 5px 0;
+    font-size: 0.9em;
+    color: var(--body-text-color-subdued);
+}
+.model-info-container i, .hardware-info-container i, .storage-info-container i, .usage-stats-container i {
+    margin-right: 8px;
+    color: var(--accent-color-primary); /* Or a specific color */
+}
+.usage-stats-container h4 i { /* Icon in the main title of usage stats */
+     color: var(--body-text-color); /* Or keep accent if preferred */
+}
+.usage-stats-container .usage-section {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-color-primary-muted); /* Muted border for inner sections */
+}
+.usage-stats-container .usage-section:first-of-type {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+.usage-stats-container h5 {
+    margin-bottom: 8px;
+    color: var(--body-text-color);
+    font-size: 1em;
+    font-weight: 600;
+}
+.usage-stats-container ul {
+    list-style-type: none;
+    padding-left: 10px;
+    margin-top: 5px;
+}
+.usage-stats-container li {
+    font-size: 0.85em;
+    margin-bottom: 3px;
+    color: var(--body-text-color-subdued);
+}
+.section-card {
+    background: var(--background-fill-secondary);
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 20px;
+    border: 1px solid var(--border-color-primary);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+.hardware-info-container h4 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: var(--body-text-color);
+}
+.hardware-info-container p {
+    margin: 5px 0;
+    font-size: 0.9em;
+    color: var(--body-text-color-subdued);
+}
+.hardware-info-container ul {
+    padding-left: 20px;
+    margin: 5px 0;
+}
+.hardware-info-container li {
+    font-size: 0.9em;
+    color: var(--body-text-color-subdued);
+}
+.task-timing-info {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-color-primary);
+}
+.task-timing-info p {
+    margin: 4px 0;
+    font-size: 0.85em;
+    color: var(--body-text-color-subdued);
+}
+/* Task Log Styles */
+.task-log-entry {
+    margin-bottom: 15px;
+    padding: 12px;
+}
+.task-log-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-color-primary-muted);
+}
+.task-log-status-icon {
+    margin-right: 10px;
+    font-size: 1.1em;
+}
+.task-log-name {
+    font-weight: 600;
+    color: var(--body-text-color);
+    flex-grow: 1;
+}
+.task-log-status {
+    font-size: 0.9em;
+    color: var(--body-text-color-subdued);
+}
+.task-log-body p {
+    margin: 4px 0;
+    font-size: 0.9em;
+    color: var(--body-text-color-subdued);
+}
+.task-log-body strong {
+    color: var(--body-text-color);
+}
+.task-log-error {
+    margin-top: 8px;
+    padding: 8px;
+    background-color: rgba(220, 53, 69, 0.05); /* Light red background */
+    border: 1px solid rgba(220, 53, 69, 0.2);
+    border-radius: 4px;
+}
+.task-log-error pre {
+    white-space: pre-wrap;
+    word-break: break-all;
+    font-size: 0.85em;
+    max-height: 150px;
+    overflow-y: auto;
+}
+.task-log-history-details {
+    margin-top: 8px;
+}
+.task_log-history-details summary {
+    cursor: pointer;
+    font-size: 0.9em;
+    color: var(--link-text-color);
+    margin-bottom: 5px;
+}
+.task-log-raw-output {
+    background-color: var(--code-background-fill);
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 0.8em;
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color-primary);
+}
+#addRepoModal .modal-content-wrapper { max-width: 500px; width: 100%; }
+#codeViewerModal .modal-content-wrapper {
+    max-width: 80vw; width: 100%; max-height: 80vh; overflow-y: auto;
+}
+#statusModal .modal-content-wrapper {
+    max-width: 70vw; max-height: 80vh; overflow-y: auto; width: 100%;
+}
+.model-info {
+    font-size: 0.8rem; color: var(--body-text-color-subdued);
+}
+
+/* Prevent flicker on HTML component updates */
+.progress-wrapper {
+    transition: none !important;
+    animation: none !important;
+}
+
+/* Progress Bar Styles */
+.progress-container {
+    width: 100%; margin: 10px 0; padding: 8px;
+    background: var(--background-fill-secondary);
+    border-radius: 8px; border: 1px solid var(--border-color-primary);
+    transition: none !important;
+}
+.progress-header {
+    display: flex; justify-content: space-between;
+    align-items: center; margin-bottom: 8px;
+}
+.progress-task-name {
+    font-weight: 600; color: var(--body-text-color);
+}
+.progress-percentage {
+    font-weight: 500; color: var(--body-text-color-subdued);
+}
+.progress-bar-bg {
+    width: 100%; height: 20px; background-color: var(--background-fill-primary);
+    border-radius: 10px; overflow: hidden; position: relative;
+}
+.progress-bar-fill {
+    height: 100%; background: linear-gradient(90deg, #007bff, #0056b3);
+    transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+}
+.progress-bar-fill::after {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+    animation: shimmer 2s infinite;
+}
+@keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+.progress-message {
+    margin-top: 8px; font-size: 0.85rem;
+    color: var(--body-text-color-subdued); font-style: italic;
+}
+
+/* Status Modal Styles */
+.status-container {
+    font-family: var(--font-sans); line-height: 1.5;
+}
+.main-task-section-card h3 {
+    margin-top: 0; /* Already part of .section-card h4, but good to be explicit for h3 */
+    margin-bottom: 15px;
+    color: var(--body-text-color);
+    font-size: 1.2em; /* Slightly larger for main task title */
+}
+.main-task-section-card h3 i {
+    margin-right: 8px;
+    color: var(--accent-color-primary);
+}
+.task-status-card { /* This is nested inside main-task-section-card */
+    background: var(--background-fill-primary); /* Keep its own slightly different bg if needed */
+    border-radius: 6px; /* Inner card might have slightly smaller radius */
+    padding: 15px;
+    margin: 0; /* No margin as it's inside a section-card padding */
+    border: 1px solid var(--border-color-secondary); /* Subtle inner border */
+}
+.subtask-card { /* Subtasks can also be section-cards or have similar styling */
+    background: var(--background-fill-primary);
+    border-radius: 8px; padding: 15px; margin: 15px 0; /* Added more margin for separation */
+    border: 1px solid var(--border-color-primary);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+}
+.status-header, .subtask-header {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+}
+.status-label {
+    font-weight: 600;
+}
+.status-value {
+    padding: 2px 8px; border-radius: 4px;
+    background: var(--background-fill-secondary);
+}
+.status-icon {
+    font-size: 1.2em;
+}
+.subtask-name {
+    font-weight: 500; flex-grow: 1;
+}
+.subtask-status {
+    color: var(--body-text-color-subdued);
+}
+.task-details, .subtask-details {
+    margin-top: 10px; padding: 10px;
+    background: var(--background-fill-secondary);
+    border-radius: 4px; font-size: 0.9em;
+}
+.task-details ul, .subtask-details ul {
+    margin: 5px 0; padding-left: 20px;
+}
+.error-section {
+    margin-top: 15px; padding: 15px;
+    background: rgba(220, 53, 69, 0.1);
+    border: 1px solid rgba(220, 53, 69, 0.3);
+    border-radius: 8px;
+}
+.error-message {
+    background: var(--background-fill-primary);
+    padding: 10px; border-radius: 4px;
+    font-size: 0.85em; overflow-x: auto;
+}

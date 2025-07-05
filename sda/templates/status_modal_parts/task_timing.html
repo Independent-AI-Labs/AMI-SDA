@@ -1,0 +1,14 @@
+{# sda/templates/status_modal_parts/task_timing.html #}
+{% if elapsed_str %}
+<p><i class='far fa-clock'></i> <strong>Time Elapsed:</strong> {{ elapsed_str }}</p>
+{% endif %}
+{% if etr_str %}
+{# <p><i class='fas fa-hourglass-half'></i> <strong>Est. Time Remaining:</strong> {{ etr_str }}</p> #}
+{# ETR was commented out in original Python, keeping it so here #}
+{% endif %}
+{% if duration_str %}
+<p><i class='fas fa-stopwatch'></i> <strong>Total Duration:</strong> {{ duration_str }}</p>
+{% endif %}
+{% if not elapsed_str and not duration_str %}
+<p><i class='fas fa-stopwatch'></i> <strong>Timing:</strong> N/A</p>
+{% endif %}

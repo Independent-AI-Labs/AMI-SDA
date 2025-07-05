@@ -1,0 +1,16 @@
+{# sda/templates/progress_bar.html #}
+<div class="w-full my-2 p-3 bg-gray-100 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600">
+    <div class="flex justify-between items-center mb-1">
+        <span class="text-sm font-semibold text-gray-700 dark:text-gray-200">{{ task_name }}</span>
+        <span class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ "%.1f"|format(progress) }}%</span>
+    </div>
+    <div class="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-4 overflow-hidden">
+        {# The gradient and shimmer are more complex; using a simple blue for now #}
+        <div class="bg-blue-500 h-4 rounded-full transition-all duration-500 ease-out"
+             style="width: {{ progress }}%">
+        </div>
+    </div>
+    {% if message %}
+    <div class="mt-1 text-xs text-gray-500 dark:text-gray-400 italic">{{ message }}</div>
+    {% endif %}
+</div>

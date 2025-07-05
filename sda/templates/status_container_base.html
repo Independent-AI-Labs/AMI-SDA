@@ -1,0 +1,77 @@
+{# sda/templates/status_container_base.html #}
+<div class="status-container p-2"> {# Add some padding to the overall container #}
+    {% if not task %}
+        <div class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4 mb-6" role="alert">
+            <p class="font-bold">No Active Tasks</p>
+            <p>The system is currently idle or no repository is selected.</p>
+        </div>
+        {# Render info cards even if no task is active #}
+        {% if model_info_html %}{{ model_info_html|safe }}{% endif %}
+        {% if hardware_info_html %}{{ hardware_info_html|safe }}{% endif %}
+        {% if storage_info_html %}{{ storage_info_html|safe }}{% endif %}
+        {% if usage_stats_html %}{{ usage_stats_html|safe }}{% endif %}
+    {% else %}
+        {# These sections are always shown, even with a task #}
+        {% if model_info_html %}{{ model_info_html|safe }}{% endif %}
+        {% if hardware_info_html %}{{ hardware_info_html|safe }}{% endif %}
+        {% if storage_info_html %}{{ storage_info_html|safe }}{% endif %}
+        {% if usage_stats_html %}{{ usage_stats_html|safe }}{% endif %}
+
+        {# Main Task Section Card #}
+        <div class="bg-white dark:bg-gray-800 shadow-lg rounded-lg p-6 mb-6">
+            <h3 class="text-2xl font-semibold mb-3 text-gray-800 dark:text-gray-200 flex items-center">
+                <i class="fas fa-tasks mr-3 text-blue-600"></i>Main Task: {{ task.name }}
+            </h3>
+            <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-md"> {# Inner card for task details #}
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-medium text-gray-700 dark:text-gray-300">Status:</span>
+                    <span class="px-3 py-1 text-sm font-semibold rounded-full
+                        {% if task.status == 'running' %}bg-blue-200 text-blue-800 dark:bg-blue-700 dark:text-blue-200
+                        {% elif task.status == 'completed' %}bg-green-200 text-green-800 dark:bg-green-700 dark:text-green-200
+                        {% elif task.status == 'failed' %}bg-red-200 text-red-800 dark:bg-red-700 dark:text-red-200
+                        {% elif task.status == 'pending' %}bg-yellow-200 text-yellow-800 dark:bg-yellow-700 dark:text-yellow-200
+                        {% else %}bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200
+                        {% endif %}">
+                        {{ task.status }}
+                    </span>
+                </div>
+                {# Main task progress bar - rendered in Python and passed as main_task_progress_html #}
+                {{ main_task_progress_html|safe }}
+                <div class="mt-3 pt-3 border-t border-gray-200 dark:border-gray-600">
+                    {# Task timing info - rendered in Python and passed as task_timing_html #}
+                    {{ task_timing_html|safe }}
+                </div>
+            </div>
+        </div>
+
+        {% if task.details %}
+        <div class="bg-white dark:bg-gray-800 shadow-lg rounded-lg p-6 mb-6">
+            <h5 class="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Details:</h5>
+            <ul class="list-disc list-inside pl-2 space-y-1">
+                {% for k, v in task.details.items()|sort %}
+                <li class="text-sm text-gray-600 dark:text-gray-400"><strong class="font-medium text-gray-700 dark:text-gray-300">{{ k }}:</strong> {{ v }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        {% if task.children %}
+        <div class="mb-6">
+            <h4 class="text-xl font-semibold mb-3 text-gray-800 dark:text-gray-200">Sub-Tasks</h4>
+            <div class="space-y-4">
+            {% for child_task in task.children|sort(attribute='started_at') %}
+                {# Sub-task rendering - _render_sub_task_html will use sub_task.html which needs Tailwind #}
+                {{ render_sub_task(child_task)|safe }}
+            {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if task.error_message %}
+        <div class="bg-red-50 dark:bg-red-800/20 border border-red-300 dark:border-red-600 text-red-700 dark:text-red-300 px-4 py-3 rounded-lg relative mb-6" role="alert">
+            <strong class="font-bold flex items-center"><i class="fas fa-exclamation-triangle mr-2"></i>Error</strong>
+            <pre class="mt-2 text-sm bg-red-100 dark:bg-red-700/30 p-3 rounded overflow-x-auto">{{ task.error_message }}</pre>
+        </div>
+        {% endif %}
+    {% endif %}
+</div>
