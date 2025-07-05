@@ -518,3 +518,80 @@ class CodeAnalysisFramework:
         # 3. Check Dgraph documentation for recommended ways to monitor disk usage.
         logging.info("get_dgraph_disk_usage is a placeholder. Dgraph disk usage not actively queried.")
         return "Dgraph usage: N/A (placeholder)"
+
+    def get_usage_statistics(self) -> Dict[str, Any]:
+        """Retrieves general and AI usage statistics."""
+        stats = {
+            "general": {
+                "num_repositories": 0,
+                "total_files_analyzed": 0, # This might be complex to get accurately across all branches/schemas
+                "total_lines_analyzed": 0, # Same complexity as files
+            },
+            "ai": {
+                "total_llm_calls": 0, # Placeholder, assuming BillingUsage doesn't distinguish calls vs tokens for a single "call" record
+                "total_tokens_processed": 0,
+                "estimated_cost": 0.0,
+                "models_used": {} # To store breakdown by model
+            }
+        }
+
+        with self.db_manager.get_session("public") as session:
+            # General Stats
+            stats["general"]["num_repositories"] = session.query(func.count(Repository.id)).scalar() or 0
+
+            # AI Stats from BillingUsage
+            # Assuming each row in BillingUsage is one "call" or "transaction"
+            # If a single agent interaction results in multiple DB rows, this count might be high.
+            # For now, count rows where provider is not 'local' (assuming 'local' is for embeddings)
+            ai_usage_query = session.query(
+                func.count(BillingUsage.id),
+                func.sum(BillingUsage.total_tokens),
+                func.sum(BillingUsage.cost)
+            ).filter(BillingUsage.provider != 'local') # Exclude local embedding "costs" if any
+
+            ai_results = ai_usage_query.first()
+            if ai_results:
+                stats["ai"]["total_llm_calls"] = ai_results[0] or 0
+                stats["ai"]["total_tokens_processed"] = ai_results[1] or 0
+                stats["ai"]["estimated_cost"] = ai_results[2] or 0.0
+
+            # AI Model specific breakdown
+            model_usage_query = session.query(
+                BillingUsage.model_name,
+                func.count(BillingUsage.id), # Calls per model
+                func.sum(BillingUsage.total_tokens),
+                func.sum(BillingUsage.cost)
+            ).filter(BillingUsage.provider != 'local').group_by(BillingUsage.model_name)
+
+            for row in model_usage_query.all():
+                stats["ai"]["models_used"][row.model_name] = {
+                    "calls": row[1] or 0,
+                    "tokens": row[2] or 0,
+                    "cost": row[3] or 0.0
+                }
+
+        # For total_files_analyzed and total_lines_analyzed, it's more complex.
+        # We could iterate through all repositories and their active branches,
+        # then call self.get_repository_stats(repo.id, repo.active_branch)
+        # and sum them up. This could be slow if there are many repos.
+        # For now, these will remain 0 or be simplified.
+        # Let's try a simplified sum from all DBFile entries if feasible,
+        # but this doesn't respect branches or schemas properly.
+        # A more accurate way for "active" stats would be to sum from latest task results.
+        # Keeping it simple for now.
+
+        return stats
+
+    def get_task_history(self, repo_id: Optional[int], offset: int = 0, limit: int = 20) -> List[Task]:
+        """
+        Retrieves a paginated list of all parent tasks for a repository (or all tasks if repo_id is None),
+        ordered by most recent first. Includes children tasks.
+        """
+        with self.db_manager.get_session("public") as session:
+            query = session.query(Task).options(joinedload(Task.children)).filter(Task.parent_id.is_(None))
+            if repo_id is not None:
+                query = query.filter(Task.repository_id == repo_id)
+
+            tasks = query.order_by(Task.started_at.desc()).offset(offset).limit(limit).all()
+            session.expunge_all()
+            return tasks
