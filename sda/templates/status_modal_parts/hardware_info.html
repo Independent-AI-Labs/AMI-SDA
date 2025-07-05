@@ -1,31 +1,66 @@
 {# sda/templates/status_modal_parts/hardware_info.html #}
-<div class="bg-white dark:bg-gray-800 shadow-lg rounded-lg p-6 mb-6">
-    <h4 class="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-200"><i class="fas fa-server mr-2 text-blue-500"></i>System & Worker Information</h4>
+<div class="bg-white dark:bg-gray-800 rounded-lg p-4 h-full"> {# Removed shadow, mb. Added h-full for grid layout in parent #}
+    <h4 class="text-md font-semibold mb-3 text-gray-700 dark:text-gray-200 flex items-center">
+        <i class="fas fa-server mr-2 text-indigo-500"></i>Hardware & Workers
+    </h4>
 
-    <p class="text-gray-700 dark:text-gray-300 mb-1"><i class="fas fa-microchip mr-2 text-gray-500"></i><strong>Logical CPUs:</strong> {{ num_cpus }}</p>
-    <p class="text-gray-700 dark:text-gray-300 mb-1"><i class="fas fa-tachometer-alt mr-2 text-gray-500"></i><strong>Current CPU Load:</strong> {{ "%.1f"|format(cpu_load) }}%</p>
-    <p class="text-gray-700 dark:text-gray-300 mb-3"><i class="fas fa-memory mr-2 text-gray-500"></i><strong>RAM Usage:</strong> {{ "%.2f"|format(ram_used_gb) }} GB / {{ "%.2f"|format(ram_total_gb) }} GB ({{ "%.1f"|format(ram_percent_used) }}%)</p>
+    <div class="space-y-3">
+        {# CPU Info #}
+        <div>
+            <div class="flex justify-between items-center mb-0.5">
+                <span class="text-xs font-medium text-gray-600 dark:text-gray-300 flex items-center">
+                    <i class="fas fa-microchip mr-1.5 text-gray-400 dark:text-gray-500"></i>CPUs: {{ num_cpus }}
+                </span>
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{ "%.0f"|format(cpu_load) }}% Load</span>
+            </div>
+            <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                <div class="bg-blue-500 h-2 rounded-full" style="width: {{ cpu_load }}%"></div>
+            </div>
+        </div>
 
-    {% if torch_available and cuda_available %}
-        <p class="text-gray-700 dark:text-gray-300 mb-1"><i class="fas fa-tv mr-2 text-gray-500"></i><strong>CUDA Version:</strong> {{ cuda_version }}</p>
-        <p class="text-gray-700 dark:text-gray-300 mb-1"><i class="fas fa-desktop mr-2 text-gray-500"></i><strong>Available GPUs:</strong> {{ num_gpus }}</p>
-        <ul class="list-disc list-inside pl-4 mb-3">
-        {% for i in range(num_gpus) %}
-            <li class="text-sm text-gray-600 dark:text-gray-400">GPU {{ i }}: {{ gpu_names[i] }}</li>
-        {% endfor %}
-        </ul>
-    {% else %}
-        <p class="text-gray-700 dark:text-gray-300 mb-3"><i class="fas fa-tv-alt mr-2 text-gray-500"></i><strong>GPU:</strong> CUDA not available or PyTorch not installed with CUDA support.</p>
-    {% endif %}
+        {# RAM Info #}
+        <div>
+            <div class="flex justify-between items-center mb-0.5">
+                <span class="text-xs font-medium text-gray-600 dark:text-gray-300 flex items-center">
+                    <i class="fas fa-memory mr-1.5 text-gray-400 dark:text-gray-500"></i>RAM
+                </span>
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{ "%.1f"|format(ram_used_gb) }} / {{ "%.1f"|format(ram_total_gb) }} GB</span>
+            </div>
+            <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                <div class="bg-green-500 h-2 rounded-full" style="width: {{ ram_percent_used }}%"></div>
+            </div>
+        </div>
 
-    <p class="text-gray-700 dark:text-gray-300 mb-1"><i class="fas fa-users-cog mr-2 text-gray-500"></i><strong>Total Allowed Application Workers:</strong> {{ total_allowed_workers }}</p>
-    <div class="mt-2">
-        <p class="text-gray-700 dark:text-gray-300 font-medium">Worker Pool Configuration:</p>
-        <ul class="list-disc list-inside pl-4">
-            {% for target, num_w in db_workers_per_target.items() %}
-            <li class="text-sm text-gray-600 dark:text-gray-400">{{ target|capitalize }} Workers: {{ num_w }}</li>
+        {# GPU Info - more compact #}
+        {% if torch_available and cuda_available %}
+        <div class="text-xs">
+            <p class="text-gray-600 dark:text-gray-300 mb-0 leading-tight flex items-center">
+                <i class="fas fa-tv mr-1.5 text-gray-400 dark:text-gray-500"></i>
+                <strong>GPU:</strong>&nbsp;CUDA {{ cuda_version }} | {{ num_gpus }} Device(s)
+            </p>
+            {% if num_gpus > 0 %}
+            <ul class="list-none pl-5 mt-0.5">
+            {% for i in range(num_gpus) %}
+                <li class="text-xxs text-gray-500 dark:text-gray-400 leading-tight">{{ gpu_names[i] }}</li>
             {% endfor %}
-            <li class="text-sm text-gray-600 dark:text-gray-400">Embedding Workers: {{ max_embedding_workers }}</li>
-        </ul>
+            </ul>
+            {% endif %}
+        </div>
+        {% else %}
+        <p class="text-xs text-gray-600 dark:text-gray-300 flex items-center"><i class="fas fa-tv-alt mr-1.5 text-gray-400 dark:text-gray-500"></i><strong>GPU:</strong> CUDA not available</p>
+        {% endif %}
+
+        {# Worker Info - more compact #}
+        <div class="text-xs pt-1.5 border-t border-gray-200 dark:border-gray-700">
+            <p class="font-medium text-gray-600 dark:text-gray-300 mb-0.5 flex items-center">
+                <i class="fas fa-users-cog mr-1.5 text-gray-400 dark:text-gray-500"></i>Worker Config (Max: {{ total_allowed_workers }})
+            </p>
+            <ul class="list-none pl-5 text-xxs text-gray-500 dark:text-gray-400 leading-tight">
+                {% for target, num_w in db_workers_per_target.items() %}
+                <li>{{ target|capitalize }}: {{ num_w }}</li>
+                {% endfor %}
+                <li>Embedding: {{ max_embedding_workers }}</li>
+            </ul>
+        </div>
     </div>
 </div>

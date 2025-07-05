@@ -1,77 +1,88 @@
 {# sda/templates/status_container_base.html #}
-<div class="status-container p-2"> {# Add some padding to the overall container #}
-    {% if not task %}
-        <div class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4 mb-6" role="alert">
-            <p class="font-bold">No Active Tasks</p>
-            <p>The system is currently idle or no repository is selected.</p>
-        </div>
-        {# Render info cards even if no task is active #}
-        {% if model_info_html %}{{ model_info_html|safe }}{% endif %}
-        {% if hardware_info_html %}{{ hardware_info_html|safe }}{% endif %}
-        {% if storage_info_html %}{{ storage_info_html|safe }}{% endif %}
-        {% if usage_stats_html %}{{ usage_stats_html|safe }}{% endif %}
-    {% else %}
-        {# These sections are always shown, even with a task #}
-        {% if model_info_html %}{{ model_info_html|safe }}{% endif %}
-        {% if hardware_info_html %}{{ hardware_info_html|safe }}{% endif %}
-        {% if storage_info_html %}{{ storage_info_html|safe }}{% endif %}
-        {% if usage_stats_html %}{{ usage_stats_html|safe }}{% endif %}
+<div class="status-container p-2"> {# Overall padding for the modal's content area #}
 
-        {# Main Task Section Card #}
-        <div class="bg-white dark:bg-gray-800 shadow-lg rounded-lg p-6 mb-6">
-            <h3 class="text-2xl font-semibold mb-3 text-gray-800 dark:text-gray-200 flex items-center">
-                <i class="fas fa-tasks mr-3 text-blue-600"></i>Main Task: {{ task.name }}
+    <!-- Section 1: System & Configuration Overview -->
+    <div class="mb-4 p-3 bg-gray-100 dark:bg-gray-750 rounded-lg shadow-md">
+        <h3 class="text-lg font-semibold mb-2 text-gray-800 dark:text-gray-200 border-b border-gray-300 dark:border-gray-600 pb-2 flex items-center">
+            <i class="fas fa-cogs mr-2 text-gray-500 dark:text-gray-400"></i>System & Configuration
+        </h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {% if model_info_html %}<div class="p-3 border rounded-md dark:border-gray-600 bg-white dark:bg-gray-800 shadow">{{ model_info_html|safe }}</div>{% endif %}
+            {% if hardware_info_html %}<div class="p-3 border rounded-md dark:border-gray-600 bg-white dark:bg-gray-800 shadow">{{ hardware_info_html|safe }}</div>{% endif %}
+            {% if storage_info_html %}<div class="p-3 border rounded-md dark:border-gray-600 bg-white dark:bg-gray-800 shadow">{{ storage_info_html|safe }}</div>{% endif %}
+            {% if usage_stats_html %}<div class="p-3 border rounded-md dark:border-gray-600 bg-white dark:bg-gray-800 shadow">{{ usage_stats_html|safe }}</div>{% endif %}
+        </div>
+    </div>
+
+    <!-- Section 2: Current Task Activity -->
+    <div class="p-3 bg-gray-100 dark:bg-gray-750 rounded-lg shadow-md">
+        <div id="task-activity-toggle" class="flex justify-between items-center cursor-pointer mb-2 pb-2 border-b border-gray-300 dark:border-gray-600" onclick="toggleCollapsible('task-activity-content', 'task-activity-chevron')">
+            <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 flex items-center mb-0 pb-0 border-none"> {# Removed bottom border/padding from h3 itself #}
+                <i class="fas fa-tasks mr-2 text-gray-500 dark:text-gray-400"></i>Current Task Activity
             </h3>
-            <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-md"> {# Inner card for task details #}
-                <div class="flex justify-between items-center mb-2">
-                    <span class="font-medium text-gray-700 dark:text-gray-300">Status:</span>
-                    <span class="px-3 py-1 text-sm font-semibold rounded-full
-                        {% if task.status == 'running' %}bg-blue-200 text-blue-800 dark:bg-blue-700 dark:text-blue-200
-                        {% elif task.status == 'completed' %}bg-green-200 text-green-800 dark:bg-green-700 dark:text-green-200
-                        {% elif task.status == 'failed' %}bg-red-200 text-red-800 dark:bg-red-700 dark:text-red-200
-                        {% elif task.status == 'pending' %}bg-yellow-200 text-yellow-800 dark:bg-yellow-700 dark:text-yellow-200
-                        {% else %}bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200
-                        {% endif %}">
-                        {{ task.status }}
-                    </span>
-                </div>
-                {# Main task progress bar - rendered in Python and passed as main_task_progress_html #}
-                {{ main_task_progress_html|safe }}
-                <div class="mt-3 pt-3 border-t border-gray-200 dark:border-gray-600">
-                    {# Task timing info - rendered in Python and passed as task_timing_html #}
-                    {{ task_timing_html|safe }}
-                </div>
-            </div>
+            <span id="task-activity-chevron" class="text-gray-500 dark:text-gray-400 transform transition-transform duration-200"><i class="fas fa-chevron-down"></i></span>
         </div>
 
-        {% if task.details %}
-        <div class="bg-white dark:bg-gray-800 shadow-lg rounded-lg p-6 mb-6">
-            <h5 class="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Details:</h5>
-            <ul class="list-disc list-inside pl-2 space-y-1">
-                {% for k, v in task.details.items()|sort %}
-                <li class="text-sm text-gray-600 dark:text-gray-400"><strong class="font-medium text-gray-700 dark:text-gray-300">{{ k }}:</strong> {{ v }}</li>
+        <div id="task-activity-content" class="transition-all duration-300 ease-in-out overflow-hidden"> <!-- Content to be collapsed, initially not hidden, with transition -->
+            {% if not task %}
+            <div class="bg-blue-50 dark:bg-blue-900/30 border-l-4 border-blue-500 text-blue-700 dark:text-blue-300 p-3 rounded-md mt-2" role="alert"> {# Added mt-2 for spacing when visible #}
+                <p class="font-medium">No Active Task</p>
+                <p class="text-sm">The system is currently idle or no repository is selected.</p>
+            </div>
+        {% else %}
+            <!-- Main Task Card -->
+            <div class="bg-white dark:bg-gray-800 shadow-md rounded-lg p-4 mb-3">
+                <h4 id="main-task-name-heading" class="text-xl font-semibold mb-2 text-gray-800 dark:text-gray-200 flex items-center">
+                    <i class="fas fa-flag-checkered mr-2 text-indigo-500"></i>Task: <span id="main-task-name">{{ task.name }}</span>
+                </h4>
+                <div class="bg-gray-50 dark:bg-gray-700 p-3 rounded-md">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="font-medium text-gray-700 dark:text-gray-300">Status:</span>
+                        <span id="main-task-status" class="px-3 py-1 text-xs font-semibold rounded-full
+                            {% if task.status == 'running' %}bg-blue-200 text-blue-800 dark:bg-blue-700 dark:text-blue-200
+                            {% elif task.status == 'completed' %}bg-green-200 text-green-800 dark:bg-green-700 dark:text-green-200
+                            {% elif task.status == 'failed' %}bg-red-200 text-red-800 dark:bg-red-700 dark:text-red-200
+                            {% elif task.status == 'pending' %}bg-yellow-200 text-yellow-800 dark:bg-yellow-700 dark:text-yellow-200
+                            {% else %}bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200
+                            {% endif %}">
+                            {{ task.status }}
+                        </span>
+                    </div>
+                    {{ main_task_progress_html|safe }} {# Assumes this contains its own padding/styling for progress bar #}
+                    <div class="mt-2 pt-2 border-t border-gray-200 dark:border-gray-600">
+                        {{ task_timing_html|safe }} {# Assumes this is styled appropriately #}
+                    </div>
+                </div>
+            </div>
+
+            {% if task.details %}
+            <div class="bg-white dark:bg-gray-800 shadow-md rounded-lg p-4 mb-3">
+                <h5 class="text-md font-medium mb-2 text-gray-700 dark:text-gray-300">Details:</h5>
+                <ul class="list-disc list-inside pl-2 space-y-0.5">
+                    {% for k, v in task.details.items()|sort %}
+                    <li class="text-xs text-gray-600 dark:text-gray-400"><strong class="font-medium text-gray-700 dark:text-gray-300">{{ k }}:</strong> {{ v }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+            {% if task.children %}
+            <div class="bg-white dark:bg-gray-800 shadow-md rounded-lg p-4 mb-3">
+                <h4 class="text-md font-semibold mb-2 text-gray-700 dark:text-gray-300">Sub-Tasks:</h4>
+                <div class="space-y-2">
+                {% for child_task in task.children|sort(attribute='started_at') %}
+                    {{ render_sub_task(child_task)|safe }} {# sub_task.html should define its own card structure #}
                 {% endfor %}
-            </ul>
-        </div>
-        {% endif %}
-
-        {% if task.children %}
-        <div class="mb-6">
-            <h4 class="text-xl font-semibold mb-3 text-gray-800 dark:text-gray-200">Sub-Tasks</h4>
-            <div class="space-y-4">
-            {% for child_task in task.children|sort(attribute='started_at') %}
-                {# Sub-task rendering - _render_sub_task_html will use sub_task.html which needs Tailwind #}
-                {{ render_sub_task(child_task)|safe }}
-            {% endfor %}
+                </div>
             </div>
-        </div>
-        {% endif %}
+            {% endif %}
 
-        {% if task.error_message %}
-        <div class="bg-red-50 dark:bg-red-800/20 border border-red-300 dark:border-red-600 text-red-700 dark:text-red-300 px-4 py-3 rounded-lg relative mb-6" role="alert">
-            <strong class="font-bold flex items-center"><i class="fas fa-exclamation-triangle mr-2"></i>Error</strong>
-            <pre class="mt-2 text-sm bg-red-100 dark:bg-red-700/30 p-3 rounded overflow-x-auto">{{ task.error_message }}</pre>
-        </div>
+            {% if task.error_message %}
+            <div class="bg-red-50 dark:bg-red-800/20 border border-red-300 dark:border-red-600 text-red-700 dark:text-red-300 px-3 py-2 rounded-lg relative" role="alert">
+                <strong class="font-bold flex items-center text-sm"><i class="fas fa-exclamation-triangle mr-1.5"></i>Error</strong>
+                <pre class="mt-1.5 text-xs bg-red-100 dark:bg-red-700/30 p-2 rounded overflow-x-auto">{{ task.error_message }}</pre>
+            </div>
+            {% endif %}
         {% endif %}
-    {% endif %}
+    </div>
 </div>

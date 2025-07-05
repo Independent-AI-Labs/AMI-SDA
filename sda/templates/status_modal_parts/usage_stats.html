@@ -1,30 +1,50 @@
 {# sda/templates/status_modal_parts/usage_stats.html #}
-<div class="bg-white dark:bg-gray-800 shadow-lg rounded-lg p-6 mb-6">
-    <h4 class="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-200"><i class="fas fa-chart-line mr-2 text-blue-500"></i>Usage Statistics</h4>
+<div class="bg-white dark:bg-gray-800 rounded-lg p-4 h-full"> {# Consistent padding, h-full #}
+    <h4 class="text-md font-semibold mb-3 text-gray-700 dark:text-gray-200 flex items-center">
+        <i class="fas fa-chart-line mr-2 text-indigo-500"></i>Usage Statistics
+    </h4>
 
-    <div class="mb-4 pb-4 border-b border-gray-200 dark:border-gray-700">
-        <h5 class="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">General</h5>
-        <p class="text-gray-700 dark:text-gray-300 mb-1"><i class="fas fa-folder-open mr-2 text-gray-500"></i><strong>Repositories Managed:</strong> {{ stats.general.num_repositories }}</p>
-        {# Add more general stats here if they get implemented #}
-    </div>
+    <div class="space-y-3 text-xs">
+        {# General Stats - simplified #}
+        <div class="pb-2 border-b border-gray-200 dark:border-gray-700">
+            <p class="text-gray-600 dark:text-gray-300 flex items-center">
+                <i class="fas fa-folder-open mr-1.5 text-gray-400 dark:text-gray-500 w-4 text-center"></i>
+                <span class="font-medium mr-1">Repos Managed:</span><strong class="text-gray-700 dark:text-gray-200">{{ stats.general.num_repositories|default(0) }}</strong>
+            </p>
+        </div>
 
-    <div>
-        <h5 class="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">AI Usage (LLM)</h5>
-        <p class="text-gray-700 dark:text-gray-300 mb-1"><i class="fas fa-robot mr-2 text-gray-500"></i><strong>Total LLM Calls:</strong> {{ stats.ai.total_llm_calls|default(0, true) }}</p>
-        <p class="text-gray-700 dark:text-gray-300 mb-1"><i class="fas fa-brain mr-2 text-gray-500"></i><strong>Total Tokens Processed (LLM):</strong> {{ stats.ai.total_tokens_processed|default(0, true) }}</p>
-        <p class="text-gray-700 dark:text-gray-300 mb-3"><i class="fas fa-dollar-sign mr-2 text-gray-500"></i><strong>Estimated LLM Cost:</strong> ${{ "%.4f"|format(stats.ai.estimated_cost|default(0.0, true)) }}</p>
+        {# AI Usage Stats #}
+        <div class="pt-1">
+            <h5 class="text-xxs font-semibold mb-1 text-gray-500 dark:text-gray-400 uppercase tracking-wider">AI Usage (LLM)</h5>
+            <div class="space-y-1">
+                <p class="text-gray-600 dark:text-gray-300 flex items-center">
+                    <i class="fas fa-robot mr-1.5 text-gray-400 dark:text-gray-500 w-4 text-center"></i>
+                    <span class="font-medium mr-1">Total Calls:</span><strong class="text-gray-700 dark:text-gray-200">{{ stats.ai.total_llm_calls|default(0) }}</strong>
+                </p>
+                <p class="text-gray-600 dark:text-gray-300 flex items-center">
+                    <i class="fas fa-atom mr-1.5 text-gray-400 dark:text-gray-500 w-4 text-center"></i>
+                    <span class="font-medium mr-1">Total Tokens:</span><strong class="text-gray-700 dark:text-gray-200">{{ stats.ai.total_tokens_processed|default(0) }}</strong>
+                </p>
+                <p class="text-gray-600 dark:text-gray-300 flex items-center">
+                    <i class="fas fa-dollar-sign mr-1.5 text-gray-400 dark:text-gray-500 w-4 text-center"></i>
+                    <span class="font-medium mr-1">Est. Cost:</span><strong class="text-gray-700 dark:text-gray-200">${{ "%.2f"|format(stats.ai.estimated_cost|default(0.0)) }}</strong>
+                </p>
+            </div>
 
-        <div>
-            <p class="text-gray-700 dark:text-gray-300 font-medium">Model Breakdown:</p>
-            <ul class="list-disc list-inside pl-4 mt-1">
             {% if stats.ai.models_used %}
-                {% for model, data in stats.ai.models_used.items() %}
-                <li class="text-sm text-gray-600 dark:text-gray-400"><strong>{{ model }}:</strong> {{ data.calls|default(0, true) }} calls, {{ data.tokens|default(0, true) }} tokens, ${{ "%.4f"|format(data.cost|default(0.0, true)) }}</li>
-                {% endfor %}
+            <div class="mt-2 pt-1.5 border-t border-gray-200 dark:border-gray-700">
+                <h6 class="text-xxs font-semibold mb-0.5 text-gray-500 dark:text-gray-400 uppercase tracking-wider">Model Breakdown:</h6>
+                <ul class="list-none pl-1 space-y-0.5">
+                    {% for model, data in stats.ai.models_used.items() %}
+                    <li class="text-xxs text-gray-500 dark:text-gray-400">
+                        <strong class="truncate font-medium text-gray-600 dark:text-gray-300" title="{{model}}">{{ model }}:</strong> {{ data.calls|default(0) }} calls, {{ data.tokens|default(0) }} tokens, ${{ "%.2f"|format(data.cost|default(0.0)) }}
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
             {% else %}
-                <li class="text-sm text-gray-600 dark:text-gray-400">No AI model usage tracked yet.</li>
+            <p class="mt-2 pt-1.5 border-t border-gray-200 dark:border-gray-700 text-xxs text-gray-500 dark:text-gray-400 italic">No AI model usage tracked.</p>
             {% endif %}
-            </ul>
         </div>
     </div>
 </div>
