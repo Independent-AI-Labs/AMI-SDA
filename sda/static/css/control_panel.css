@@ -307,6 +307,12 @@
     margin-bottom: 0 !important; /* Override Gradio's default Markdown bottom margin if any */
 }
 
+.modal-close-x-wrapper {
+    margin-left: auto; /* Push the wrapper (Gradio HTML component div) to the right */
+    display: flex; /* Allow the button inside to be aligned if needed */
+    align-items: center; /* Vertically center the button if wrapper has height */
+}
+
 .modal-close-x {
     background: transparent;
     border: none;
@@ -315,7 +321,7 @@
     cursor: pointer;
     padding: 0.25rem; /* Add some padding for easier clicking */
     line-height: 1; /* Ensure icon is centered */
-    margin-left: auto; /* Push to the right */
+    /* margin-left: auto; Removed, now on wrapper */
 }
 
 .modal-close-x:hover {

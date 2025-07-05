@@ -356,24 +356,24 @@ No active tasks.
                     if (event.key === 'Escape') {
                         const visibleModals = document.querySelectorAll('.modal-background[style*="display: flex"], .modal-background[style*="display:block"]');
                         visibleModals.forEach(modal => {
-                            // Prefer closing via a specific close button's JS if available (e.g. for Gradio state)
-                            // but fall back to direct hideModal if not.
-                            // For this implementation, we directly call hideModal.
-                            if (modal.id) { // Check if the modal-background itself has an ID
+                            // The modal element selected by querySelectorAll already has the ID (e.g., "addRepoModal").
+                            // So, modal.id should be directly usable.
+                            if (modal.id) {
                                 hideModal(modal.id);
-                            } else { // Try to find ID from a child if background doesn't have one
-                                const modalContent = modal.querySelector('.modal-content-wrapper');
-                                if (modalContent && modalContent.id) hideModal(modalContent.id);
+                            } else {
+                                // This case should ideally not happen if modals are structured with IDs on .modal-background
+                                console.warn("ESC key: Found a visible modal background without an ID.", modal);
                             }
                         });
                     }
                 });
             }
             // Run setup after Gradio loads its components
-            if (window.gradioApp) { // Check if gradioApp is available (new Gradio versions)
+            if (window.gradioApp && typeof window.gradioApp.addEventListener === 'function') {
                  window.gradioApp.addEventListener('render', setupModalEventListeners);
-            } else { // Fallback for older Gradio or direct script load
-                 window.addEventListener('load', setupModalEventListeners);
+            } else {
+                 // Fallback for older Gradio or if gradioApp isn't fully ready
+                 document.addEventListener('DOMContentLoaded', setupModalEventListeners);
             }
 
             // Prevent flicker on progress bar updates
@@ -431,7 +431,7 @@ No active tasks.
                 with gr.Column(elem_classes="modal-content-wrapper"):
                     with gr.Row(elem_classes="modal-header"):
                         gr.Markdown("## Add New Repository", elem_classes="modal-title")
-                        gr.HTML('<button title="Close" class="modal-close-x" onclick="hideModal(\'addRepoModal\')"><i class="fas fa-times"></i></button>')
+                        gr.HTML('<button title="Close" class="modal-close-x" onclick="hideModal(\'addRepoModal\')"><i class="fas fa-times"></i></button>', elem_classes="modal-close-x-wrapper")
                     repo_url_modal = gr.Textbox(label="Git Repository URL or Local Path", placeholder="https://github.com/user/repo.git or /path/to/local/repo")
                     with gr.Row():
                         add_repo_submit_btn = gr.Button("Add & Analyze", variant="primary")
@@ -441,7 +441,7 @@ No active tasks.
                 with gr.Column(elem_classes="modal-content-wrapper"):
                     with gr.Row(elem_classes="modal-header"):
                         gr.Markdown("## File Content", elem_classes="modal-title") # Title for code viewer
-                        gr.HTML('<button title="Close" class="modal-close-x" onclick="hideModal(\'codeViewerModal\')"><i class="fas fa-times"></i></button>')
+                        gr.HTML('<button title="Close" class="modal-close-x" onclick="hideModal(\'codeViewerModal\')"><i class="fas fa-times"></i></button>', elem_classes="modal-close-x-wrapper")
                     modal_code_viewer = gr.Code(label="File Content", language=None, interactive=False)
                     modal_close_btn = gr.Button("Close") # This button also calls hideModal
 
@@ -449,7 +449,7 @@ No active tasks.
                 with gr.Column(elem_classes="modal-content-wrapper"):
                     with gr.Row(elem_classes="modal-header"):
                         gr.Markdown("## Control Panel", elem_classes="modal-title")
-                        gr.HTML('<button title="Close" class="modal-close-x" onclick="hideModal(\'statusModal\')"><i class="fas fa-times"></i></button>')
+                        gr.HTML('<button title="Close" class="modal-close-x" onclick="hideModal(\'statusModal\')"><i class="fas fa-times"></i></button>', elem_classes="modal-close-x-wrapper")
                     # Control Panel is now an iframe loading the standalone HTML page
                     status_details_html = gr.HTML(
                         value='<iframe src="/static/control_panel.html" style="width: 100%; height: 70vh; border: none;"></iframe>'
