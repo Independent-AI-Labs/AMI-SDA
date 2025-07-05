@@ -326,19 +326,65 @@ No active tasks.
 
         modal_js = """
         <script>
-            function showModal(id) { document.getElementById(id).style.display = 'flex'; }
-            function hideModal(id) { document.getElementById(id).style.display = 'none'; return null; }
+            function showModal(id) {
+                const modal = document.getElementById(id);
+                if (modal) modal.style.display = 'flex';
+            }
+            function hideModal(id) {
+                const modal = document.getElementById(id);
+                if (modal) modal.style.display = 'none';
+                return null; // Required for Gradio JS event handlers
+            }
             function setupModalEventListeners() {
-                document.querySelectorAll('.modal-background').forEach(modal => {
-                    modal.addEventListener('click', function(event) {
-                        if (event.target === modal) { hideModal(modal.id); }
+                console.log("setupModalEventListeners called"); // DIAGNOSTIC
+                // Listener for clicking on the modal background to close
+                document.querySelectorAll('.modal-background').forEach(modalBg => {
+                    modalBg.addEventListener('click', function(event) {
+                        if (event.target === modalBg) { // Click was directly on the background
+                            // Find the modal-content-wrapper or the modal ID itself
+                            const modalContent = modalBg.querySelector('.modal-content-wrapper') || modalBg;
+                            if (modalContent && modalContent.id) { // Ensure we have an ID to hide
+                               hideModal(modalContent.id);
+                            } else if (modalBg.id) { // Fallback to modalBg's ID
+                               hideModal(modalBg.id);
+                            }
+                        }
                     });
                 });
+
+                // Global ESC key listener
+                document.addEventListener('keydown', function(event) {
+                    console.log("Keydown event:", event.key); // DIAGNOSTIC
+                    if (event.key === 'Escape') {
+                        console.log("Escape key pressed."); // DIAGNOSTIC
+                        const selector = '.modal-background[style*="display: flex"], .modal-background[style*="display:block"]';
+                        const visibleModals = document.querySelectorAll(selector);
+                        console.log("Visible modals query selector:", selector, "Found:", visibleModals); // DIAGNOSTIC
+
+                        visibleModals.forEach(modal => {
+                            console.log("Processing visible modal:", modal.id); // DIAGNOSTIC
+                            // The modal element selected by querySelectorAll already has the ID (e.g., "addRepoModal").
+                            // So, modal.id should be directly usable.
+                            if (modal.id) {
+                                hideModal(modal.id);
+                            } else {
+                                // This case should ideally not happen if modals are structured with IDs on .modal-background
+                                console.warn("ESC key: Found a visible modal background without an ID.", modal);
+                            }
+                        });
+                    }
+                });
             }
-            window.addEventListener('load', setupModalEventListeners);
-            # Add CSS for preventing flicker during updates
+            // Run setup after Gradio loads its components
+            if (window.gradioApp && typeof window.gradioApp.addEventListener === 'function') {
+                 window.gradioApp.addEventListener('render', setupModalEventListeners);
+            } else {
+                 // Fallback for older Gradio or if gradioApp isn't fully ready
+                 document.addEventListener('DOMContentLoaded', setupModalEventListeners);
+            }
+
+            // Prevent flicker on progress bar updates
             window.addEventListener('DOMContentLoaded', function() {
-                // Prevent flicker on progress bar updates
                 const progressBar = document.querySelector('#main-progress-bar');
                 if (progressBar) {
                     progressBar.style.transition = 'none';
@@ -367,10 +413,17 @@ No active tasks.
 
         with gr.Blocks(theme=gr.themes.Default(primary_hue="blue", secondary_hue="sky"), title="SDA Framework", css=control_panel_css, head=tailwind_cdn + modal_js + fontawesome_cdn + dynamic_updates_js_link) as demo:
             gr.Markdown("# Software Development Analytics")
-            with gr.Row():
+            with gr.Row(elem_classes="control-button-row"): # Add a class for potential styling of the row
                 status_output = gr.Textbox(label="Status", interactive=False, placeholder="Status messages will appear here...", scale=4)
-                view_status_modal_btn = gr.Button("View Control Panel", scale=1)
-            
+                # view_status_modal_btn = gr.Button("View Control Panel", scale=1) # Original button
+                # Attempting HTML button with icon for "View Control Panel"
+                view_status_modal_btn_html = gr.HTML(
+                    "<button class='gr-button gr-button-lg gr-button-secondary button-with-icon-content' onclick=\"showModal('statusModal')\" title='View Control Panel'>" + \
+                    "<i class='fas fa-tasks mr-1.5'></i>View Control Panel" + \
+                    "</button>",
+                    elem_classes="html-button-wrapper" # Class for the wrapper div Gradio creates
+                )
+
             # Redundant progress_row and main_progress_bar REMOVED
 
             repo_id_state = gr.State()
@@ -390,20 +443,27 @@ No active tasks.
 
             with gr.Column(elem_id="addRepoModal", elem_classes="modal-background"):
                 with gr.Column(elem_classes="modal-content-wrapper"):
-                    gr.Markdown("## Add New Repository")
+                    with gr.Row(elem_classes="modal-header"):
+                        gr.Markdown("## Add New Repository", elem_classes="modal-title")
+                        gr.HTML('<button title="Close" class="modal-close-x" onclick="hideModal(\'addRepoModal\')"><i class="fas fa-times"></i></button>', elem_classes="modal-close-x-wrapper")
                     repo_url_modal = gr.Textbox(label="Git Repository URL or Local Path", placeholder="https://github.com/user/repo.git or /path/to/local/repo")
                     with gr.Row():
                         add_repo_submit_btn = gr.Button("Add & Analyze", variant="primary")
-                        add_repo_cancel_btn = gr.Button("Cancel")
+                        add_repo_cancel_btn = gr.Button("Cancel") # This button also calls hideModal via its click event later
 
             with gr.Column(elem_id="codeViewerModal", elem_classes="modal-background"):
                 with gr.Column(elem_classes="modal-content-wrapper"):
+                    with gr.Row(elem_classes="modal-header"):
+                        gr.Markdown("## File Content", elem_classes="modal-title") # Title for code viewer
+                        gr.HTML('<button title="Close" class="modal-close-x" onclick="hideModal(\'codeViewerModal\')"><i class="fas fa-times"></i></button>', elem_classes="modal-close-x-wrapper")
                     modal_code_viewer = gr.Code(label="File Content", language=None, interactive=False)
-                    modal_close_btn = gr.Button("Close")
+                    modal_close_btn = gr.Button("Close") # This button also calls hideModal
 
             with gr.Column(elem_id="statusModal", elem_classes="modal-background"):
                 with gr.Column(elem_classes="modal-content-wrapper"):
-                    gr.Markdown("## Control Panel")
+                    with gr.Row(elem_classes="modal-header"):
+                        gr.Markdown("## Control Panel", elem_classes="modal-title")
+                        gr.HTML('<button title="Close" class="modal-close-x" onclick="hideModal(\'statusModal\')"><i class="fas fa-times"></i></button>', elem_classes="modal-close-x-wrapper")
                     # Control Panel is now an iframe loading the standalone HTML page
                     status_details_html = gr.HTML(
                         value='<iframe src="/static/control_panel.html" style="width: 100%; height: 70vh; border: none;"></iframe>'
@@ -434,16 +494,16 @@ No active tasks.
 
                 with gr.TabItem("Insights Dashboard", id=1):
                     with gr.Row():
+                        with gr.Column(scale=1): # This column will now hold the HTML stat cards
+                            gr.Markdown('### <i class="fas fa-chart-bar mr-1.5"></i> Key Statistics') # Icons in Markdown are OK
+                            stats_cards_html = gr.HTML(label="Key Repository Statistics")
                         with gr.Column(scale=1):
-                            gr.Markdown('### <i class="fas fa-chart-bar"></i> Statistics')
-                            stats_plot = gr.Plot(label="Statistics")
-                        with gr.Column(scale=1):
-                            gr.Markdown('### <i class="fas fa-code"></i> Language Breakdown')
-                            lang_plot = gr.Plot(label="Language Breakdown")
-                    gr.Markdown('### <i class="fas fa-search-plus"></i> In-Depth Analysis (runs in background)')
+                            gr.Markdown('### <i class="fas fa-code mr-1.5"></i> Language Breakdown') # Icons in Markdown are OK
+                            lang_plot = gr.Plot(label="Language Breakdown") # This remains a plot
+                    gr.Markdown('### <i class="fas fa-search-plus mr-1.5"></i> In-Depth Analysis (runs in background)') # Icons in Markdown are OK
                     with gr.Row():
-                        analyze_dead_code_btn = gr.Button("Find Potentially Unused Code")
-                        analyze_duplicates_btn = gr.Button("Find Potentially Duplicate Code")
+                        analyze_dead_code_btn = gr.Button("Find Unused Code")
+                        analyze_duplicates_btn = gr.Button("Find Duplicate Code")
                     # Full Task History Accordion REMOVED
                     with gr.Tabs():
                         with gr.TabItem("Unused Code Results"):
@@ -453,14 +513,14 @@ No active tasks.
                             duplicate_code_df = gr.DataFrame(headers=["File A", "Lines A", "File B", "Lines B", "Similarity"], interactive=False,
                                                              max_height=400)
 
-                with gr.TabItem("Code Browser & Version Control", id=2):
+                with gr.TabItem("Code Browser & VC", id=2):
                     with gr.Row():
                         with gr.Column(scale=1):
-                            gr.Markdown("#### Git Status")
+                            gr.Markdown('#### <i class="fab fa-git-alt mr-1.5"></i>Git Status') # Icons in Markdown are OK
                             modified_files_dropdown = gr.Dropdown(label="Select Modified File to View", interactive=True)
-                            revert_file_btn = gr.Button("Revert Changes for Selected File")
+                            revert_file_btn = gr.Button("Revert File")
                             commit_message = gr.Textbox(label="Commit Message", placeholder="Enter commit message...")
-                            commit_btn = gr.Button("Commit All Changes")
+                            commit_btn = gr.Button("Commit All")
                         with gr.Column(scale=3):
                             code_viewer = gr.Code(label="File Content / Diff", language=None, interactive=False, visible=True)
                             image_viewer = gr.Image(label="Image Content", interactive=False, visible=False)
@@ -468,7 +528,7 @@ No active tasks.
             self.task_buttons = [analyze_branch_btn, analyze_dead_code_btn, analyze_duplicates_btn, add_repo_submit_btn, commit_btn]
             timer = gr.Timer(2)
 
-            all_insight_outputs = [stats_plot, lang_plot] # Changed df to plot
+            all_insight_outputs = [stats_cards_html, lang_plot] # Updated: stats_plot to stats_cards_html
             git_panel_outputs = [modified_files_dropdown, code_viewer, image_viewer, selected_file_state]
 
             # Define these components early if they are needed by reference in poll_outputs
@@ -501,7 +561,7 @@ No active tasks.
                 status_output,                      # Overall status message
                 # status_details_html,              # NO LONGER an output of polling for content change
                 dead_code_df, duplicate_code_df,    # Dataframe updates
-                stats_plot, lang_plot,              # Plot updates
+                stats_cards_html, lang_plot,        # Updated: stats_plot to stats_cards_html
                 last_status_text_state,             # Pass-through state for overall status
                 # main_progress_bar, REMOVED
                 # progress_row, REMOVED
@@ -514,7 +574,7 @@ No active tasks.
             open_add_repo_modal_btn.click(None, js="() => { const modal = document.getElementById('addRepoModal'); if (modal) modal.style.display = 'flex'; }")
             add_repo_cancel_btn.click(None, js="() => { const modal = document.getElementById('addRepoModal'); if (modal) modal.style.display = 'none'; }")
             modal_close_btn.click(None, js="() => { const modal = document.getElementById('codeViewerModal'); if (modal) modal.style.display = 'none'; }")
-            view_status_modal_btn.click(None, js="() => { const modal = document.getElementById('statusModal'); if (modal) modal.style.display = 'flex'; }")
+            # view_status_modal_btn.click(...) line removed as onclick is in the HTML for view_status_modal_btn_html
             status_modal_close_btn.click(None, js="() => { const modal = document.getElementById('statusModal'); if (modal) modal.style.display = 'none'; }")
 
             add_repo_submit_btn.click(
@@ -598,8 +658,8 @@ No active tasks.
         last_status_text: str # For overall status message
         # last_progress_html: str REMOVED
     ) -> Tuple:
-        branch_dropdown_update = gr.update()
-        branch_state_update = gr.update()
+        branch_dropdown_update = gr.skip() # Initialize to skip update by default
+        branch_state_update = gr.update() # State updates are usually fine
 
         # Initialize new state outputs - these might be removed if not used by other components
         # new_last_main_task_id = _last_main_task_id
@@ -799,8 +859,8 @@ No active tasks.
 
         button_updates = self._get_task_button_updates(interactive=not is_running)
         dead_code_update, dup_code_update = gr.update(), gr.update()
-        # Initialize plot updates to None, they will be updated if task completed and affects insights
-        stats_plot_update, lang_plot_update = gr.update(value=None), gr.update(value=None)
+        # Initialize updates for HTML stats and language plot to "skip update" by default
+        stats_html_update, lang_plot_update = gr.skip(), gr.skip()
 
         task_could_change_branch = task.name.startswith("Ingest Branch:") or task.name == "analyze_branch"
         if task.status == 'completed':
@@ -829,20 +889,20 @@ No active tasks.
                 if branch != target_branch_for_insights : branch_state_update = target_branch_for_insights
 
                 # Update insight plots
-                s_plot, l_plot = self.update_insights_dashboard(repo_id, target_branch_for_insights)
-                stats_plot_update = gr.update(value=s_plot)
+                s_html, l_plot = self.update_insights_dashboard(repo_id, target_branch_for_insights)
+                stats_html_update = gr.update(value=s_html) # s_html is now the HTML string
                 lang_plot_update = gr.update(value=l_plot)
 
 
         elif task.status == 'failed':
             status_msg = f"Task '{task.name}' Failed: Check logs for details."
-            # Potentially clear or leave stale plots as is, or show an error state in plots
+            # Potentially clear or leave stale stats/plots as is, or show an error state
             # For now, they will retain their last state or be None if initialized that way.
 
         return (
             status_msg, # status_output
             # status_details_html output removed
-            dead_code_update, dup_code_update, stats_plot_update, lang_plot_update, # df_updates and plot_updates
+            dead_code_update, dup_code_update, stats_html_update, lang_plot_update, # df_updates and plot_updates
             last_status_text, # last_status_text_state (pass through)
             # main_progress_update, REMOVED
             # progress_row_update, REMOVED
@@ -912,33 +972,53 @@ No active tasks.
         self.framework.analyze_branch(repo_id, branch, 'user')
         return (f"Started re-analysis for branch '{branch}'.",) + self._get_task_button_updates(False)
 
-    def update_insights_dashboard(self, repo_id: int, branch: str) -> Tuple[Optional[px.bar], Optional[px.pie]]:
+    def update_insights_dashboard(self, repo_id: int, branch: str) -> Tuple[Optional[str], Optional[px.pie]]: # Return HTML string now
         if not repo_id or not branch:
-            return None, None # Return None for plots if no data
-
-        stats = self.framework.get_repository_stats(repo_id, branch)
-        if not stats: # Ensure stats is not None
             return None, None
 
-        # Prepare data for Statistics Bar Chart
-        # Ensure values are numerical for plotting
-        stats_metrics = ["File Count", "Total Lines", "Total Tokens", "Sub-modules (schemas)"]
-        stats_values = [
-            stats.get('file_count', 0),
-            stats.get('total_lines', 0),
-            stats.get('total_tokens', 0),
-            stats.get('schema_count', 0)
-        ]
+        stats = self.framework.get_repository_stats(repo_id, branch)
 
-        stats_fig = None
-        if any(v > 0 for v in stats_values): # Check if there's any data to plot
-            stats_df_for_plot = pd.DataFrame({"Metric": stats_metrics, "Value": stats_values})
-            stats_fig = px.bar(stats_df_for_plot, x="Metric", y="Value", title="Repository Statistics",
-                               text_auto=True) # Show values on bars
-            stats_fig.update_layout(showlegend=False)
+        stats_html = "" # Initialize HTML string
+        if not stats:
+            stats_html = "<div class='stat-cards-container'><p>No statistics available for this repository/branch.</p></div>"
+        else:
+            # Data for the stat cards
+            file_count = stats.get('file_count', 0)
+            total_lines = stats.get('total_lines', 0)
+            total_tokens = stats.get('total_tokens', 0)
+            schema_count = stats.get('schema_count', 0)
 
-        # Prepare data for Language Breakdown Pie Chart
-        lang_breakdown = stats.get('language_breakdown', {})
+            # HTML structure for stat cards
+            # Using f-strings for simplicity; for more complex HTML, a template engine might be better
+            # but Gradio's HTML component takes a string.
+            stats_html = f"""
+            <div class="stat-cards-container">
+                <div class="stat-card">
+                    <div class="stat-icon"><i class="fas fa-file-alt"></i></div>
+                    <div class="stat-value">{file_count:,}</div>
+                    <div class="stat-label">FILES</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon"><i class="fas fa-stream"></i></div>
+                    <div class="stat-value">{total_lines:,}</div>
+                    <div class="stat-label">TOTAL LINES</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon"><i class="fas fa-cubes"></i></div>
+                    <div class="stat-value">{schema_count}</div>
+                    <div class="stat-label">SUB-MODULES</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon"><i class="fas fa-brain"></i></div>
+                    <div class="stat-value">{total_tokens:,}</div>
+                    <div class="stat-label">TOTAL TOKENS</div>
+                </div>
+            </div>
+            """
+            # The :, adds thousand separators to the numbers if they are large.
+
+        # Prepare data for Language Breakdown Pie Chart (remains the same)
+        lang_breakdown = stats.get('language_breakdown', {}) if stats else {}
         lang_fig = None
         if lang_breakdown:
             lang_names = list(lang_breakdown.keys())
@@ -953,7 +1033,7 @@ No active tasks.
                               hole=0.3) # Optional: for a donut chart effect
             lang_fig.update_traces(textposition='inside', textinfo='percent+label')
 
-        return stats_fig, lang_fig
+        return stats_html, lang_fig # Corrected: stats_fig to stats_html
 
     def handle_run_dead_code(self, repo_id: int, branch: str) -> Tuple:
         if not repo_id or not branch:

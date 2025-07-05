@@ -290,3 +290,150 @@
 #component-29 {
     overflow: hidden !important; /* Use !important to override inline style */
 }
+
+/* Added Modal Header and Close Button Styles */
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 0.75rem; /* Corresponds to mb-3 in Tailwind */
+    margin-bottom: 1rem;     /* Spacing after header */
+    border-bottom: 1px solid var(--border-color-primary, #e5e7eb); /* Use var or fallback */
+}
+
+/* Ensure title within modal header uses body text color by default */
+.modal-header .modal-title, .modal-header .modal-title p { /* Target p if Gradio wraps Markdown output */
+    color: var(--body-text-color);
+    margin-bottom: 0 !important; /* Override Gradio's default Markdown bottom margin if any */
+}
+
+.modal-close-x-wrapper {
+    margin-left: auto; /* Push the wrapper (Gradio HTML component div) to the right */
+    display: flex;
+    align-items: center; /* Vertically center the button */
+    justify-content: flex-end; /* Align the button to the right end of the wrapper */
+    /* flex-grow: 0; /* Ensure wrapper does not grow if there's extra space in header */
+    /* flex-shrink: 0; /* Ensure wrapper does not shrink */
+}
+
+.modal-close-x {
+    background: transparent;
+    border: none;
+    font-size: 1.25rem; /* text-xl for the icon, adjust as needed */
+    color: var(--body-text-color-subdued, #6b7280); /* Use var or fallback */
+    cursor: pointer;
+    padding: 0.25rem; /* Add some padding for easier clicking */
+    line-height: 1; /* Ensure icon is centered */
+    /* margin-left: auto; Removed, now on wrapper */
+}
+
+.modal-close-x:hover {
+    color: var(--body-text-color, #1f2937); /* Use var or fallback */
+}
+
+/* Dark mode considerations (if not covered by Gradio variables) */
+html.dark .modal-header {
+    border-bottom-color: var(--border-color-primary-dark, #374151); /* Example dark mode border */
+}
+
+html.dark .modal-close-x {
+    color: var(--body-text-color-subdued-dark, #9ca3af);
+}
+
+/* Styles for HTML-based button with icon */
+.html-button-wrapper {
+    /* Gradio's gr.HTML component is often wrapped in a div.
+       This class targets that wrapper. We might want it to not take full width if in a row. */
+    /* display: inline-block; /* Or flex, depending on context */
+    /* margin-left: 0.5rem; /* Example if it's next to something */
+}
+
+.button-with-icon-content {
+    /* Replicate Gradio button styles as much as possible if needed,
+       or define a distinct look.
+       The classes 'gr-button gr-button-lg gr-button-secondary' attempt to do this.
+       This class is for fine-tuning. */
+    display: inline-flex; /* Align icon and text */
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem; /* space between icon and text, similar to mr-1.5 */
+    white-space: nowrap; /* Prevent text wrapping */
+    /* Ensure cursor is pointer if not inherited from .gr-button */
+    cursor: pointer;
+}
+
+/* Ensure the icon within this custom button is vertically aligned if needed,
+   though `align-items: center` on the button should handle it. */
+.button-with-icon-content i {
+    /* font-size: 1em; /* Adjust if icon size needs to match text better */
+    /* line-height: inherit; */
+}
+
+html.dark .modal-close-x:hover {
+    color: var(--body-text-color-dark, #f3f4f6);
+}
+
+/* Stat Cards Styles */
+.stat-cards-container {
+    display: flex;
+    flex-wrap: wrap; /* Allow wrapping on smaller screens */
+    gap: 1rem; /* Spacing between cards */
+    margin-bottom: 1rem; /* Space below the container */
+}
+
+.stat-card {
+    flex: 1 1 180px; /* Flex grow, shrink, basis (min-width before wrapping) */
+    background-color: var(--background-fill-secondary, #f9fafb); /* Light background */
+    padding: 1.25rem; /* p-5 */
+    border-radius: 0.5rem; /* rounded-lg */
+    border: 1px solid var(--border-color-primary, #e5e7eb);
+    box-shadow: var(--shadow-drop); /* Use Gradio's shadow if available, or a default */
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 100px; /* Ensure a minimum height */
+}
+
+html.dark .stat-card {
+    background-color: var(--background-fill-secondary-dark, #374151); /* Darker background for dark mode */
+    border-color: var(--border-color-primary-dark, #4b5563);
+}
+
+.stat-value {
+    font-size: 2.25rem; /* text-4xl or similar */
+    font-weight: 700; /* font-bold */
+    color: var(--body-text-color, #111827);
+    line-height: 1.1;
+    margin-bottom: 0.25rem; /* mb-1 */
+}
+
+html.dark .stat-value {
+    color: var(--body-text-color-dark, #f3f4f6);
+}
+
+.stat-label {
+    font-size: 0.875rem; /* text-sm */
+    font-weight: 500; /* font-medium */
+    color: var(--body-text-color-subdued, #6b7280);
+    text-transform: uppercase;
+    letter-spacing: 0.05em; /* tracking-wider */
+}
+
+html.dark .stat-label {
+    color: var(--body-text-color-subdued-dark, #9ca3af);
+}
+
+.stat-icon {
+    font-size: 1.75rem; /* Adjust size as needed, e.g., text-3xl */
+    margin-bottom: 0.75rem; /* mb-3, space between icon and value */
+    color: var(--accent-color-primary, #007bff); /* Use accent color or a specific theme color */
+    /* Alternative: Use a more subdued color if accent is too strong for all cards */
+    /* color: var(--body-text-color-subdued, #6b7280); */
+}
+
+html.dark .stat-icon {
+    color: var(--accent-color-primary-dark, #3b82f6); /* Accent color for dark mode */
+    /* color: var(--body-text-color-subdued-dark, #9ca3af); */
+}

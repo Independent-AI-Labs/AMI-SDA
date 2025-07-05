@@ -34,7 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const noActiveTaskMessageDiv = document.getElementById('no-active-task-message');
-    const activeTaskWrapperDiv = document.getElementById('active-task-details-wrapper'); // This might be repurposed or removed if active task is part of the new list
+    const activeTaskWrapperDiv = document.getElementById('active-task-details-wrapper');
 
     // New selectors for task history and templates
     const taskHistoryList = document.getElementById('task-history-list');
@@ -76,23 +76,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     // --- END: Copied from dynamic_updates.js ---
 
-
-    const mainTaskUI = { // This structure might be less used if active task is rendered via template
-        name: document.getElementById('main-task-name'),
-        status: document.getElementById('main-task-status'),
-        progressText: document.getElementById('main-task-progress-text'),
-        progressBar: document.getElementById('main-task-progress-bar'),
-        taskNameDisplay: document.getElementById('main-task-task-name'), // For progress bar's task name
-        timeElapsed: document.getElementById('main-task-time-elapsed'),
-        timeDuration: document.getElementById('main-task-time-duration'),
-        detailsCard: document.getElementById('main-task-details-card'),
-        detailsList: document.getElementById('main-task-details-list'),
-        errorCard: document.getElementById('main-task-error-card'),
-        errorMessageContent: document.getElementById('main-task-error-message-content'),
-        childrenContainer: document.getElementById('main-task-children-container'),
-        subTasksListJS: document.getElementById('sub-tasks-list-js') // Container for JS-generated sub-tasks
-    };
-    // const subTaskTemplate = document.getElementById('sub-task-template-js'); // Redundant declaration REMOVED
+    // const mainTaskUI object has been removed as active task rendering is now unified.
+    // const subTaskTemplate = document.getElementById('sub-task-template-js'); // This template will be removed later.
 
     // --- Helper Functions ---
     function updateText(element, text, defaultValue = 'N/A') {
@@ -245,122 +230,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function updateMainTask(taskData) {
-        if (!taskData) {
-            setVisible(noActiveTaskMessageDiv, true);
-            setVisible(activeTaskWrapperDiv, false);
-            return;
-        }
-        setVisible(noActiveTaskMessageDiv, false);
-        setVisible(activeTaskWrapperDiv, true);
+    // updateMainTask function removed as its functionality is merged into the WebSocket onmessage handler
+    // and uses renderTaskEntry for the active task.
 
-        updateText(mainTaskUI.name, taskData.name);
-        updateClass(mainTaskUI.status, taskData.status_class);
-        updateText(mainTaskUI.status, taskData.status_text);
-
-        updateProgressUI('main-task', taskData.progress, taskData.message, taskData.name,
-            mainTaskUI.progressBar, mainTaskUI.progressText, mainTaskUI.taskNameDisplay);
-
-        updateText(mainTaskUI.timeElapsed, taskData.time_elapsed);
-        updateText(mainTaskUI.timeDuration, taskData.time_duration);
-
-        // Details
-        if (taskData.details && Object.keys(taskData.details).length > 0) {
-            let listContent = '';
-            const sortedDetails = Object.entries(taskData.details).sort((a, b) => a[0].localeCompare(b[0]));
-            for (const [key, value] of sortedDetails) {
-                listContent += `<li class="text-xs text-gray-600 dark:text-gray-400"><strong class="font-medium text-gray-700 dark:text-gray-300">${key}:</strong> <span class="detail-value">${value}</span></li>`;
-            }
-            mainTaskUI.detailsList.innerHTML = listContent;
-            setVisible(mainTaskUI.detailsCard, true);
-        } else {
-            setVisible(mainTaskUI.detailsCard, false);
-        }
-
-        // Error
-        if (taskData.error_message) {
-            updateText(mainTaskUI.errorMessageContent, taskData.error_message);
-            setVisible(mainTaskUI.errorCard, true);
-        } else {
-            setVisible(mainTaskUI.errorCard, false);
-        }
-    }
-
-    function updateOrCreateSubTaskElement(subTaskData, container) {
-        const prefix = `sub-task-${subTaskData.id}`;
-        let subTaskElement = document.getElementById(prefix);
-
-        if (!subTaskElement) {
-            if (!subTaskTemplate) { console.error("Sub-task JS template not found!"); return; }
-            const clone = subTaskTemplate.content.firstElementChild.cloneNode(true);
-            clone.id = prefix;
-
-            clone.querySelector('[data-id="name"]').textContent = subTaskData.name;
-            clone.querySelector('[data-id="name"]').title = subTaskData.name;
-
-            const progressBarContainer = clone.querySelector('[data-id="progress-bar-container"]');
-            if (progressBarContainer) {
-                progressBarContainer.innerHTML = createProgressBarHTMLForJS(prefix, subTaskData.progress, subTaskData.message, subTaskData.name);
-            }
-            container.appendChild(clone);
-            subTaskElement = clone;
-        }
-
-        // Update dynamic parts
-        updateText(subTaskElement.querySelector(`[data-id="name"]`), subTaskData.name);
-        subTaskElement.querySelector(`[data-id="name"]`).title = subTaskData.name;
-        updateClass(subTaskElement.querySelector(`[data-id="status-badge"]`), subTaskData.status_class);
-        updateText(subTaskElement.querySelector(`[data-id="status-badge"]`), subTaskData.status_text);
-
-        updateProgressUI(prefix, subTaskData.progress, subTaskData.message, subTaskData.name,
-            subTaskElement.querySelector(`#${prefix}-progress-bar`),
-            subTaskElement.querySelector(`#${prefix}-progress-text`),
-            subTaskElement.querySelector(`#${prefix}-task-name`)
-        );
-
-        const iconEl = subTaskElement.querySelector(`[data-id="status-icon"] i`);
-        if(iconEl){
-            let newIconClass = "fas text-sm ";
-            if(subTaskData.status_text === 'running') newIconClass += "fa-sync fa-spin text-blue-500";
-            else if(subTaskData.status_text === 'completed') newIconClass += "fa-check-circle text-green-500";
-            else if(subTaskData.status_text === 'pending') newIconClass += "fa-hourglass-start text-yellow-500";
-            else newIconClass += "fa-times-circle text-red-500"; // failed or other
-            if(iconEl.className !== newIconClass) iconEl.className = newIconClass;
-        }
-
-        const subDetailsContainer = subTaskElement.querySelector(`[data-id="details-container"]`);
-        const subDetailsList = subTaskElement.querySelector(`[data-id="details-list"]`);
-        if(subDetailsContainer && subDetailsList) {
-            if (subTaskData.details && Object.keys(subTaskData.details).length > 0) {
-                let subListContent = '';
-                const sortedSubDetails = Object.entries(subTaskData.details).sort((a,b) => a[0].localeCompare(b[0]));
-                for (const [key, value] of sortedSubDetails) {
-                     subListContent += `<li class="text-gray-500 dark:text-gray-400"><strong class="font-medium text-gray-600 dark:text-gray-300">${key}:</strong> ${value}</li>`;
-                }
-                subDetailsList.innerHTML = subListContent;
-                setVisible(subDetailsContainer, true);
-            } else {
-                setVisible(subDetailsContainer, false);
-            }
-        }
-    }
-
-    function updateSubTasks(subTasksData = []) {
-        if (!mainTaskUI.subTasksListJS) return;
-        setVisible(mainTaskUI.childrenContainer, subTasksData.length > 0);
-
-        const existingSubTaskElements = new Map();
-        mainTaskUI.subTasksListJS.querySelectorAll('.sub-task-card[id^="sub-task-"]').forEach(el => {
-            existingSubTaskElements.set(el.id, el);
-        });
-
-        subTasksData.forEach(stData => {
-            updateOrCreateSubTaskElement(stData, mainTaskUI.subTasksListJS);
-            existingSubTaskElements.delete(`sub-task-${stData.id}`);
-        });
-
-        existingSubTaskElements.forEach(el => el.remove());
-    }
+    // updateOrCreateSubTaskElement function removed as sub-tasks will be rendered by renderTaskEntry.
+    // updateSubTasks function removed for the same reason.
 
     // --- WebSocket Connection ---
     function connect() {
@@ -395,22 +269,34 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
 
-                if (data.main_task !== undefined) {
+                if (data.main_task !== undefined && data.main_task !== null) {
                     setVisible(noActiveTaskMessageDiv, false);
                     setVisible(activeTaskWrapperDiv, true);
-                    activeTaskWrapperDiv.innerHTML = ''; // Clear previous active task
-                    const activeTaskElement = renderTaskEntry(data.main_task, true); // Active task is expanded
+                    activeTaskWrapperDiv.innerHTML = ''; // Clear previous active task content
+
+                    // Render the main task using the unified renderTaskEntry
+                    const activeTaskElement = renderTaskEntry(data.main_task, true); // true for isExpanded
                     if (activeTaskElement) {
                         activeTaskWrapperDiv.appendChild(activeTaskElement);
+                    } else {
+                        // Fallback if rendering fails, though renderTaskEntry should handle null gracefully.
+                        setVisible(noActiveTaskMessageDiv, true);
+                        setVisible(activeTaskWrapperDiv, false);
+                        if(noActiveTaskMessageDiv) noActiveTaskMessageDiv.textContent = "Error rendering active task.";
                     }
                 } else {
-                     setVisible(noActiveTaskMessageDiv, true);
-                     setVisible(activeTaskWrapperDiv, false);
-                     activeTaskWrapperDiv.innerHTML = ''; // Clear if no active task
+                    // No main_task in the message, or it's null
+                    setVisible(noActiveTaskMessageDiv, true);
+                    setVisible(activeTaskWrapperDiv, false);
+                    activeTaskWrapperDiv.innerHTML = ''; // Clear if no active task
+                    if(noActiveTaskMessageDiv) { // Ensure the message is appropriate
+                         noActiveTaskMessageDiv.querySelector('p.font-medium').textContent = "No Active Task";
+                         noActiveTaskMessageDiv.querySelector('p.text-sm').textContent = "The system is currently idle or no repository is selected.";
+                    }
                 }
 
-                // The old updateSubTasks was tied to the old mainTaskUI structure.
-                // Sub-tasks are now rendered as part of renderTaskEntry.
+                // Sub-tasks are now rendered recursively by renderTaskEntry if they exist in data.main_task.children.
+                // The old updateSubTasks function and its direct calls are removed.
 
                 if (data.hardware_info) {
                     updateHardwareInfo(data.hardware_info);
@@ -501,65 +387,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // --- Rendering Functions ---
-    function renderSubTaskEntry(subTaskData) {
-        if (!subTaskTemplate) {
-            console.error("Sub-task template not found!");
-            return null;
-        }
-        const clone = subTaskTemplate.content.firstElementChild.cloneNode(true);
-        const prefix = `sub-task-entry-${subTaskData.id}`; // Unique prefix for elements within this sub-task
-        clone.id = prefix;
-
-        clone.querySelector('.subtask-name').textContent = subTaskData.name;
-        clone.querySelector('.subtask-name').title = subTaskData.name;
-
-        const statusBadge = clone.querySelector('.subtask-status-badge');
-        statusBadge.className = subTaskData.status_class || 'text-xxs px-1.5 py-0.5 rounded-full whitespace-nowrap flex-shrink-0 bg-gray-200 text-gray-800';
-        statusBadge.textContent = subTaskData.status_text || 'Unknown';
-
-        const iconEl = clone.querySelector(`.subtask-status-icon i`);
-        if(iconEl){
-            let newIconClass = "fas text-xs ";
-            if(subTaskData.status_text === 'running') newIconClass += "fa-sync fa-spin text-blue-500";
-            else if(subTaskData.status_text === 'completed') newIconClass += "fa-check-circle text-green-500";
-            else if(subTaskData.status_text === 'pending') newIconClass += "fa-hourglass-start text-yellow-500";
-            else newIconClass += "fa-times-circle text-red-500"; // failed or other
-            iconEl.className = newIconClass;
-        }
-
-        const progressBarContainer = clone.querySelector('.subtask-progress-bar-container');
-        if (subTaskData.status_text === 'running' || subTaskData.status_text === 'pending') {
-            progressBarContainer.innerHTML = createProgressBarHTMLForJS(prefix, subTaskData.progress, subTaskData.message, ""); // No task name for sub-task progress bar
-            progressBarContainer.style.display = '';
-        } else {
-            progressBarContainer.style.display = 'none';
-        }
-
-        const detailsContainer = clone.querySelector('.subtask-details-container');
-        const detailsList = clone.querySelector('.subtask-details-list');
-        if (subTaskData.details && Object.keys(subTaskData.details).length > 0) {
-            let listContent = '';
-            const sortedSubDetails = Object.entries(subTaskData.details).sort((a,b) => a[0].localeCompare(b[0]));
-            for (const [key, value] of sortedSubDetails) {
-                 listContent += `<li><strong>${key}:</strong> ${value}</li>`;
-            }
-            detailsList.innerHTML = listContent;
-            detailsContainer.style.display = '';
-        } else {
-            detailsContainer.style.display = 'none';
-        }
-
-        const summaryDiv = clone.querySelector('.sub-task-summary');
-        const collapsibleContent = clone.querySelector('.sub-task-content-collapsible');
-        summaryDiv.addEventListener('click', () => {
-            const isExpanded = collapsibleContent.style.display === 'block';
-            collapsibleContent.style.display = isExpanded ? 'none' : 'block';
-            // Optionally, add a chevron icon and rotate it
-        });
-        return clone;
-    }
+    // renderSubTaskEntry function removed as sub-tasks are now rendered by renderTaskEntry using the main task template.
 
     function renderTaskEntry(taskData, isExpanded = false) {
+        if (!taskData || !taskData.id) { // Added a check for taskData and taskData.id
+             console.warn("renderTaskEntry called with invalid taskData:", taskData);
+             return null; // Return null if taskData is not valid
+        }
         if (!taskEntryTemplate) {
             console.error("Task entry template not found!");
             return null;
@@ -568,85 +402,125 @@ document.addEventListener('DOMContentLoaded', () => {
         const prefix = `task-entry-${taskData.id}`;
         clone.id = prefix;
 
-        clone.querySelector('.task-name-placeholder').textContent = taskData.name;
-        clone.querySelector('.task-name-heading').title = taskData.name; // For long names
-
-        const statusBadge = clone.querySelector('.task-status-badge');
-        statusBadge.className = taskData.status_class || 'px-3 py-1 text-xs font-semibold rounded-full bg-gray-200 text-gray-800';
-        statusBadge.textContent = taskData.status_text || 'Unknown';
-
-        const taskIcon = clone.querySelector('.task-icon');
-        if (taskData.status_text === 'running') taskIcon.className = 'task-icon fas fa-sync fa-spin mr-2 text-blue-500';
-        else if (taskData.status_text === 'completed') taskIcon.className = 'task-icon fas fa-check-circle mr-2 text-green-500';
-        else if (taskData.status_text === 'failed') taskIcon.className = 'task-icon fas fa-times-circle mr-2 text-red-500';
-        else if (taskData.status_text === 'pending') taskIcon.className = 'task-icon fas fa-hourglass-half mr-2 text-yellow-500';
-        else taskIcon.className = 'task-icon fas fa-flag-checkered mr-2 text-indigo-500';
-
-
-        const progressBarContainer = clone.querySelector('.task-progress-bar-container');
-        if (taskData.status_text === 'running' || taskData.status_text === 'pending') {
-            progressBarContainer.innerHTML = createProgressBarHTMLForJS(
-                prefix, taskData.progress, taskData.message, taskData.name
-            );
-            progressBarContainer.style.display = 'block';
-        } else {
-            progressBarContainer.style.display = 'none';
+        // Task Name and Title
+        const taskNameHeading = clone.querySelector('.task-name-heading');
+        if (taskNameHeading) {
+            const taskNamePlaceholder = taskNameHeading.querySelector('.task-name-placeholder');
+            if (taskNamePlaceholder) taskNamePlaceholder.textContent = taskData.name || 'Unnamed Task';
+            taskNameHeading.title = taskData.name || 'Unnamed Task';
         }
 
+
+        // Status Badge
+        const statusBadge = clone.querySelector('.task-status-badge');
+        if (statusBadge) {
+            statusBadge.className = taskData.status_class || 'px-3 py-1 text-xs font-semibold rounded-full bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200';
+            statusBadge.textContent = taskData.status_text || 'Unknown';
+        }
+
+        // Task Icon
+        const taskIcon = clone.querySelector('.task-icon');
+        if (taskIcon) {
+            if (taskData.status_text === 'running') taskIcon.className = 'task-icon fas fa-sync fa-spin mr-1.5 text-blue-500';
+            else if (taskData.status_text === 'completed') taskIcon.className = 'task-icon fas fa-check-circle mr-1.5 text-green-500';
+            else if (taskData.status_text === 'failed') taskIcon.className = 'task-icon fas fa-times-circle mr-1.5 text-red-500';
+            else if (taskData.status_text === 'pending') taskIcon.className = 'task-icon fas fa-hourglass-half mr-1.5 text-yellow-500';
+            else taskIcon.className = 'task-icon fas fa-flag-checkered mr-1.5 text-indigo-500'; // Default/fallback
+        }
+
+        // Progress Bar
+        const progressBarContainer = clone.querySelector('.task-progress-bar-container');
+        if (progressBarContainer) {
+            if (taskData.status_text === 'running' || taskData.status_text === 'pending') {
+                progressBarContainer.innerHTML = createProgressBarHTMLForJS(
+                    prefix, taskData.progress, taskData.message, taskData.name
+                );
+                progressBarContainer.style.display = 'block';
+            } else {
+                progressBarContainer.style.display = 'none';
+            }
+        }
+
+        // Timing Information
         const timingPlaceholder = clone.querySelector('.task-timing-placeholder');
-        let timingHtml = '';
-        if (taskData.time_elapsed) timingHtml += `<span class="mr-2"><i class="far fa-clock mr-1"></i>Elapsed: ${taskData.time_elapsed}</span>`;
-        if (taskData.time_duration) timingHtml += `<span><i class="fas fa-stopwatch mr-1"></i>Duration: ${taskData.time_duration}</span>`;
-        timingPlaceholder.innerHTML = timingHtml || 'Timing N/A';
+        if (timingPlaceholder) {
+            let timingHtml = '';
+            if (taskData.time_elapsed) timingHtml += `<span class="mr-2"><i class="far fa-clock mr-1"></i>Elapsed: ${taskData.time_elapsed}</span>`;
+            if (taskData.time_duration) timingHtml += `<span><i class="fas fa-stopwatch mr-1"></i>Duration: ${taskData.time_duration}</span>`;
+            timingPlaceholder.innerHTML = timingHtml || 'Timing N/A';
+        }
 
-
+        // Details Section
         const detailsCard = clone.querySelector('.task-details-card');
         const detailsList = clone.querySelector('.task-details-list');
-        if (taskData.details && Object.keys(taskData.details).length > 0) {
-            let listContent = '';
-            const sortedDetails = Object.entries(taskData.details).sort((a,b) => a[0].localeCompare(b[0]));
-            for (const [key, value] of sortedDetails) {
-                listContent += `<li><strong>${key}:</strong> ${value}</li>`;
+        if (detailsCard && detailsList) {
+            if (taskData.details && Object.keys(taskData.details).length > 0) {
+                let listContent = '';
+                // Sort details by key for consistent order
+                const sortedDetails = Object.entries(taskData.details).sort((a,b) => a[0].localeCompare(b[0]));
+                for (const [key, value] of sortedDetails) {
+                    listContent += `<li><strong>${key}:</strong> ${value}</li>`;
+                }
+                detailsList.innerHTML = listContent;
+                detailsCard.style.display = 'block';
+            } else {
+                detailsCard.style.display = 'none';
             }
-            detailsList.innerHTML = listContent;
-            detailsCard.style.display = 'block';
-        } else {
-            detailsCard.style.display = 'none';
         }
 
+        // Error Section
         const errorCard = clone.querySelector('.task-error-card');
         const errorMessageContent = clone.querySelector('.task-error-message-content');
-        if (taskData.error_message) {
-            errorMessageContent.textContent = taskData.error_message;
-            errorCard.style.display = 'block';
-        } else {
-            errorCard.style.display = 'none';
+        if (errorCard && errorMessageContent) {
+            if (taskData.error_message) {
+                errorMessageContent.textContent = taskData.error_message; // Using textContent for potentially multi-line errors
+                errorCard.style.display = 'block';
+            } else {
+                errorCard.style.display = 'none';
+            }
         }
 
+        // Sub-Tasks (Children) Section
         const subTasksListContainer = clone.querySelector('.sub-tasks-list');
         const childrenContainer = clone.querySelector('.task-children-container');
-        if (taskData.children && taskData.children.length > 0) {
-            taskData.children.forEach(subTask => {
-                const subTaskElement = renderSubTaskEntry(subTask);
-                if (subTaskElement) subTasksListContainer.appendChild(subTaskElement);
-            });
-            childrenContainer.style.display = 'block';
-        } else {
-            childrenContainer.style.display = 'none';
+        if (subTasksListContainer && childrenContainer) {
+            subTasksListContainer.innerHTML = ''; // Clear any existing sub-tasks from template
+            if (taskData.children && taskData.children.length > 0) {
+                taskData.children.forEach(childTaskData => {
+                    // Recursively call renderTaskEntry for each child.
+                    // Child tasks are typically not expanded by default.
+                    const childTaskElement = renderTaskEntry(childTaskData, false);
+                    if (childTaskElement) {
+                        // Add a class to identify sub-task entries for styling if needed
+                        childTaskElement.classList.add('sub-task-display');
+                        subTasksListContainer.appendChild(childTaskElement);
+                    }
+                });
+                childrenContainer.style.display = 'block';
+            } else {
+                childrenContainer.style.display = 'none';
+            }
         }
 
+        // Collapsible Content
         const summaryDiv = clone.querySelector('.task-summary');
         const collapsibleContent = clone.querySelector('.task-content-collapsible');
 
-        if (isExpanded) {
-            collapsibleContent.style.display = 'block';
-        }
+        if (summaryDiv && collapsibleContent) { // Ensure elements exist
+            if (isExpanded) {
+                collapsibleContent.style.display = 'block';
+            } else {
+                collapsibleContent.style.display = 'none'; // Ensure it's hidden if not expanded
+            }
 
-        summaryDiv.addEventListener('click', () => {
-            const currentlyExpanded = collapsibleContent.style.display === 'block';
-            collapsibleContent.style.display = currentlyExpanded ? 'none' : 'block';
-            // TODO: Add chevron icon to summaryDiv and rotate it
-        });
+            summaryDiv.addEventListener('click', () => {
+                const currentlyExpanded = collapsibleContent.style.display === 'block';
+                collapsibleContent.style.display = currentlyExpanded ? 'none' : 'block';
+                // TODO: Add chevron icon to summaryDiv and rotate it (existing TODO)
+            });
+        } else {
+            console.warn("Task summary or collapsible content not found in template for task:", taskData.id);
+        }
 
         return clone;
     }
