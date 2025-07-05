@@ -421,11 +421,11 @@ document.addEventListener('DOMContentLoaded', () => {
         // Task Icon
         const taskIcon = clone.querySelector('.task-icon');
         if (taskIcon) {
-            if (taskData.status_text === 'running') taskIcon.className = 'task-icon fas fa-sync fa-spin mr-2 text-blue-500';
-            else if (taskData.status_text === 'completed') taskIcon.className = 'task-icon fas fa-check-circle mr-2 text-green-500';
-            else if (taskData.status_text === 'failed') taskIcon.className = 'task-icon fas fa-times-circle mr-2 text-red-500';
-            else if (taskData.status_text === 'pending') taskIcon.className = 'task-icon fas fa-hourglass-half mr-2 text-yellow-500';
-            else taskIcon.className = 'task-icon fas fa-flag-checkered mr-2 text-indigo-500'; // Default/fallback
+            if (taskData.status_text === 'running') taskIcon.className = 'task-icon fas fa-sync fa-spin mr-1.5 text-blue-500';
+            else if (taskData.status_text === 'completed') taskIcon.className = 'task-icon fas fa-check-circle mr-1.5 text-green-500';
+            else if (taskData.status_text === 'failed') taskIcon.className = 'task-icon fas fa-times-circle mr-1.5 text-red-500';
+            else if (taskData.status_text === 'pending') taskIcon.className = 'task-icon fas fa-hourglass-half mr-1.5 text-yellow-500';
+            else taskIcon.className = 'task-icon fas fa-flag-checkered mr-1.5 text-indigo-500'; // Default/fallback
         }
 
         // Progress Bar
