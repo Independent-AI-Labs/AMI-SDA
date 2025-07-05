@@ -658,8 +658,8 @@ No active tasks.
         last_status_text: str # For overall status message
         # last_progress_html: str REMOVED
     ) -> Tuple:
-        branch_dropdown_update = gr.update()
-        branch_state_update = gr.update()
+        branch_dropdown_update = gr.skip() # Initialize to skip update by default
+        branch_state_update = gr.update() # State updates are usually fine
 
         # Initialize new state outputs - these might be removed if not used by other components
         # new_last_main_task_id = _last_main_task_id
