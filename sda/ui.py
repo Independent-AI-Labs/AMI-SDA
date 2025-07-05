@@ -9,6 +9,12 @@ It interacts exclusively with the CodeAnalysisFramework facade.
 """
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Generator
+import os
+import psutil # For CPU load and RAM
+try:
+    import torch
+except ImportError:
+    torch = None # type: ignore
 
 import gradio as gr
 import pandas as pd
@@ -16,7 +22,7 @@ from PIL import Image
 from llama_index.core.llms import ChatMessage
 
 from app import CodeAnalysisFramework
-from sda.config import IngestionConfig, AIConfig
+from sda.config import IngestionConfig, AIConfig, PG_DB_NAME, DGRAPH_HOST, DGRAPH_PORT
 
 
 class DashboardUI:
@@ -66,11 +72,27 @@ class DashboardUI:
     def _create_status_progress_html(self, task) -> str:
         """Creates detailed HTML progress display for the status modal."""
         if not task:
-            return "<div class='status-container'>No active tasks.</div>"
+            return f"""<div class='status-container'>
+No active tasks.
+<div class='model-info-container'>
+    <h4>Model Information</h4>
+    <p><strong>LLM:</strong> {AIConfig.ACTIVE_LLM_MODEL}</p>
+    <p><strong>Embedding Model:</strong> {AIConfig.ACTIVE_EMBEDDING_MODEL}</p>
+    <p><strong>Embedding Devices:</strong> {AIConfig.EMBEDDING_DEVICES}</p>
+</div>
+{self._get_hardware_info_html()}
+</div>"""
         
         html_parts = []
         html_parts.append(f"""
         <div class="status-container">
+            <div class='model-info-container'>
+                <h4>Model Information</h4>
+                <p><strong>LLM:</strong> {AIConfig.ACTIVE_LLM_MODEL}</p>
+                <p><strong>Embedding Model:</strong> {AIConfig.ACTIVE_EMBEDDING_MODEL}</p>
+                <p><strong>Embedding Devices:</strong> {AIConfig.EMBEDDING_DEVICES}</p>
+            </div>
+            {self._get_hardware_info_html()}
             <h3>Main Task: {task.name}</h3>
             <div class="task-status-card">
                 <div class="status-header">
@@ -90,7 +112,12 @@ class DashboardUI:
         if task.children:
             html_parts.append("<h4>Sub-Tasks</h4>")
             for child in sorted(task.children, key=lambda t: t.started_at):
-                status_icon = "🔄" if child.status == 'running' else ("✅" if child.status == 'completed' else "❌")
+                if child.status == 'running':
+                    status_icon = '<i class="fas fa-sync fa-spin"></i>'
+                elif child.status == 'completed':
+                    status_icon = '<i class="fas fa-check-circle" style="color: green;"></i>'
+                else: # Error or other states
+                    status_icon = '<i class="fas fa-times-circle" style="color: red;"></i>'
                 html_parts.append(f"""
                 <div class="subtask-card">
                     <div class="subtask-header">
@@ -110,15 +137,56 @@ class DashboardUI:
                 html_parts.append("</div>")
         
         if task.error_message:
+            error_icon = '<i class="fas fa-exclamation-triangle" style="color: orange;"></i>'
             html_parts.append(f"""
             <div class="error-section">
-                <h4>❗ Error</h4>
+                <h4>{error_icon} Error</h4>
                 <pre class="error-message">{task.error_message}</pre>
             </div>
             """)
         
         html_parts.append("</div>")
         return "".join(html_parts)
+
+    def _get_hardware_info_html(self) -> str:
+        """Generates HTML for displaying hardware and worker information."""
+        num_cpus = os.cpu_count()
+
+        allowed_db_workers = sum(IngestionConfig.MAX_DB_WORKERS_PER_TARGET.values())
+        allowed_embedding_workers = AIConfig.MAX_EMBEDDING_WORKERS
+        total_allowed_workers = allowed_db_workers + allowed_embedding_workers
+
+        # GPU Info
+        gpu_info_parts = []
+        if torch and torch.cuda.is_available():
+            gpu_info_parts.append(f"<p><strong>CUDA Version:</strong> {torch.version.cuda}</p>")
+            num_gpus = torch.cuda.device_count()
+            gpu_info_parts.append(f"<p><strong>Available GPUs:</strong> {num_gpus}</p>")
+            for i in range(num_gpus):
+                gpu_name = torch.cuda.get_device_name(i)
+                gpu_info_parts.append(f"<p>  - GPU {i}: {gpu_name}</p>")
+        else:
+            gpu_info_parts.append("<p><strong>GPU:</strong> CUDA not available or PyTorch not installed with CUDA support.</p>")
+
+        gpu_html = "".join(gpu_info_parts)
+
+        # Worker details
+        worker_details_parts = ["<p><strong>Worker Pool Configuration:</strong></p><ul>"]
+        for target, num_workers in IngestionConfig.MAX_DB_WORKERS_PER_TARGET.items():
+            worker_details_parts.append(f"<li>{target.capitalize()} Workers: {num_workers}</li>")
+        worker_details_parts.append(f"<li>Embedding Workers: {AIConfig.MAX_EMBEDDING_WORKERS}</li>")
+        worker_details_parts.append("</ul>")
+        worker_html = "".join(worker_details_parts)
+
+        return f"""
+        <div class='hardware-info-container'>
+            <h4>System & Worker Information</h4>
+            <p><strong>Logical CPUs:</strong> {num_cpus}</p>
+            {gpu_html}
+            <p><strong>Total Allowed Application Workers:</strong> {total_allowed_workers}</p>
+            {worker_html}
+        </div>
+        """
 
     def create_ui(self) -> gr.Blocks:
         """Builds the Gradio Blocks UI."""
@@ -149,6 +217,8 @@ class DashboardUI:
         </script>
         """
 
+        fontawesome_cdn = '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">'
+
         modal_css = """
         .modal-background { 
             position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
@@ -161,6 +231,48 @@ class DashboardUI:
             border-radius: 0.5rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
             height: auto; 
         }
+        .model-info-container {{
+            background: var(--background-fill-secondary);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            border: 1px solid var(--border-color-primary);
+        }}
+        .model-info-container h4 {{
+            margin-top: 0;
+            margin-bottom: 10px;
+            color: var(--body-text-color);
+        }}
+        .model-info-container p {{
+            margin: 5px 0;
+            font-size: 0.9em;
+            color: var(--body-text-color-subdued);
+        }}
+        .hardware-info-container {{
+            background: var(--background-fill-secondary);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            border: 1px solid var(--border-color-primary);
+        }}
+        .hardware-info-container h4 {{
+            margin-top: 0;
+            margin-bottom: 10px;
+            color: var(--body-text-color);
+        }}
+        .hardware-info-container p {{
+            margin: 5px 0;
+            font-size: 0.9em;
+            color: var(--body-text-color-subdued);
+        }}
+        .hardware-info-container ul {{
+            padding-left: 20px;
+            margin: 5px 0;
+        }}
+        .hardware-info-container li {{
+            font-size: 0.9em;
+            color: var(--body-text-color-subdued);
+        }}
         #addRepoModal .modal-content-wrapper { max-width: 500px; width: 100%; }
         #codeViewerModal .modal-content-wrapper { 
             max-width: 80vw; width: 100%; max-height: 80vh; overflow-y: auto; 
@@ -267,11 +379,11 @@ class DashboardUI:
         }
         """
 
-        with gr.Blocks(theme=gr.themes.Default(primary_hue="blue", secondary_hue="sky"), title="SDA Framework", css=modal_css, head=modal_js) as demo:
+        with gr.Blocks(theme=gr.themes.Default(primary_hue="blue", secondary_hue="sky"), title="SDA Framework", css=modal_css, head=modal_js + fontawesome_cdn) as demo:
             gr.Markdown("# Software Development Analytics")
             with gr.Row():
                 status_output = gr.Textbox(label="Status", interactive=False, placeholder="Status messages will appear here...", scale=4)
-                view_status_modal_btn = gr.Button("View System Status", scale=1)
+                view_status_modal_btn = gr.Button("View Control Panel", scale=1)
             
             # HTML-based progress bar with elem_classes to prevent flicker
             with gr.Row(visible=False) as progress_row:
@@ -302,7 +414,7 @@ class DashboardUI:
 
             with gr.Column(elem_id="statusModal", elem_classes="modal-background"):
                 with gr.Column(elem_classes="modal-content-wrapper"):
-                    gr.Markdown("## System Status")
+                    gr.Markdown("## Control Panel")
                     status_details_html = gr.HTML(value="<div class='status-container'>No active tasks.</div>")
                     status_modal_close_btn = gr.Button("Close")
 
@@ -315,10 +427,6 @@ class DashboardUI:
                         with gr.Column(scale=1):
                             branch_dropdown = gr.Dropdown(label="Select Branch", interactive=True)
                             analyze_branch_btn = gr.Button("Force Re-Analyze Branch", variant="primary")
-                    with gr.Row():
-                        gr.Markdown(f"**LLM:** `{AIConfig.ACTIVE_LLM_MODEL}`", elem_classes=["model-info"])
-                        gr.Markdown(f"**Embedding:** `{AIConfig.ACTIVE_EMBEDDING_MODEL}` | **Devices:** `{AIConfig.EMBEDDING_DEVICES}`",
-                                    elem_classes=["model-info"])
 
                     chatbot = gr.Chatbot(
                         label="Chat with your Codebase", height=600,
@@ -335,12 +443,12 @@ class DashboardUI:
                 with gr.TabItem("Insights Dashboard", id=1):
                     with gr.Row():
                         with gr.Column(scale=1):
-                            gr.Markdown("### 📊 Statistics")
+                            gr.Markdown('### <i class="fas fa-chart-bar"></i> Statistics')
                             stats_df = gr.DataFrame(headers=["Metric", "Value"], col_count=(2, "fixed"), interactive=False)
                         with gr.Column(scale=1):
-                            gr.Markdown("### 🌐 Language Breakdown")
+                            gr.Markdown('### <i class="fas fa-code"></i> Language Breakdown')
                             lang_df = gr.DataFrame(headers=["Language", "Files", "Percentage"], col_count=(3, "fixed"), interactive=False)
-                    gr.Markdown("### 🔬 In-Depth Analysis (runs in background)")
+                    gr.Markdown('### <i class="fas fa-search-plus"></i> In-Depth Analysis (runs in background)')
                     with gr.Row():
                         analyze_dead_code_btn = gr.Button("Find Potentially Unused Code")
                         analyze_duplicates_btn = gr.Button("Find Potentially Duplicate Code")
