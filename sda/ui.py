@@ -651,8 +651,8 @@ No active tasks.
                 self.handle_file_explorer_select,
                 inputs=[repo_id_state, branch_state, file_explorer], # Pass file_explorer itself as input for its value
                 outputs=[
-                    embedding_html_viewer, code_viewer, image_viewer, selected_file_state,
-                    current_modified_files_dropdown_ca, file_to_compare_dropdown_ca
+                    embedding_html_viewer, code_viewer, image_viewer, selected_file_state
+                    # current_modified_files_dropdown_ca, file_to_compare_dropdown_ca REMOVED
                 ]
             )
 
@@ -663,9 +663,12 @@ No active tasks.
             )
 
             # Connect Change Analysis buttons
-            analyze_current_changes_btn.click(
+            # analyze_current_changes_btn was renamed to analyze_selected_file_current_changes_btn
+            # and its input current_modified_files_dropdown_ca was removed.
+            # It now uses selected_file_state.
+            analyze_selected_file_current_changes_btn.click(
                 self.handle_analyze_current_file_changes,
-                inputs=[repo_id_state, branch_state, current_modified_files_dropdown_ca],
+                inputs=[repo_id_state, branch_state, selected_file_state], # Uses selected_file_state
                 outputs=[change_analysis_output]
             )
             compare_with_older_btn.click( # Renamed from compare_versions_btn
@@ -1038,9 +1041,8 @@ No active tasks.
     # handle_populate_file_browser_radio, handle_file_browser_go_up, handle_file_browser_radio_select are removed.
     # New handlers for gr.FileExplorer will be simpler.
 
-    def handle_file_explorer_select(self, repo_id: int, branch: str, selection_event_data: Any) -> Tuple[gr.update, gr.update, gr.update, str, gr.update, gr.update]:
-        # Returns updates for: embedding_html_viewer, code_viewer, image_viewer, selected_file_state,
-        # current_modified_files_dropdown_ca, file_to_compare_dropdown_ca
+    def handle_file_explorer_select(self, repo_id: int, branch: str, selection_event_data: Any) -> Tuple[gr.update, gr.update, gr.update, str]: # Removed 2 gr.update from return type
+        # Returns updates for: embedding_html_viewer, code_viewer, image_viewer, selected_file_state
         # selection_event_data is the value from FileExplorer's .change() event.
         # If file_count="single", this should be a single path string when a user selects a file.
         # If it's a list, it might be the initial population or a multi-select scenario we want to ignore for single-file processing.
@@ -1054,17 +1056,14 @@ No active tasks.
             # In such a case, we don't have a single user-selected file to process.
             logging.info(f"FileExplorer .change event triggered with a list (count: {len(selection_event_data)}). Assuming no single file selection by user. Skipping detailed view updates.")
             # We still need to return the correct number of updates.
-            # Let's return skip for viewers and current selected file, but potentially update dropdowns if needed (though likely not here).
-            return gr.skip(), gr.skip(), gr.skip(), "", gr.skip(), gr.skip()
+            return gr.skip(), gr.skip(), gr.skip(), "" # Removed 2 gr.skip()
 
         if not file_path: # Path could be None if deselected or if it was a list and we decided to skip.
             embedding_html_update = gr.update(value="<div>Select a file for embedding visualization.</div>")
             code_viewer_update = gr.update(value="// Select a file to view content/diff.", language=None, label="File Content / Diff", visible=True)
             image_viewer_update = gr.update(value=None, visible=False)
-            # Also reset dependent dropdowns in Change Analysis
-            current_modified_files_ca_upd = gr.update(value=None)
-            file_to_compare_ca_upd = gr.update(value=None)
-            return embedding_html_update, code_viewer_update, image_viewer_update, "", current_modified_files_ca_upd, file_to_compare_ca_upd
+            # Removed updates for current_modified_files_ca_upd and file_to_compare_ca_upd
+            return embedding_html_update, code_viewer_update, image_viewer_update, "" # Removed 2 gr.update values
 
         print(f"UI: FileExplorer selection changed to: '{file_path}' for repo {repo_id}, branch {branch}")
 
@@ -1100,15 +1099,9 @@ No active tasks.
             code_viewer_update = gr.update(value=diff_content, language=lang, label=f"Content/Diff: {file_path}", visible=True)
             image_viewer_update = gr.update(value=None, visible=False)
 
-        # Updates for Change Analysis dropdowns
-        # If the selected file is a known modified file, set it in current_modified_files_dropdown_ca
-        # For now, always set file_to_compare_dropdown_ca to the selected file.
-        # A more robust way would be to check if file_path is in the choices of current_modified_files_dropdown_ca.
-        # This requires passing the choices state or re-fetching. For simplicity, we'll just update.
-        current_modified_files_ca_upd = gr.update(value=file_path) # Might select it even if not modified, user can change
-        file_to_compare_ca_upd = gr.update(value=file_path)
+        # Removed updates for current_modified_files_ca_upd and file_to_compare_ca_upd
 
-        return embedding_html_update, code_viewer_update, image_viewer_update, new_selected_file_for_viewers, current_modified_files_ca_upd, file_to_compare_ca_upd
+        return embedding_html_update, code_viewer_update, image_viewer_update, new_selected_file_for_viewers
 
     def handle_content_tab_select(self, evt: gr.SelectData, repo_id: int, branch: str, selected_file: str) -> gr.update:
         # evt.value will be the ID of the selected tab_item (e.g., "change_analysis_tab")
