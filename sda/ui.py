@@ -852,8 +852,8 @@ No active tasks.
 
         button_updates = self._get_task_button_updates(interactive=not is_running)
         dead_code_update, dup_code_update = gr.update(), gr.update()
-        # Initialize updates for HTML stats and language plot
-        stats_html_update, lang_plot_update = gr.update(value=None), gr.update(value=None)
+        # Initialize updates for HTML stats and language plot to "no change" by default
+        stats_html_update, lang_plot_update = gr.update(), gr.update()
 
         task_could_change_branch = task.name.startswith("Ingest Branch:") or task.name == "analyze_branch"
         if task.status == 'completed':
