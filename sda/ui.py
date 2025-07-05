@@ -1067,39 +1067,62 @@ No active tasks.
 
         print(f"UI: FileExplorer selection changed to: '{file_path}' for repo {repo_id}, branch {branch}")
 
-        new_selected_file_for_viewers = file_path
+        # Convert absolute path from FileExplorer to relative path for framework
+        repo = self.framework.get_repository_by_id(repo_id)
+        if not repo or not repo.path:
+            error_msg = "Error: Could not determine repository path to make file path relative."
+            logging.error(error_msg)
+            embedding_html_update = gr.update(value=self._generate_embedding_html(error_msg, file_path))
+            code_viewer_update = gr.update(value=error_msg, language=None, label="Error", visible=True)
+            image_viewer_update = gr.update(value=None, visible=False)
+            return embedding_html_update, code_viewer_update, image_viewer_update, file_path # Keep selected_file_state as the problematic path
+
+        try:
+            repo_root = Path(repo.path).resolve()
+            absolute_file_path = Path(file_path).resolve()
+            relative_file_path = str(absolute_file_path.relative_to(repo_root))
+            # Convert to forward slashes for consistency, as git typically uses them
+            relative_file_path = relative_file_path.replace("\\", "/")
+            logging.info(f"Converted absolute path '{absolute_file_path}' to relative path '{relative_file_path}' for repo '{repo_root}'")
+        except ValueError as e:
+            error_msg = f"Error: Could not make path relative: {e}. Absolute: {file_path}, Repo Root: {repo_root}"
+            logging.error(error_msg)
+            embedding_html_update = gr.update(value=self._generate_embedding_html(error_msg, file_path))
+            code_viewer_update = gr.update(value=error_msg, language=None, label="Error", visible=True)
+            image_viewer_update = gr.update(value=None, visible=False)
+            return embedding_html_update, code_viewer_update, image_viewer_update, file_path
+
+        new_selected_file_for_viewers = relative_file_path # This state should hold the relative path
 
         # Get text content primarily for embedding view
-        raw_content = self.framework.get_file_content_by_path(repo_id, branch, file_path)
+        raw_content = self.framework.get_file_content_by_path(repo_id, branch, relative_file_path)
         if raw_content is None:
-            raw_content = f"// Error: Could not load content for {file_path}"
+            raw_content = f"// Error: Could not load content for {relative_file_path}"
 
-        is_image_for_embedding = file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp'))
-        generated_html_for_embedding = ""
+        is_image_for_embedding = relative_file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp'))
         if not is_image_for_embedding:
-            generated_html_for_embedding = self._generate_embedding_html(raw_content, file_path)
+            generated_html_for_embedding = self._generate_embedding_html(raw_content, relative_file_path)
             embedding_html_update = gr.update(value=generated_html_for_embedding)
-            logging.info(f"Generated embedding HTML for {file_path}, length {len(generated_html_for_embedding)}")
+            logging.info(f"Generated embedding HTML for {relative_file_path}, length {len(generated_html_for_embedding)}")
             if len(generated_html_for_embedding) < 300: # Log short HTML
                  logging.info(f"Short HTML content: {generated_html_for_embedding}")
         else:
-            generated_html_for_embedding = f"<div>Embedding visualization is not available for image: {file_path}</div>"
+            generated_html_for_embedding = f"<div>Embedding visualization is not available for image: {relative_file_path}</div>"
             embedding_html_update = gr.update(value=generated_html_for_embedding)
-            logging.info(f"Skipping embedding HTML for image {file_path}")
+            logging.info(f"Skipping embedding HTML for image {relative_file_path}")
 
         # Handle Diff Tab (code_viewer and image_viewer)
-        diff_content, image_obj = self.framework.get_file_diff_or_content(repo_id, file_path, is_new_file_from_explorer=True)
-        lang = IngestionConfig.LANGUAGE_MAPPING.get(Path(file_path).suffix.lower())
+        # Use relative_file_path for framework calls
+        diff_content, image_obj = self.framework.get_file_diff_or_content(repo_id, relative_file_path, is_new_file_from_explorer=True)
+        lang = IngestionConfig.LANGUAGE_MAPPING.get(Path(relative_file_path).suffix.lower())
 
         if image_obj:
             code_viewer_update = gr.update(visible=False)
             image_viewer_update = gr.update(value=image_obj, visible=True)
         else:
-            if diff_content is None: diff_content = f"// Could not load content/diff for {file_path}"
-            code_viewer_update = gr.update(value=diff_content, language=lang, label=f"Content/Diff: {file_path}", visible=True)
+            if diff_content is None: diff_content = f"// Could not load content/diff for {relative_file_path}"
+            code_viewer_update = gr.update(value=diff_content, language=lang, label=f"Content/Diff: {relative_file_path}", visible=True)
             image_viewer_update = gr.update(value=None, visible=False)
-
-        # Removed updates for current_modified_files_ca_upd and file_to_compare_ca_upd
 
         return embedding_html_update, code_viewer_update, image_viewer_update, new_selected_file_for_viewers
 
