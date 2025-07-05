@@ -1006,31 +1006,41 @@ No active tasks.
         if not repo_id:
             default_progress_html = self._create_html_progress_bar(0, "No repository selected", "Idle")
             # task_log_output (the Textbox) has been removed from here
+            no_repo_status_html = "<div class='status-container'>No repository selected.</div>"
             no_repo_updates = (
-                "No repository selected.",
-                "<div class='status-container'>No repository selected.</div>", 
-                gr.update(), gr.update(), gr.update(), gr.update(),
-                gr.update(value=default_progress_html) if default_progress_html != last_progress_html else gr.update(), 
-                gr.update(visible=False),
-                default_progress_html,
-                branch_dropdown_update,
-                branch_state_update
+                "No repository selected.", # status_output
+                gr.update(value=no_repo_status_html) if no_repo_status_html != last_status_text else gr.update(), # status_details_html
+                gr.update(), # dead_code_df
+                gr.update(), # duplicate_code_df
+                gr.update(), # stats_df
+                gr.update(), # lang_df
+                no_repo_status_html, # last_status_text_state
+                gr.update(value=default_progress_html) if default_progress_html != last_progress_html else gr.update(), # main_progress_bar
+                gr.update(visible=False), # progress_row
+                default_progress_html, # last_progress_html_state
+                branch_dropdown_update, # branch_dropdown
+                branch_state_update     # branch_state
             )
             return no_repo_updates + self._get_task_button_updates(True)
         
         task = self.framework.get_latest_task(repo_id) # This gets the *latest* for the status modal, not full history
         if not task:
             default_progress_html = self._create_html_progress_bar(0, "No active tasks", "Idle")
+            no_task_status_html = "<div class='status-container'>No tasks found for this repository.</div>"
             # task_log_output (the Textbox) has been removed from here
             no_task_updates = (
-                "No tasks found for this repository.",
-                "<div class='status-container'>No tasks found for this repository.</div>", 
-                gr.update(), gr.update(), gr.update(), gr.update(),
-                gr.update(value=default_progress_html) if default_progress_html != last_progress_html else gr.update(), 
-                gr.update(visible=False),
-                default_progress_html,
-                branch_dropdown_update,
-                branch_state_update
+                "No tasks found for this repository.", # status_output
+                gr.update(value=no_task_status_html) if no_task_status_html != last_status_text else gr.update(), # status_details_html
+                gr.update(), # dead_code_df
+                gr.update(), # duplicate_code_df
+                gr.update(), # stats_df
+                gr.update(), # lang_df
+                no_task_status_html, # last_status_text_state
+                gr.update(value=default_progress_html) if default_progress_html != last_progress_html else gr.update(), # main_progress_bar
+                gr.update(visible=False), # progress_row
+                default_progress_html, # last_progress_html_state
+                branch_dropdown_update, # branch_dropdown
+                branch_state_update     # branch_state
             )
             return no_task_updates + self._get_task_button_updates(True)
 
