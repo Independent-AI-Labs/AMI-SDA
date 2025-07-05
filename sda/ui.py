@@ -1004,14 +1004,14 @@ No active tasks.
                     <div class="stat-label">TOTAL LINES</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-icon"><i class="fas fa-brain"></i></div>
-                    <div class="stat-value">{total_tokens:,}</div>
-                    <div class="stat-label">TOTAL TOKENS</div>
-                </div>
-                <div class="stat-card">
                     <div class="stat-icon"><i class="fas fa-cubes"></i></div>
                     <div class="stat-value">{schema_count}</div>
                     <div class="stat-label">SUB-MODULES</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon"><i class="fas fa-brain"></i></div>
+                    <div class="stat-value">{total_tokens:,}</div>
+                    <div class="stat-label">TOTAL TOKENS</div>
                 </div>
             </div>
             """
