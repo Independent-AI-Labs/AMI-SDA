@@ -413,10 +413,17 @@ No active tasks.
 
         with gr.Blocks(theme=gr.themes.Default(primary_hue="blue", secondary_hue="sky"), title="SDA Framework", css=control_panel_css, head=tailwind_cdn + modal_js + fontawesome_cdn + dynamic_updates_js_link) as demo:
             gr.Markdown("# Software Development Analytics")
-            with gr.Row():
+            with gr.Row(elem_classes="control-button-row"): # Add a class for potential styling of the row
                 status_output = gr.Textbox(label="Status", interactive=False, placeholder="Status messages will appear here...", scale=4)
-                view_status_modal_btn = gr.Button("<i class='fas fa-tasks mr-1.5'></i>View Control Panel", scale=1)
-            
+                # view_status_modal_btn = gr.Button("View Control Panel", scale=1) # Original button
+                # Attempting HTML button with icon for "View Control Panel"
+                view_status_modal_btn_html = gr.HTML(
+                    "<button class='gr-button gr-button-lg gr-button-secondary button-with-icon-content' onclick=\"showModal('statusModal')\" title='View Control Panel'>" + \
+                    "<i class='fas fa-tasks mr-1.5'></i>View Control Panel" + \
+                    "</button>",
+                    elem_classes="html-button-wrapper" # Class for the wrapper div Gradio creates
+                )
+
             # Redundant progress_row and main_progress_bar REMOVED
 
             repo_id_state = gr.State()
@@ -464,14 +471,14 @@ No active tasks.
                     status_modal_close_btn = gr.Button("Close")
 
             with gr.Tabs() as tabs:
-                with gr.TabItem("<i class='fas fa-code-branch mr-1.5'></i>Repository & Agent", id=0):
+                with gr.TabItem("Repository & Agent", id=0):
                     with gr.Row():
                         with gr.Column(scale=1):
                             repo_dropdown = gr.Dropdown(label="Select Repository", interactive=True)
-                            open_add_repo_modal_btn = gr.Button("<i class='fas fa-plus-circle mr-1.5'></i>Add New Repository")
+                            open_add_repo_modal_btn = gr.Button("Add New Repository")
                         with gr.Column(scale=1):
                             branch_dropdown = gr.Dropdown(label="Select Branch", interactive=True)
-                            analyze_branch_btn = gr.Button("<i class='fas fa-sync-alt mr-1.5'></i>Force Re-Analyze Branch", variant="primary")
+                            analyze_branch_btn = gr.Button("Force Re-Analyze Branch", variant="primary")
 
                     chatbot = gr.Chatbot(
                         label="Chat with your Codebase", height=600,
@@ -485,18 +492,18 @@ No active tasks.
                         additional_inputs=[repo_id_state, branch_state]
                     )
 
-                with gr.TabItem("<i class='fas fa-chart-line mr-1.5'></i>Insights Dashboard", id=1):
+                with gr.TabItem("Insights Dashboard", id=1):
                     with gr.Row():
                         with gr.Column(scale=1): # This column will now hold the HTML stat cards
-                            gr.Markdown('### <i class="fas fa-chart-bar mr-1.5"></i> Key Statistics') # Title adjusted, added margin to icon
+                            gr.Markdown('### <i class="fas fa-chart-bar mr-1.5"></i> Key Statistics') # Icons in Markdown are OK
                             stats_cards_html = gr.HTML(label="Key Repository Statistics")
                         with gr.Column(scale=1):
-                            gr.Markdown('### <i class="fas fa-code mr-1.5"></i> Language Breakdown') # Added margin to icon
+                            gr.Markdown('### <i class="fas fa-code mr-1.5"></i> Language Breakdown') # Icons in Markdown are OK
                             lang_plot = gr.Plot(label="Language Breakdown") # This remains a plot
-                    gr.Markdown('### <i class="fas fa-search-plus mr-1.5"></i> In-Depth Analysis (runs in background)') # Added margin to icon
+                    gr.Markdown('### <i class="fas fa-search-plus mr-1.5"></i> In-Depth Analysis (runs in background)') # Icons in Markdown are OK
                     with gr.Row():
-                        analyze_dead_code_btn = gr.Button("<i class='fas fa-code-slash mr-1.5'></i>Find Unused Code")
-                        analyze_duplicates_btn = gr.Button("<i class='far fa-copy mr-1.5'></i>Find Duplicate Code")
+                        analyze_dead_code_btn = gr.Button("Find Unused Code")
+                        analyze_duplicates_btn = gr.Button("Find Duplicate Code")
                     # Full Task History Accordion REMOVED
                     with gr.Tabs():
                         with gr.TabItem("Unused Code Results"):
@@ -506,14 +513,14 @@ No active tasks.
                             duplicate_code_df = gr.DataFrame(headers=["File A", "Lines A", "File B", "Lines B", "Similarity"], interactive=False,
                                                              max_height=400)
 
-                with gr.TabItem("<i class='fas fa-folder-open mr-1.5'></i>Code Browser & VC", id=2):
+                with gr.TabItem("Code Browser & VC", id=2):
                     with gr.Row():
                         with gr.Column(scale=1):
-                            gr.Markdown('#### <i class="fab fa-git-alt mr-1.5"></i>Git Status')
+                            gr.Markdown('#### <i class="fab fa-git-alt mr-1.5"></i>Git Status') # Icons in Markdown are OK
                             modified_files_dropdown = gr.Dropdown(label="Select Modified File to View", interactive=True)
-                            revert_file_btn = gr.Button("<i class='fas fa-history mr-1.5'></i>Revert File")
+                            revert_file_btn = gr.Button("Revert File")
                             commit_message = gr.Textbox(label="Commit Message", placeholder="Enter commit message...")
-                            commit_btn = gr.Button("<i class='fas fa-save mr-1.5'></i>Commit All")
+                            commit_btn = gr.Button("Commit All")
                         with gr.Column(scale=3):
                             code_viewer = gr.Code(label="File Content / Diff", language=None, interactive=False, visible=True)
                             image_viewer = gr.Image(label="Image Content", interactive=False, visible=False)
