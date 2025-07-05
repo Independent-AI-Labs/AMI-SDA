@@ -372,11 +372,21 @@ class DashboardUI:
             all_insight_outputs = [stats_df, lang_df]
             git_panel_outputs = [modified_files_dropdown, code_viewer, image_viewer, selected_file_state]
 
+            # Define these components early if they are needed by reference in poll_outputs
+            # For this specific fix, we will pass them to handle_polling and it will return gr.update() for them.
+            # The actual Gradio component instances are repo_dropdown, branch_dropdown.
+
             demo.load(self.handle_initial_load, outputs=[repo_dropdown, branch_dropdown, repo_id_state, branch_state, task_log_output, chatbot]).then(
                 self.update_all_panels, [repo_id_state, branch_state], all_insight_outputs + git_panel_outputs)
 
             poll_inputs = [repo_id_state, branch_state, last_status_text_state, last_progress_html_state]
-            poll_outputs = [status_output, task_log_output, status_details_html, dead_code_df, duplicate_code_df, stats_df, lang_df, last_status_text_state, main_progress_bar, progress_row, last_progress_html_state] + self.task_buttons
+            # Add branch_dropdown and branch_state to the outputs of handle_polling
+            poll_outputs = [
+                status_output, task_log_output, status_details_html,
+                dead_code_df, duplicate_code_df, stats_df, lang_df,
+                last_status_text_state, main_progress_bar, progress_row, last_progress_html_state,
+                branch_dropdown, branch_state  # Added here
+            ] + self.task_buttons
             timer.tick(self.handle_polling, poll_inputs, poll_outputs)
 
             open_add_repo_modal_btn.click(None, js="() => { const modal = document.getElementById('addRepoModal'); if (modal) modal.style.display = 'flex'; }")
@@ -441,6 +451,10 @@ class DashboardUI:
             yield history
 
     def handle_polling(self, repo_id: int, branch: str, last_status_text: str, last_progress_html: str) -> Tuple:
+        # Initialize updates for components that might not change
+        branch_dropdown_update = gr.update()
+        branch_state_update = gr.update() # For branch_state, usually no change unless explicitly set
+
         if not repo_id:
             default_progress_html = self._create_html_progress_bar(0, "No repository selected", "Idle")
             no_repo_updates = (
@@ -449,7 +463,9 @@ class DashboardUI:
                 gr.update(), gr.update(), gr.update(), gr.update(), "", 
                 gr.update(value=default_progress_html) if default_progress_html != last_progress_html else gr.update(), 
                 gr.update(visible=False),
-                default_progress_html
+                default_progress_html,
+                branch_dropdown_update, # Added
+                branch_state_update     # Added
             )
             return no_repo_updates + self._get_task_button_updates(True)
         
@@ -462,33 +478,30 @@ class DashboardUI:
                 gr.update(), gr.update(), gr.update(), gr.update(), "", 
                 gr.update(value=default_progress_html) if default_progress_html != last_progress_html else gr.update(), 
                 gr.update(visible=False),
-                default_progress_html
+                default_progress_html,
+                branch_dropdown_update, # Added
+                branch_state_update     # Added
             )
             return no_task_updates + self._get_task_button_updates(True)
 
         status_msg = f"Task '{task.name}': {task.message} ({task.progress:.0f}%)"
         log_output = task.log_history or ""
         is_running = task.status in ['running', 'pending']
-        was_ingestion_task = 'ingest' in task.name.lower()
+
+        # More specific check for tasks that might alter branch state
+        task_could_change_branch = task.name.startswith("Ingest Branch:") or task.name == "analyze_branch" # refine if needed
 
         dead_code_update, dup_code_update = gr.update(), gr.update()
         stats_update, lang_update = gr.update(), gr.update()
 
-        # Generate detailed HTML status
         status_html = self._create_status_progress_html(task)
-        
-        # Anti-flicker logic: only update if content has changed
         status_details_update = gr.update() if status_html == last_status_text else gr.update(value=status_html)
-
-        # Main progress bar update with stronger anti-flicker
         current_progress_html = self._create_html_progress_bar(task.progress, task.message, task.name)
         
-        # Only update if there's a meaningful change (not just tiny progress differences)
         progress_changed = (
             current_progress_html != last_progress_html and 
             (last_progress_html == "" or abs(task.progress - self._extract_progress_from_html(last_progress_html)) >= 1.0)
         )
-        
         main_progress_update = gr.update(value=current_progress_html) if progress_changed else gr.update()
         progress_row_update = gr.update(visible=is_running)
 
@@ -497,20 +510,46 @@ class DashboardUI:
             if task.result:
                 if task.name == "find_dead_code" and task.result.get("dead_code"):
                     dead_code_data = task.result["dead_code"]
-                    df_data = [[dc.get('file_path'), dc.get('name'), dc.get('node_type'), f"{dc.get('start_line')}-{dc.get('end_line')}"] for dc in
-                               dead_code_data]
+                    df_data = [[dc.get('file_path'), dc.get('name'), dc.get('node_type'), f"{dc.get('start_line')}-{dc.get('end_line')}"] for dc in dead_code_data]
                     dead_code_update = pd.DataFrame(df_data, columns=["File", "Symbol", "Type", "Lines"])
                 elif task.name == "find_duplicate_code" and task.result.get("duplicate_code"):
                     dup_data = task.result["duplicate_code"]
                     df_data = [[d.get('file_a'), d.get('lines_a'), d.get('file_b'), d.get('lines_b'), f"{d.get('similarity', 0):.2%}"] for d in dup_data]
                     dup_code_update = pd.DataFrame(df_data, columns=["File A", "Lines A", "File B", "Lines B", "Similarity"])
-            if was_ingestion_task:
-                stats_update, lang_update = self.update_insights_dashboard(repo_id, branch)
+
+            if task_could_change_branch:
+                # Refresh branch information
+                current_repo_branches = self.framework.get_repository_branches(repo_id)
+                repo = self.framework.get_repository_by_id(repo_id)
+                new_active_branch = None
+                if repo:
+                    new_active_branch = repo.active_branch
+
+                # Ensure new_active_branch is valid, otherwise pick first or None
+                if new_active_branch not in current_repo_branches:
+                    new_active_branch = current_repo_branches[0] if current_repo_branches else None
+
+                # Update dropdown choices and value
+                branch_dropdown_update = gr.update(choices=current_repo_branches, value=new_active_branch)
+                # Update the branch_state if the active branch has changed
+                if branch != new_active_branch: # 'branch' is the input branch_state
+                    branch_state_update = new_active_branch
+
+                # Also refresh stats if an ingestion task completed
+                stats_update, lang_update = self.update_insights_dashboard(repo_id, new_active_branch or branch)
+
+
         elif task.status == 'failed':
             status_msg = f"Task '{task.name}' Failed: Check logs for details."
 
         button_updates = self._get_task_button_updates(interactive=not is_running)
-        return (status_msg, log_output, status_details_update, dead_code_update, dup_code_update, stats_update, lang_update, status_html, main_progress_update, progress_row_update, current_progress_html) + button_updates
+
+        return (
+            status_msg, log_output, status_details_update,
+            dead_code_update, dup_code_update, stats_update, lang_update,
+            status_html, main_progress_update, progress_row_update, current_progress_html,
+            branch_dropdown_update, branch_state_update # Added
+        ) + button_updates
 
     def handle_initial_load(self) -> Tuple:
         repos = self.framework.get_all_repositories()
