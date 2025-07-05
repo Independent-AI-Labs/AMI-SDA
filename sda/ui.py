@@ -336,6 +336,7 @@ No active tasks.
                 return null; // Required for Gradio JS event handlers
             }
             function setupModalEventListeners() {
+                console.log("setupModalEventListeners called"); // DIAGNOSTIC
                 // Listener for clicking on the modal background to close
                 document.querySelectorAll('.modal-background').forEach(modalBg => {
                     modalBg.addEventListener('click', function(event) {
@@ -353,9 +354,15 @@ No active tasks.
 
                 // Global ESC key listener
                 document.addEventListener('keydown', function(event) {
+                    console.log("Keydown event:", event.key); // DIAGNOSTIC
                     if (event.key === 'Escape') {
-                        const visibleModals = document.querySelectorAll('.modal-background[style*="display: flex"], .modal-background[style*="display:block"]');
+                        console.log("Escape key pressed."); // DIAGNOSTIC
+                        const selector = '.modal-background[style*="display: flex"], .modal-background[style*="display:block"]';
+                        const visibleModals = document.querySelectorAll(selector);
+                        console.log("Visible modals query selector:", selector, "Found:", visibleModals); // DIAGNOSTIC
+
                         visibleModals.forEach(modal => {
+                            console.log("Processing visible modal:", modal.id); // DIAGNOSTIC
                             // The modal element selected by querySelectorAll already has the ID (e.g., "addRepoModal").
                             // So, modal.id should be directly usable.
                             if (modal.id) {

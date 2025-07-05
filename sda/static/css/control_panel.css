@@ -309,8 +309,11 @@
 
 .modal-close-x-wrapper {
     margin-left: auto; /* Push the wrapper (Gradio HTML component div) to the right */
-    display: flex; /* Allow the button inside to be aligned if needed */
-    align-items: center; /* Vertically center the button if wrapper has height */
+    display: flex;
+    align-items: center; /* Vertically center the button */
+    justify-content: flex-end; /* Align the button to the right end of the wrapper */
+    /* flex-grow: 0; /* Ensure wrapper does not grow if there's extra space in header */
+    /* flex-shrink: 0; /* Ensure wrapper does not shrink */
 }
 
 .modal-close-x {
