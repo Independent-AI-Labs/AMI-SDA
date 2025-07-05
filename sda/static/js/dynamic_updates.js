@@ -187,23 +187,40 @@ function applyJSUpdates(data) {
         }
 
         const mainTaskData = cp.main_task;
-        const mainTaskDisplayContainer = document.getElementById('main-task-name-heading'); // A parent of main task specific elements
+        const noTaskMessageDiv = document.getElementById('no-active-task-message');
+        const activeTaskWrapperDiv = document.getElementById('active-task-details-wrapper');
+        // const mainTaskDisplayContainer = document.getElementById('main-task-name-heading'); // This is inside activeTaskWrapperDiv
 
         if (mainTaskData) {
-            if(mainTaskDisplayContainer) mainTaskDisplayContainer.style.display = ''; // Ensure parent is visible
-            updateTextContent('main-task-name-value', mainTaskData.name);
-            updateElementClass('main-task-status-badge', mainTaskData.status_class);
-            updateTextContent('main-task-status-badge', mainTaskData.status_text);
-            updateProgressUI('main-task', mainTaskData.progress, mainTaskData.message, mainTaskData.name);
+            if (noTaskMessageDiv) noTaskMessageDiv.style.display = 'none';
+            if (activeTaskWrapperDiv) activeTaskWrapperDiv.style.display = '';
+
+            // Ensure the specific main task heading is also visible if it was individually hidden
+            const mainTaskDisplayContainer = document.getElementById('main-task-name-heading');
+            if(mainTaskDisplayContainer) mainTaskDisplayContainer.style.display = '';
+
+            updateTextContent('main-task-name', mainTaskData.name); // Corrected ID from main-task-name-value
+            updateElementClass('main-task-status', mainTaskData.status_class); // Corrected ID from main-task-status-badge
+            updateTextContent('main-task-status', mainTaskData.status_text); // Corrected ID
+            updateProgressUI('main-task', mainTaskData.progress, mainTaskData.message, mainTaskData.name); // 'main-task' is the prefix for progress bar elements
             updateTextContent('main-task-time-elapsed', mainTaskData.time_elapsed || 'N/A');
             updateTextContent('main-task-time-duration', mainTaskData.time_duration || 'N/A');
             updateMainTaskDetails(mainTaskData.details);
             updateMainTaskError(mainTaskData.error_message);
-        } else { // No main task data, Python should have sent full HTML for "No Task"
-             if(mainTaskDisplayContainer) {
-                // If Python did NOT send a full HTML update and we need to hide the main task display via JS
-                // This part is tricky if Python's full HTML refresh is the primary way to show "No Task"
-             }
+
+            // Show/hide children, details, error cards based on data
+            const detailsCard = document.getElementById('main-task-details-card');
+            if (detailsCard) detailsCard.style.display = (mainTaskData.details && Object.keys(mainTaskData.details).length > 0) ? '' : 'none';
+
+            const childrenContainer = document.getElementById('main-task-children-container');
+            if (childrenContainer) childrenContainer.style.display = (cp.sub_tasks && cp.sub_tasks.length > 0) ? '' : 'none';
+
+            const errorCard = document.getElementById('main-task-error-card');
+            if (errorCard) errorCard.style.display = mainTaskData.error_message ? '' : 'none';
+
+        } else { // No main task data, show "No Task" message and hide active task details
+            if (noTaskMessageDiv) noTaskMessageDiv.style.display = '';
+            if (activeTaskWrapperDiv) activeTaskWrapperDiv.style.display = 'none';
         }
 
         const subTasksData = cp.sub_tasks || [];

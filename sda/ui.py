@@ -380,7 +380,8 @@ No active tasks.
             with gr.Column(elem_id="statusModal", elem_classes="modal-background"):
                 with gr.Column(elem_classes="modal-content-wrapper"):
                     gr.Markdown("## Control Panel")
-                    status_details_html = gr.HTML(value="<div class='status-container'>No active tasks.</div>")
+                    # Initialize with the full structure, showing "No active tasks" by default via the template logic
+                    status_details_html = gr.HTML(value=self._create_status_progress_html(None))
                     status_modal_close_btn = gr.Button("Close")
 
             with gr.Tabs() as tabs:
@@ -615,58 +616,61 @@ No active tasks.
             "ram_absolute_text": f"{current_ram_used_gb:.1f} / {current_ram_total_gb:.1f} GB"
         }
 
-        full_html_update_needed_for_modal = False
+        # full_html_update_needed_for_modal = False # This will be removed / re-evaluated
+        status_details_update = gr.update() # Default to no HTML update for the modal panel
+        new_last_status_text_for_state = last_status_text # Persist old HTML state unless specifically changed
 
         if not repo_id:
             js_update_data["external_progress_bar"]["message"] = "No repository selected"
+            js_update_data["control_panel"]["main_task"] = None # Signal JS to show "No Task" state
             default_ext_progress_html = self._create_html_progress_bar(0, "No repository selected", "Idle", unique_prefix="external")
 
-            if last_main_task_id is not None: # Was showing a task, now isn't
-                full_html_update_needed_for_modal = True
+            # If switching from a state with a task to no repo, update states
+            if last_main_task_id is not None:
                 new_last_main_task_id = None
                 new_last_sub_task_ids = []
                 new_last_main_task_has_details = False
                 new_last_main_task_has_error = False
-
-            current_modal_html = self._create_status_progress_html(None)
-            status_details_update = gr.update(value=current_modal_html) if full_html_update_needed_for_modal or current_modal_html != last_status_text else gr.update()
-            new_last_status_text_for_state = current_modal_html
+                # Potentially, if the "No active tasks" HTML is different and needs to be set once:
+                # current_modal_html = self._create_status_progress_html(None)
+                # status_details_update = gr.update(value=current_modal_html)
+                # new_last_status_text_for_state = current_modal_html
+                # For now, assume JS handles showing the "No task" section within existing HTML
 
             no_repo_updates_tuple = (
-                "No repository selected.", status_details_update,
+                "No repository selected.", status_details_update, # status_details_update is now gr.update()
                 gr.update(), gr.update(), gr.update(), gr.update(),
-                new_last_status_text_for_state,
+                new_last_status_text_for_state, # This state might become less relevant for status_details_html
                 gr.update(value=default_ext_progress_html) if default_ext_progress_html != last_progress_html else gr.update(),
                 gr.update(visible=False),
                 default_ext_progress_html,
                 branch_dropdown_update, branch_state_update,
                 js_update_data,
-                # New state outputs
                 new_last_main_task_id, new_last_sub_task_ids, new_last_main_task_has_details, new_last_main_task_has_error
             )
             return no_repo_updates_tuple + self._get_task_button_updates(True)
-        
+
         task = self.framework.get_latest_task(repo_id)
 
         if not task:
             js_update_data["external_progress_bar"]["message"] = "No active tasks"
+            js_update_data["control_panel"]["main_task"] = None # Signal JS to show "No Task" state
             default_ext_progress_html = self._create_html_progress_bar(0, "No active tasks", "Idle", unique_prefix="external")
 
             if last_main_task_id is not None: # Was showing a task, now isn't
-                full_html_update_needed_for_modal = True
                 new_last_main_task_id = None
                 new_last_sub_task_ids = []
                 new_last_main_task_has_details = False
                 new_last_main_task_has_error = False
-
-            current_modal_html = self._create_status_progress_html(None)
-            status_details_update = gr.update(value=current_modal_html) if full_html_update_needed_for_modal or current_modal_html != last_status_text else gr.update()
-            new_last_status_text_for_state = current_modal_html
+                # Potentially, if the "No active tasks" HTML is different and needs to be set once:
+                # current_modal_html = self._create_status_progress_html(None)
+                # status_details_update = gr.update(value=current_modal_html)
+                # new_last_status_text_for_state = current_modal_html
 
             no_task_updates_tuple = (
-                "No tasks found for this repository.", status_details_update,
+                "No tasks found for this repository.", status_details_update, # status_details_update is now gr.update()
                 gr.update(), gr.update(), gr.update(), gr.update(),
-                new_last_status_text_for_state,
+                new_last_status_text_for_state, # This state might become less relevant
                 gr.update(value=default_ext_progress_html) if default_ext_progress_html != last_progress_html else gr.update(),
                 gr.update(visible=False), default_ext_progress_html,
                 branch_dropdown_update, branch_state_update,
@@ -706,17 +710,19 @@ No active tasks.
         current_main_task_has_details = bool(task.details)
         current_main_task_has_error = bool(task.error_message)
 
-        # Check for structural changes in the modal content
-        if (task.id != last_main_task_id or
-            set(current_sub_task_ids) != set(last_sub_task_ids) or # Order doesn't matter for set comparison, but JS might need sorted IDs
-            current_main_task_has_details != last_main_task_has_details or
-            current_main_task_has_error != last_main_task_has_error):
-            full_html_update_needed_for_modal = True
+        # The full_html_update_needed_for_modal logic is removed.
+        # JS is expected to handle these changes based on js_update_data.
+        # If task.id changes, JS will effectively "re-render" the main task area.
+        # If sub_tasks change, JS's updateOrCreateSubTaskElement handles it.
+        # If details/error presence changes, JS's updateMainTaskDetails/Error handles it.
 
         new_last_main_task_id = task.id
-        new_last_sub_task_ids = current_sub_task_ids
+        new_last_sub_task_ids = current_sub_task_ids # JS will compare with its current DOM state
         new_last_main_task_has_details = current_main_task_has_details
         new_last_main_task_has_error = current_main_task_has_error
+
+        # status_details_update remains gr.update() as set at the start of the function.
+        # new_last_status_text_for_state remains last_status_text (no HTML update from Python).
 
         sub_task_status_classes_map = {
             'running': "bg-blue-100 text-blue-700 dark:bg-blue-600 dark:text-blue-100",
@@ -736,13 +742,10 @@ No active tasks.
                     "message": child_task.message, "details": child_task.details if child_task.details else {}
                 })
 
-        if full_html_update_needed_for_modal:
-            current_modal_html = self._create_status_progress_html(task)
-            status_details_update = gr.update(value=current_modal_html)
-            new_last_status_text_for_state = current_modal_html
-        else: # No structural change, only values might have changed. JS will handle.
-            status_details_update = gr.update()
-            new_last_status_text_for_state = last_status_text # Keep old HTML state if not re-rendering
+        # HTML for status_details_html is no longer updated here.
+        # status_details_update remains gr.update() as set at the beginning of the function.
+        # new_last_status_text_for_state also remains as last_status_text.
+        # All visual changes in the modal are now driven by js_update_data.
 
         current_ext_progress_html = self._create_html_progress_bar(
             js_update_data["external_progress_bar"]["progress"],
