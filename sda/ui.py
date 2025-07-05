@@ -139,7 +139,7 @@ No active tasks.
         template = self.jinja_env.get_template("status_container_base.html")
         return template.render(context)
 
-    def _render_sub_task_html(self, child_task: Task) -> str:
+    def _render_sub_task_html(self, child_task: SQLA_Task) -> str: # Changed Task to SQLA_Task
         """Renders a single sub-task using its template."""
         progress_bar_html = self._create_html_progress_bar(child_task.progress, child_task.message, child_task.name)
         template = self.jinja_env.get_template("status_modal_parts/sub_task.html")
@@ -1041,34 +1041,45 @@ if __name__ == "__main__":
     dashboard = DashboardUI(framework_instance)
     gradio_ui_blocks = dashboard.create_ui() # This is the gr.Blocks instance
 
-    # Create a FastAPI app
-    app = FastAPI()
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def lifespan_manager(app_ref: FastAPI): # Renamed parameter to avoid confusion
+        # Code to run on startup
+        global main_event_loop
+        try:
+            main_event_loop = asyncio.get_running_loop()
+            print("Lifespan startup: Main event loop captured.")
+        except RuntimeError:
+            print("Lifespan startup: No running event loop found by get_running_loop().")
+            main_event_loop = None
+
+        yield
+        # Code to run on shutdown (if any)
+        print("Lifespan shutdown.")
+
+    # Create a FastAPI app with the lifespan manager
+    app = FastAPI(lifespan=lifespan_manager)
 
     # Add the WebSocket route
     app.add_api_websocket_route("/ws/controlpanel", websocket_control_panel_endpoint)
 
     # --- API Endpoint for Task History ---
-    @app.get("/api/repositories/{repo_id}/tasks_history", response_model=List[TaskRead]) # Changed to TaskRead
+    @app.get("/api/repositories/{repo_id}/tasks_history", response_model=List[TaskRead])
     async def api_get_task_history(
         repo_id: int,
         offset: int = Query(0, ge=0),
-        limit: int = Query(10, ge=1, le=50) # Max 50 tasks per request
+        limit: int = Query(10, ge=1, le=50)
     ):
-        # framework_instance is accessible here as it's defined in the same __main__ scope
         tasks = framework_instance.get_task_history(repo_id=repo_id, offset=offset, limit=limit)
         return tasks
     # --- End API Endpoint ---
 
-    # Mount static files (for control_panel.html, css, js)
-    # Ensure the path is correct relative to where the script is run
-    # If sda/ui.py is run from the project root, then "sda/static" is correct.
+    # Mount static files
     static_files_path = Path(__file__).parent / "static"
     app.mount("/static", StaticFiles(directory=static_files_path), name="static")
 
     # Mount the Gradio app
-    # The path "/gradio" is where the Gradio UI will be served.
-    # If you want it at root, use "/" but ensure no conflict with other routes like /ws or /static.
-    # Let's try mounting Gradio at "/gradio" to see if it resolves URL issues.
     app = gr.mount_gradio_app(app, gradio_ui_blocks, path="/gradio")
 
     print("FastAPI app with Gradio and WebSocket endpoint is ready.")
@@ -1076,18 +1087,4 @@ if __name__ == "__main__":
     print(f"Control Panel WebSocket will be at ws://127.0.0.1:7860/ws/controlpanel")
 
     # Run the FastAPI app with uvicorn
-    # Default Gradio port is 7860. You can make this configurable.
-
-    # Assign the main event loop before starting uvicorn,
-    # though uvicorn.run itself will set up and manage the loop.
-    # It's better to get the loop within an async context or after uvicorn starts it.
-    # However, for run_coroutine_threadsafe, we need the loop Uvicorn *will* run.
-    # This can be tricky. A common pattern is to get it from an `on_event("startup")` handler.
-
-    @app.on_event("startup")
-    async def startup_event():
-        global main_event_loop
-        main_event_loop = asyncio.get_running_loop()
-        print("Main event loop captured on startup.")
-
     uvicorn.run(app, host="0.0.0.0", port=7860)

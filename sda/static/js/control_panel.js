@@ -92,7 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
         childrenContainer: document.getElementById('main-task-children-container'),
         subTasksListJS: document.getElementById('sub-tasks-list-js') // Container for JS-generated sub-tasks
     };
-    const subTaskTemplate = document.getElementById('sub-task-template-js');
+    // const subTaskTemplate = document.getElementById('sub-task-template-js'); // Redundant declaration REMOVED
 
     // --- Helper Functions ---
     function updateText(element, text, defaultValue = 'N/A') {
