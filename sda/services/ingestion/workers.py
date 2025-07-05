@@ -5,7 +5,7 @@ import logging
 import os
 import queue
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # Imports that were originally in ingestion.py and are needed by these workers
 import hashlib
@@ -13,7 +13,7 @@ from sda.services.chunking import TokenAwareChunker
 from sda.core.data_models import TransientNode, TransientChunk # Assuming these are the Pydantic models
 
 # Global chunker instance for parsing worker, similar to original setup
-_chunker_instance: TokenAwareChunker | None = None
+_chunker_instance: Optional[TokenAwareChunker] = None
 
 def _initialize_parsing_worker():
     global _chunker_instance

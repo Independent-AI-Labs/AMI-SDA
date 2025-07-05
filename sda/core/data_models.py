@@ -1,5 +1,5 @@
-from typing import Optional, List
-from pydantic import BaseModel
+from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, Field
 
 class DuplicatePair(BaseModel):
     """Represents a pair of semantically similar code chunks."""
@@ -36,22 +36,22 @@ class TransientNode(BaseModel):
     depth: int
     complexity_score: Optional[float]
     parent_id: Optional[str] = None
-    repo_metadata: dict = {} # TODO: Replace with a more specific model if possible
+    repo_metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class TransientChunk(BaseModel):
     """A temporary, serializable representation of a code chunk for pipeline processing."""
     chunk_id: str
     content: str
-    metadata: dict = {} # TODO: Replace with a more specific model if possible
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     importance_score: float = 0.5
-    ast_node_ids: List[str] = []
+    ast_node_ids: List[str] = Field(default_factory=list)
     parent_chunk_id: Optional[str] = None
 
 class DirectoryNode(BaseModel):
     """Represents a directory in the repository's file tree."""
     path: str # Using str for path to simplify serialization, Path object can be reconstructed
     parent: Optional['DirectoryNode'] = None
-    children: Dict[str, 'DirectoryNode'] = {}
+    children: Dict[str, 'DirectoryNode'] = Field(default_factory=dict)
     file_count: int = 0
     total_size: int = 0
 

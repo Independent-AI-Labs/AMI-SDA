@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import List, Tuple, Dict, Any, Generator, Optional
 import os
 import psutil # For CPU load and RAM
+import re # For _extract_progress_from_html
 from datetime import datetime, timezone # For time elapsed
 try:
     import torch
@@ -48,7 +49,7 @@ class DashboardUI:
     def _extract_progress_from_html(self, html_content: str) -> float:
         """Extract progress percentage from HTML content for comparison."""
         try:
-            import re
+            # import re # Moved to top-level imports
             match = re.search(r'data-content-hash="([^"]*)"', html_content)
             if match:
                 content_hash = match.group(1)
