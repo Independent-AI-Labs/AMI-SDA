@@ -505,65 +505,46 @@ class CodeAnalysisFramework:
                 # Original behavior: get git diff for (presumably) modified files
                 return self.git_service.get_diff(repo.path, file_path), None
 
-    def get_file_tree(self, repo_id: int, branch: str) -> List[Tuple[str, str]]:
+    def get_file_tree(self, repo_id: int, branch: str) -> List[str]:
         """
-        Returns a list of (value, label) tuples for files in the repository,
-        suitable for gr.Tree. Value and label are typically the relative file path.
-        This is a placeholder. A real implementation would scan the repo directory
-        or query a database of indexed files for the given branch.
+        Returns a list of file path strings for the repository for the specified branch,
+        suitable for gr.FileExplorer.
+        Ensures the correct branch is checked out before listing files.
         """
-        # Placeholder implementation - mirrors the dummy data in UI for now
-        # In a real scenario, this would involve:
-        # 1. Checking out the specified branch (if not already active).
-        # 2. Walking the file system of the repo path.
-        # 3. Filtering out .git directory, and potentially other ignored files (.gitignore).
-        # 4. Formatting into List[Tuple[str, str]] where paths are relative to repo root.
-        # Example: [("README.md", "README.md"), ("src/app.py", "src/app.py")]
-        repo = self.get_repository_by_id(repo_id)
-        if not repo:
-            return []
-
-        # This is a very basic placeholder.
-        # A more robust version would use self.git_service.list_files_in_tree(repo.path, branch)
-        # or walk the filesystem after ensuring the correct branch is checked out.
-        # For now, returning a fixed list similar to UI's dummy data.
         repo = self.get_repository_by_id(repo_id)
         if not repo:
             logging.error(f"get_file_tree: Repository with ID {repo_id} not found.")
-            return [("Error: Repository not found.", "Error: Repository not found.")]
+            return ["Error: Repository not found."]
 
-        # Ensure the correct branch is active for listing files from the working directory.
-        # This is a simplified approach. A robust solution would handle potential errors during checkout
-        # (e.g., dirty state) or list files from a specific tree-ish without checkout if possible.
         current_git_branch = self.git_service.get_current_branch(repo.path)
         if current_git_branch != branch:
-            logging.info(f"Framework: Switching branch in {repo.path} from {current_git_branch} to {branch} for get_file_tree.")
+            logging.info(f"Framework: Switching branch in {repo.path} from '{current_git_branch}' to '{branch}' for get_file_tree.")
             try:
-                # This assumes checkout_branch updates the working tree.
-                # If list_files_in_tree_formatted can read from a specific tree-ish without checkout, that's better.
-                self.git_service.checkout_branch(repo.path, branch)
-                # Update active branch in DB
+                if not self.git_service.checkout(repo.path, branch): # checkout returns bool
+                    logging.error(f"Framework: git_service.checkout returned false for branch '{branch}' in repo '{repo.path}'.")
+                    return [f"Error: Could not switch to branch '{branch}'. Checkout failed."]
+
+                # Update active branch in DB after successful checkout
                 with self.db_manager.get_session("public") as session:
                     db_repo = session.get(Repository, repo_id)
                     if db_repo:
                         db_repo.active_branch = branch
-                        # session.commit() # Persist change if checkout is successful
+                        session.commit() # Persist active branch change
             except Exception as e:
-                logging.error(f"Framework: Failed to checkout branch {branch} for repo {repo.path} during get_file_tree: {e}")
-                return [("Error: Could not switch branch.", "Error: Could not switch branch.")]
+                logging.error(f"Framework: Exception during checkout of branch '{branch}' for repo '{repo.path}': {e}", exc_info=True)
+                return [f"Error: Could not switch to branch '{branch}'. Exception: {str(e)}"]
 
-        # Assuming list_files_in_tree_formatted lists all files in the current HEAD of the repo_path.
-        # It should return List[Tuple[str, str]] where the first element is the full path for selection,
-        # and the second is the display label. For gr.FileExplorer, these are often the same.
-        files = self.git_service.list_files_in_tree_formatted(repo.path, branch) # Pass branch to ensure it lists from correct tree if supported
+        # Now that the correct branch should be checked out, list files from it.
+        files = self.git_service.get_all_files_in_branch(repo.path, branch_name=branch)
 
+        if files is None: # get_all_files_in_branch might return None on execution error
+             logging.error(f"get_file_tree: get_all_files_in_branch returned None for repo {repo_id}, branch {branch}.")
+             return ["Error: Failed to retrieve file list from GitService."]
         if not files:
-            logging.warning(f"get_file_tree: No files found by git_service.list_files_in_tree_formatted for repo {repo_id}, branch {branch}.")
-            return [("No files found in this branch.", "No files found in this branch.")]
+            logging.warning(f"get_file_tree: No files found by get_all_files_in_branch for repo {repo_id}, branch {branch}.")
+            return ["No files found in this branch."]
 
-        # gr.FileExplorer expects a list of file paths (strings).
-        # The list_files_in_tree_formatted returns List[Tuple[str,str]], so we take the first element.
-        return [file_data[0] for file_data in files]
+        return files # Already List[str] from get_all_files_in_branch
 
     def list_directory(self, repo_id: int, branch: str, dir_path: str) -> List[str]:
         """
