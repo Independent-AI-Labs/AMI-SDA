@@ -1022,7 +1022,7 @@ No active tasks.
                               hole=0.3) # Optional: for a donut chart effect
             lang_fig.update_traces(textposition='inside', textinfo='percent+label')
 
-        return stats_fig, lang_fig
+        return stats_html, lang_fig # Corrected: stats_fig to stats_html
 
     def handle_run_dead_code(self, repo_id: int, branch: str) -> Tuple:
         if not repo_id or not branch:
