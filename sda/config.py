@@ -24,6 +24,9 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 # --- Core Paths ---
 DATA_DIR = Path("./data")
 WORKSPACE_DIR = str(DATA_DIR / "workspace")
+
+# --- Agent Configuration ---
+MAX_TOOL_OUTPUT_LENGTH = int(os.getenv("SDA_MAX_TOOL_OUTPUT_LENGTH", "16000"))
 BACKUP_DIR = str(DATA_DIR / "backups")
 INGESTION_CACHE_DIR = str(DATA_DIR / "ingestion_cache")
 
