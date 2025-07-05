@@ -290,3 +290,47 @@
 #component-29 {
     overflow: hidden !important; /* Use !important to override inline style */
 }
+
+/* Added Modal Header and Close Button Styles */
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 0.75rem; /* Corresponds to mb-3 in Tailwind */
+    margin-bottom: 1rem;     /* Spacing after header */
+    border-bottom: 1px solid var(--border-color-primary, #e5e7eb); /* Use var or fallback */
+}
+
+/* Ensure title within modal header uses body text color by default */
+.modal-header .modal-title, .modal-header .modal-title p { /* Target p if Gradio wraps Markdown output */
+    color: var(--body-text-color);
+    margin-bottom: 0 !important; /* Override Gradio's default Markdown bottom margin if any */
+}
+
+.modal-close-x {
+    background: transparent;
+    border: none;
+    font-size: 1.25rem; /* text-xl for the icon, adjust as needed */
+    color: var(--body-text-color-subdued, #6b7280); /* Use var or fallback */
+    cursor: pointer;
+    padding: 0.25rem; /* Add some padding for easier clicking */
+    line-height: 1; /* Ensure icon is centered */
+    margin-left: auto; /* Push to the right */
+}
+
+.modal-close-x:hover {
+    color: var(--body-text-color, #1f2937); /* Use var or fallback */
+}
+
+/* Dark mode considerations (if not covered by Gradio variables) */
+html.dark .modal-header {
+    border-bottom-color: var(--border-color-primary-dark, #374151); /* Example dark mode border */
+}
+
+html.dark .modal-close-x {
+    color: var(--body-text-color-subdued-dark, #9ca3af);
+}
+
+html.dark .modal-close-x:hover {
+    color: var(--body-text-color-dark, #f3f4f6);
+}
