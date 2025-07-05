@@ -1,0 +1,13 @@
+Collecting plotly
+  Downloading plotly-6.2.0-py3-none-any.whl.metadata (8.5 kB)
+Collecting narwhals>=1.15.1 (from plotly)
+  Downloading narwhals-1.45.0-py3-none-any.whl.metadata (11 kB)
+Collecting packaging (from plotly)
+  Using cached packaging-25.0-py3-none-any.whl.metadata (3.3 kB)
+Downloading plotly-6.2.0-py3-none-any.whl (9.6 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 9.6/9.6 MB 23.1 MB/s eta 0:00:00
+Downloading narwhals-1.45.0-py3-none-any.whl (371 kB)
+Using cached packaging-25.0-py3-none-any.whl (66 kB)
+Installing collected packages: packaging, narwhals, plotly
+
+Successfully installed narwhals-1.45.0 packaging-25.0 plotly-6.2.0

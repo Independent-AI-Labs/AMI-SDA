@@ -21,6 +21,7 @@ except ImportError:
 
 import gradio as gr
 import pandas as pd
+import plotly.express as px
 from PIL import Image
 from llama_index.core.llms import ChatMessage
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -448,10 +449,10 @@ No active tasks.
                     with gr.Row():
                         with gr.Column(scale=1):
                             gr.Markdown('### <i class="fas fa-chart-bar"></i> Statistics')
-                            stats_df = gr.DataFrame(headers=["Metric", "Value"], col_count=(2, "fixed"), interactive=False)
+                            stats_plot = gr.Plot(label="Statistics")
                         with gr.Column(scale=1):
                             gr.Markdown('### <i class="fas fa-code"></i> Language Breakdown')
-                            lang_df = gr.DataFrame(headers=["Language", "Files", "Percentage"], col_count=(3, "fixed"), interactive=False)
+                            lang_plot = gr.Plot(label="Language Breakdown")
                     gr.Markdown('### <i class="fas fa-search-plus"></i> In-Depth Analysis (runs in background)')
                     with gr.Row():
                         analyze_dead_code_btn = gr.Button("Find Potentially Unused Code")
@@ -482,7 +483,7 @@ No active tasks.
             self.task_buttons = [analyze_branch_btn, analyze_dead_code_btn, analyze_duplicates_btn, add_repo_submit_btn, commit_btn]
             timer = gr.Timer(2)
 
-            all_insight_outputs = [stats_df, lang_df]
+            all_insight_outputs = [stats_plot, lang_plot] # Changed df to plot
             git_panel_outputs = [modified_files_dropdown, code_viewer, image_viewer, selected_file_state]
 
             # Define these components early if they are needed by reference in poll_outputs
@@ -518,7 +519,7 @@ No active tasks.
                 status_output,                      # Overall status message
                 # status_details_html,              # NO LONGER an output of polling for content change
                 dead_code_df, duplicate_code_df,    # Dataframe updates
-                stats_df, lang_df,                  # Dataframe updates
+                stats_plot, lang_plot,              # Changed df to plot
                 last_status_text_state,             # Pass-through state for overall status
                 main_progress_bar,                  # External progress bar
                 progress_row,                       # External progress row visibility
@@ -719,8 +720,8 @@ No active tasks.
                 # status_details_html output removed
                 gr.update(), # dead_code_df
                 gr.update(), # duplicate_code_df
-                gr.update(), # stats_df
-                gr.update(), # lang_df
+                gr.update(value=None), # stats_plot
+                gr.update(value=None), # lang_plot
                 last_status_text, # last_status_text_state (pass-through)
                 gr.update(value=default_ext_progress_html) if default_ext_progress_html != last_progress_html else gr.update(), # main_progress_bar
                 gr.update(visible=False), # progress_row
@@ -743,7 +744,9 @@ No active tasks.
 
             return (
                 "No tasks found for this repository.", # status_output
-                gr.update(), gr.update(), gr.update(), gr.update(), # df_updates
+                gr.update(), gr.update(), # dead_code_df, duplicate_code_df
+                gr.update(value=None), # stats_plot
+                gr.update(value=None), # lang_plot
                 last_status_text, # last_status_text_state
                 gr.update(value=default_ext_progress_html) if default_ext_progress_html != last_progress_html else gr.update(), # main_progress_bar
                 gr.update(visible=False), # progress_row
@@ -825,7 +828,8 @@ No active tasks.
         progress_row_update = gr.update(visible=is_running)
         button_updates = self._get_task_button_updates(interactive=not is_running)
         dead_code_update, dup_code_update = gr.update(), gr.update()
-        stats_update, lang_update = gr.update(), gr.update()
+        # Initialize plot updates to None, they will be updated if task completed and affects insights
+        stats_plot_update, lang_plot_update = gr.update(value=None), gr.update(value=None)
 
         task_could_change_branch = task.name.startswith("Ingest Branch:") or task.name == "analyze_branch"
         if task.status == 'completed':
@@ -844,20 +848,30 @@ No active tasks.
                 current_repo_branches = self.framework.get_repository_branches(repo_id)
                 repo = self.framework.get_repository_by_id(repo_id)
                 new_active_branch = repo.active_branch if repo else None
-                if new_active_branch and new_active_branch not in current_repo_branches:
+                if new_active_branch and new_active_branch not in current_repo_branches: # Check if active branch is valid
                     new_active_branch = current_repo_branches[0] if current_repo_branches else None
 
-                branch_dropdown_update = gr.update(choices=current_repo_branches, value=new_active_branch)
-                if branch != new_active_branch : branch_state_update = new_active_branch
-                stats_update, lang_update = self.update_insights_dashboard(repo_id, new_active_branch or branch)
+                # Ensure new_active_branch is not None before updating insights
+                target_branch_for_insights = new_active_branch if new_active_branch else branch
+
+                branch_dropdown_update = gr.update(choices=current_repo_branches, value=target_branch_for_insights)
+                if branch != target_branch_for_insights : branch_state_update = target_branch_for_insights
+
+                # Update insight plots
+                s_plot, l_plot = self.update_insights_dashboard(repo_id, target_branch_for_insights)
+                stats_plot_update = gr.update(value=s_plot)
+                lang_plot_update = gr.update(value=l_plot)
+
 
         elif task.status == 'failed':
             status_msg = f"Task '{task.name}' Failed: Check logs for details."
+            # Potentially clear or leave stale plots as is, or show an error state in plots
+            # For now, they will retain their last state or be None if initialized that way.
 
         return (
             status_msg, # status_output
             # status_details_html output removed
-            dead_code_update, dup_code_update, stats_update, lang_update, # df_updates
+            dead_code_update, dup_code_update, stats_plot_update, lang_plot_update, # df_updates and plot_updates
             last_status_text, # last_status_text_state (pass through)
             main_progress_update, # main_progress_bar (external)
             progress_row_update, # progress_row (external)
@@ -928,25 +942,48 @@ No active tasks.
         self.framework.analyze_branch(repo_id, branch, 'user')
         return (f"Started re-analysis for branch '{branch}'.", gr.update(visible=True)) + self._get_task_button_updates(False)
 
-    def update_insights_dashboard(self, repo_id: int, branch: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    def update_insights_dashboard(self, repo_id: int, branch: str) -> Tuple[Optional[px.bar], Optional[px.pie]]:
         if not repo_id or not branch:
-            return pd.DataFrame(columns=["Metric", "Value"]), pd.DataFrame(columns=["Language", "Files", "Percentage"])
+            return None, None # Return None for plots if no data
+
         stats = self.framework.get_repository_stats(repo_id, branch)
-        file_count = stats.get('file_count', 0)
-        stats_data = [
-            ["File Count", f"{file_count:,}"],
-            ["Total Lines", f"{stats.get('total_lines', 0):,}"],
-            ["Total Tokens", f"{stats.get('total_tokens', 0):,}"],
-            ["Sub-modules (schemas)", f"{stats.get('schema_count', 0):,}"]
+        if not stats: # Ensure stats is not None
+            return None, None
+
+        # Prepare data for Statistics Bar Chart
+        # Ensure values are numerical for plotting
+        stats_metrics = ["File Count", "Total Lines", "Total Tokens", "Sub-modules (schemas)"]
+        stats_values = [
+            stats.get('file_count', 0),
+            stats.get('total_lines', 0),
+            stats.get('total_tokens', 0),
+            stats.get('schema_count', 0)
         ]
-        stats_df = pd.DataFrame(stats_data, columns=["Metric", "Value"])
-        lang_data = []
+
+        stats_fig = None
+        if any(v > 0 for v in stats_values): # Check if there's any data to plot
+            stats_df_for_plot = pd.DataFrame({"Metric": stats_metrics, "Value": stats_values})
+            stats_fig = px.bar(stats_df_for_plot, x="Metric", y="Value", title="Repository Statistics",
+                               text_auto=True) # Show values on bars
+            stats_fig.update_layout(showlegend=False)
+
+        # Prepare data for Language Breakdown Pie Chart
         lang_breakdown = stats.get('language_breakdown', {})
-        for lang, count in sorted(lang_breakdown.items(), key=lambda item: item[1], reverse=True):
-            percentage = f"{(count / file_count * 100):.2f}%" if file_count > 0 else "0.00%"
-            lang_data.append([lang, f"{count:,}", percentage])
-        lang_df = pd.DataFrame(lang_data, columns=["Language", "Files", "Percentage"])
-        return stats_df, lang_df
+        lang_fig = None
+        if lang_breakdown:
+            lang_names = list(lang_breakdown.keys())
+            lang_counts = list(lang_breakdown.values())
+
+            # Create a DataFrame for Plotly
+            lang_df_for_plot = pd.DataFrame({"Language": lang_names, "Files": lang_counts})
+            lang_df_for_plot = lang_df_for_plot.sort_values(by="Files", ascending=False)
+
+            lang_fig = px.pie(lang_df_for_plot, names="Language", values="Files",
+                              title="Language Breakdown (by File Count)",
+                              hole=0.3) # Optional: for a donut chart effect
+            lang_fig.update_traces(textposition='inside', textinfo='percent+label')
+
+        return stats_fig, lang_fig
 
     def handle_run_dead_code(self, repo_id: int, branch: str) -> Tuple:
         if not repo_id or not branch:
