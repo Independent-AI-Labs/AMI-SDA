@@ -289,7 +289,7 @@ document.addEventListener('DOMContentLoaded', () => {
         socket.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
-                // console.log('Control Panel data received:', data);
+                console.log('Control Panel WebSocket data received:', data); // ADDED FOR DEBUGGING
 
                 if (data.main_task !== undefined) { // Check for presence of main_task key
                     updateMainTask(data.main_task);
