@@ -8,7 +8,7 @@ analysis insights, a live code editor, and version control operations.
 It interacts exclusively with the CodeAnalysisFramework facade.
 """
 from pathlib import Path
-from typing import List, Tuple, Dict, Any, Generator
+from typing import List, Tuple, Dict, Any, Generator, Optional
 import os
 import psutil # For CPU load and RAM
 from datetime import datetime, timezone # For time elapsed
@@ -23,6 +23,7 @@ from PIL import Image
 from llama_index.core.llms import ChatMessage
 
 from app import CodeAnalysisFramework
+from sda.core.models import Task # Added Task import
 from sda.config import IngestionConfig, AIConfig, PG_DB_NAME, DGRAPH_HOST, DGRAPH_PORT
 
 

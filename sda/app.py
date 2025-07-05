@@ -25,7 +25,7 @@ from sqlalchemy.orm import joinedload
 
 from sda.config import DB_URL, WORKSPACE_DIR, AIConfig, GOOGLE_API_KEY
 from sda.core.db_management import DatabaseManager
-from sda.core.models import Repository, File as DBFile, DBCodeChunk, Task
+from sda.core.models import Repository, File as DBFile, DBCodeChunk, Task, BillingUsage # Added BillingUsage
 from sda.services.agent import AgentManager
 from sda.services.analysis import EnhancedAnalysisEngine
 from sda.services.chunking import TokenAwareChunker
