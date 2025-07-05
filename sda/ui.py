@@ -40,6 +40,8 @@ from sda.utils.websocket_manager import control_panel_manager
 
 
 # WebSocket endpoint for the Control Panel
+main_event_loop = None # Global variable to store the main event loop
+
 async def websocket_control_panel_endpoint(websocket: WebSocket):
     await control_panel_manager.connect(websocket)
     try:
@@ -690,7 +692,11 @@ No active tasks.
             control_panel_ws_data["main_task"] = None
             default_ext_progress_html = self._create_html_progress_bar(0, "No repository selected", "Idle", unique_prefix="external")
 
-            asyncio.create_task(control_panel_manager.broadcast(control_panel_ws_data))
+            if main_event_loop:
+                asyncio.run_coroutine_threadsafe(control_panel_manager.broadcast(control_panel_ws_data), main_event_loop)
+            else:
+                print("Error: Main event loop not available for WebSocket broadcast.")
+
 
             return (
                 "No repository selected.", # status_output
@@ -714,7 +720,10 @@ No active tasks.
             control_panel_ws_data["main_task"] = None
             default_ext_progress_html = self._create_html_progress_bar(0, "No active tasks", "Idle", unique_prefix="external")
 
-            asyncio.create_task(control_panel_manager.broadcast(control_panel_ws_data))
+            if main_event_loop:
+                asyncio.run_coroutine_threadsafe(control_panel_manager.broadcast(control_panel_ws_data), main_event_loop)
+            else:
+                print("Error: Main event loop not available for WebSocket broadcast.")
 
             return (
                 "No tasks found for this repository.", # status_output
@@ -781,7 +790,10 @@ No active tasks.
                     "message": child_task.message, "details": child_task.details if child_task.details else {}
                 })
 
-        asyncio.create_task(control_panel_manager.broadcast(control_panel_ws_data))
+        if main_event_loop:
+            asyncio.run_coroutine_threadsafe(control_panel_manager.broadcast(control_panel_ws_data), main_event_loop)
+        else:
+            print("Error: Main event loop not available for WebSocket broadcast.")
 
         # Prepare updates for Gradio components (excluding the modal)
         current_ext_progress_html = self._create_html_progress_bar(
@@ -1030,4 +1042,17 @@ if __name__ == "__main__":
 
     # Run the FastAPI app with uvicorn
     # Default Gradio port is 7860. You can make this configurable.
+
+    # Assign the main event loop before starting uvicorn,
+    # though uvicorn.run itself will set up and manage the loop.
+    # It's better to get the loop within an async context or after uvicorn starts it.
+    # However, for run_coroutine_threadsafe, we need the loop Uvicorn *will* run.
+    # This can be tricky. A common pattern is to get it from an `on_event("startup")` handler.
+
+    @app.on_event("startup")
+    async def startup_event():
+        global main_event_loop
+        main_event_loop = asyncio.get_running_loop()
+        print("Main event loop captured on startup.")
+
     uvicorn.run(app, host="0.0.0.0", port=7860)
