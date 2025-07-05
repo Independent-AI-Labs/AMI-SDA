@@ -24,3 +24,4 @@ requests
 #transformers
 #sentence-transformers
 accelerate==1.8.1
+Jinja2>=3.0 # For HTML templating in UI

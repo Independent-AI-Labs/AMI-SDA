@@ -5,7 +5,6 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager, asynccontextmanager
-from dataclasses import dataclass
 from typing import Dict, List, Optional, Any, AsyncGenerator, Generator
 
 import google.generativeai as genai
@@ -19,13 +18,15 @@ from sqlalchemy.orm import joinedload
 
 from sda.config import AIConfig, GOOGLE_API_KEY, DATA_DIR, IngestionConfig
 from sda.core.config_models import LLMConfig
+from sda.core.data_models import DuplicatePair, SemanticSearchResult # Added import
 from sda.core.db_management import DatabaseManager
 from sda.core.models import DBCodeChunk, Repository, BillingUsage
 from sda.utils.limiter import RateLimiter
 
-# Module-level lock to protect the global genai.configure() call.
-_GEMINI_CONFIG_LOCK = threading.Lock()
+# Module-level lock for genai.configure() is now in llm_clients.py with RateLimitedGemini
+# _GEMINI_CONFIG_LOCK = threading.Lock() # Removed
 
+from sda.services.llm_clients import RateLimitedGemini # Added import
 
 def resolve_embedding_devices() -> List[str]:
     """Detects and resolves available hardware for embedding, supporting XPU, CUDA, and ROCm."""
@@ -75,205 +76,6 @@ def resolve_embedding_devices() -> List[str]:
 
     logging.info("No supported GPU devices (XPU/CUDA/ROCm) found or configured. Falling back to CPU.")
     return ["cpu"]
-
-
-@dataclass
-class DuplicatePair:
-    """Represents a pair of semantically similar code chunks."""
-    chunk_a_id: str
-    chunk_b_id: str
-    file_a: str
-    file_b: str
-    lines_a: str
-    lines_b: str
-    similarity: float
-    content_a: str
-    content_b: str
-
-
-@dataclass
-class SemanticSearchResult:
-    """Represents a single result from a semantic search."""
-    file_path: str
-    content: str
-    start_line: Optional[int]
-    end_line: Optional[int]
-    score: float
-
-
-class RateLimitedGemini(Gemini):
-    """
-    A wrapper for the Gemini LLM to enforce rate limiting, API key rotation,
-    and automatic billing/usage tracking. It uses PrivateAttr for internal state
-    to avoid conflicts with the parent Pydantic model.
-    """
-    # Declare private attributes that are not part of the Pydantic model schema.
-    _db_manager: DatabaseManager = PrivateAttr()
-    _rate_limiter: RateLimiter = PrivateAttr()
-    _model_config: LLMConfig = PrivateAttr()
-
-    def __init__(self, db_manager: DatabaseManager, rate_limiter: RateLimiter, **kwargs: Any):
-        # Call the parent Pydantic model's initializer first.
-        super().__init__(**kwargs)
-
-        # Now, safely set the internal attributes.
-        self._db_manager = db_manager
-        self._rate_limiter = rate_limiter
-
-        model_name = kwargs.get("model")
-        if not model_name:
-            raise ValueError("RateLimitedGemini requires 'model' to be provided.")
-
-        model_config = AIConfig.get_all_llm_configs().get(model_name)
-        if not model_config:
-            raise ValueError(f"No configuration found for model '{model_name}'.")
-        self._model_config = model_config
-
-        # Configure the global genai client inside a lock.
-        with _GEMINI_CONFIG_LOCK:
-            initial_api_key = self._rate_limiter.acquire(model_name=model_name)
-            genai.configure(api_key=initial_api_key)
-
-    def _record_billing_usage(self, api_key: str, response: Optional[ChatResponse] = None):
-        """Records token usage and calculated cost into the database."""
-        if not response or self._model_config.provider != 'google':
-            return
-
-        # Try to get usage metadata from different possible locations
-        usage_metadata = None
-
-        # Check for usage_metadata attribute directly
-        if hasattr(response, 'usage_metadata') and response.usage_metadata:
-            usage_metadata = response.usage_metadata
-        # Check for metadata attribute with usage_metadata
-        elif hasattr(response, 'metadata') and response.metadata and hasattr(response.metadata, 'usage_metadata'):
-            usage_metadata = response.metadata.usage_metadata
-        # Check for raw attribute that might contain usage info
-        elif hasattr(response, 'raw') and response.raw:
-            if hasattr(response.raw, 'usage_metadata'):
-                usage_metadata = response.raw.usage_metadata
-
-        if not usage_metadata:
-            # Log that we couldn't find usage metadata but don't fail
-            logging.debug("No usage metadata found in response, skipping billing record")
-            return
-
-        try:
-            prompt_tokens = getattr(usage_metadata, 'prompt_token_count', 0)
-            completion_tokens = getattr(usage_metadata, 'completion_token_count', 0) or getattr(usage_metadata, 'candidates_token_count', 0)
-            total_tokens = prompt_tokens + completion_tokens
-
-            cost = (
-                    (prompt_tokens / 1_000_000) * self._model_config.input_price_per_million_tokens +
-                    (completion_tokens / 1_000_000) * self._model_config.output_price_per_million_tokens
-            )
-
-            usage_record = BillingUsage(
-                model_name=self.model,
-                provider=self._model_config.provider,
-                api_key_used_hash=hashlib.sha256(api_key.encode()).hexdigest(),
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
-                cost=cost,
-            )
-            with self._db_manager.get_session("public") as session:
-                session.add(usage_record)
-        except Exception as e:
-            logging.error(f"Failed to record billing usage: {e}", exc_info=True)
-
-    @contextmanager
-    def _rate_limited_context(self) -> Generator[str, None, None]:
-        with _GEMINI_CONFIG_LOCK:
-            api_key = self._rate_limiter.acquire(model_name=self.model)
-            try:
-                genai.configure(api_key=api_key)
-                yield api_key
-            finally:
-                pass
-
-    @asynccontextmanager
-    async def _arate_limited_context(self) -> AsyncGenerator[str, None]:
-        async with self._rate_limiter.async_lock:
-            with _GEMINI_CONFIG_LOCK:
-                api_key = await self._rate_limiter.aacquire(model_name=self.model)
-                try:
-                    genai.configure(api_key=api_key)
-                    yield api_key
-                finally:
-                    pass
-
-    def chat(self, *args: Any, **kwargs: Any) -> ChatResponse:
-        with self._rate_limited_context() as api_key:
-            response = super().chat(*args, **kwargs)
-            self._record_billing_usage(api_key, response)
-            return response
-
-    def stream_chat(self, *args: Any, **kwargs: Any) -> Generator[ChatResponse, None, None]:
-        with self._rate_limited_context() as api_key:
-            stream = super().stream_chat(*args, **kwargs)
-            final_response = None
-            for chunk in stream:
-                final_response = chunk
-                yield chunk
-            if final_response:
-                self._record_billing_usage(api_key, final_response)
-
-    async def achat(self, *args: Any, **kwargs: Any) -> ChatResponse:
-        async with self._arate_limited_context() as api_key:
-            response = await super().achat(*args, **kwargs)
-            self._record_billing_usage(api_key, response)
-            return response
-
-    async def astream_chat(self, *args: Any, **kwargs: Any) -> AsyncGenerator[ChatResponse, None]:
-        async with self._arate_limited_context() as api_key:
-            stream = await super().astream_chat(*args, **kwargs)
-            final_response = None
-            async for chunk in stream:
-                final_response = chunk
-                yield chunk
-            if final_response:
-                self._record_billing_usage(api_key, final_response)
-
-    def complete(self, *args: Any, **kwargs: Any) -> CompletionResponse:
-        with self._rate_limited_context() as api_key:
-            response = super().complete(*args, **kwargs)
-            # For completion responses, we need to handle them differently
-            self._record_completion_billing_usage(api_key, response)
-            return response
-
-    async def acomplete(self, *args: Any, **kwargs: Any) -> CompletionResponse:
-        async with self._arate_limited_context() as api_key:
-            response = await super().acomplete(*args, **kwargs)
-            self._record_completion_billing_usage(api_key, response)
-            return response
-
-    def _record_completion_billing_usage(self, api_key: str, response: Optional[CompletionResponse] = None):
-        """Records billing usage for completion responses."""
-        if not response or self._model_config.provider != 'google':
-            return
-
-        try:
-            # For completion responses, we'll estimate token usage based on text length
-            # This is not as accurate as getting actual usage data, but it's better than nothing
-            text = response.text or ""
-            estimated_tokens = len(text.split()) * 1.3  # Rough estimation
-
-            cost = (estimated_tokens / 1_000_000) * self._model_config.output_price_per_million_tokens
-
-            usage_record = BillingUsage(
-                model_name=self.model,
-                provider=self._model_config.provider,
-                api_key_used_hash=hashlib.sha256(api_key.encode()).hexdigest(),
-                prompt_tokens=0,  # We don't have prompt token count for completions
-                completion_tokens=int(estimated_tokens),
-                total_tokens=int(estimated_tokens),
-                cost=cost,
-            )
-            with self._db_manager.get_session("public") as session:
-                session.add(usage_record)
-        except Exception as e:
-            logging.error(f"Failed to record completion billing usage: {e}", exc_info=True)
 
 
 class EnhancedAnalysisEngine:

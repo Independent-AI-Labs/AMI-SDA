@@ -1,0 +1,41 @@
+{# sda/templates/status_modal_parts/sub_task.html #}
+{# Expects task (child_task object) and progress_bar_html (pre-rendered) #}
+{% set sub_task_base_id = "sub-task-" ~ task.id %}
+<div id="{{ sub_task_base_id }}" class="bg-gray-50 dark:bg-gray-750 shadow-sm rounded-lg p-3 my-1 border border-gray-200 dark:border-gray-600">
+    <div class="flex items-center justify-between mb-1">
+        <div class="flex items-center min-w-0 mr-2"> {# min-w-0 for truncate to work in flex child, mr-2 for spacing from badge #}
+            <span id="{{ sub_task_base_id }}-status-icon" class="mr-2 flex-shrink-0">
+                {% if task.status == 'running' %}<i class="fas fa-sync fa-spin text-blue-500 text-sm"></i>
+                {% elif task.status == 'completed' %}<i class="fas fa-check-circle text-green-500 text-sm"></i>
+                {% elif task.status == 'pending' %}<i class="fas fa-hourglass-start text-yellow-500 text-sm"></i>
+                {% else %}<i class="fas fa-times-circle text-red-500 text-sm"></i>
+                {% endif %}
+            </span>
+            <span id="{{ sub_task_base_id }}-name" class="text-xs font-semibold text-gray-700 dark:text-gray-200 truncate" title="{{ task.name }}">{{ task.name }}</span>
+        </div>
+        <span id="{{ sub_task_base_id }}-status-badge" class="text-xxs px-1.5 py-0.5 rounded-full whitespace-nowrap flex-shrink-0
+            {% if task.status == 'running' %}bg-blue-100 text-blue-700 dark:bg-blue-600 dark:text-blue-100
+            {% elif task.status == 'completed' %}bg-green-100 text-green-700 dark:bg-green-600 dark:text-green-100
+            {% elif task.status == 'failed' %}bg-red-100 text-red-700 dark:bg-red-600 dark:text-red-100
+            {% elif task.status == 'pending' %}bg-yellow-100 text-yellow-700 dark:bg-yellow-600 dark:text-yellow-100
+            {% else %}bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-100
+            {% endif %}">
+            {{ task.status }}
+        </span>
+    </div>
+
+    <div id="{{ sub_task_base_id }}-progress-bar-container" class="mt-1"> {# Added mt-1 for slight spacing #}
+        {{ progress_bar_html|safe }} {# This will contain its own dynamic IDs based on the unique_prefix passed to it #}
+    </div>
+
+    {% if task.details %}
+    <div id="{{ sub_task_base_id }}-details-container" class='mt-2 bg-gray-100 dark:bg-gray-600 p-2 rounded text-xxs'>
+        <p class="font-semibold text-gray-600 dark:text-gray-300 mb-0.5">Details:</p>
+        <ul id="{{ sub_task_base_id }}-details-list" class="list-disc list-inside pl-2 space-y-0.5">
+            {% for k, v in task.details.items()|sort %}
+            <li class="text-gray-500 dark:text-gray-400"><strong class="font-medium text-gray-600 dark:text-gray-300">{{ k }}:</strong> <span class="detail-value-{{ loop.index0 }}">{{ v }}</span></li> {# Added class for potential individual value updates #}
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+</div>

@@ -1,0 +1,17 @@
+{# sda/templates/status_modal_parts/task_timing.html #}
+{# Expects unique_prefix, elapsed_str, etr_str, duration_str variables #}
+<div class="text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
+    {% if elapsed_str %}
+    <p class="flex items-center"><i class='far fa-clock mr-1.5 w-3 text-center text-gray-400 dark:text-gray-500'></i><strong>Elapsed:</strong>&nbsp;<span id="{{ unique_prefix }}-time-elapsed" class="font-normal text-gray-600 dark:text-gray-300">{{ elapsed_str }}</span></p>
+    {% endif %}
+    {# ETR was commented out in original Python, keeping it so here #}
+    {% if etr_str %}
+    {# <p class="flex items-center"><i class='fas fa-hourglass-half mr-1.5 w-3 text-center text-gray-400 dark:text-gray-500'></i><strong>Est. Rem.:</strong>&nbsp;<span id="{{ unique_prefix }}-time-etr" class="font-normal text-gray-600 dark:text-gray-300">{{ etr_str }}</span></p> #}
+    {% endif %}
+    {% if duration_str %}
+    <p class="flex items-center"><i class='fas fa-stopwatch mr-1.5 w-3 text-center text-gray-400 dark:text-gray-500'></i><strong>Duration:</strong>&nbsp;<span id="{{ unique_prefix }}-time-duration" class="font-normal text-gray-600 dark:text-gray-300">{{ duration_str }}</span></p>
+    {% endif %}
+    {% if not elapsed_str and not etr_str and not duration_str %}
+    <p class="flex items-center"><i class='fas fa-ban mr-1.5 w-3 text-center text-gray-400 dark:text-gray-500'></i><strong>Timing:</strong>&nbsp;<span id="{{ unique_prefix }}-time-na" class="font-normal text-gray-600 dark:text-gray-300">N/A</span></p>
+    {% endif %}
+</div>

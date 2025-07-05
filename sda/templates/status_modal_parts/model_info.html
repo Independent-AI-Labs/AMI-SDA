@@ -1,0 +1,20 @@
+{# sda/templates/status_modal_parts/model_info.html #}
+<div class="bg-white dark:bg-gray-800 rounded-lg p-4 h-full"> {# Consistent padding, h-full #}
+    <h4 class="text-md font-semibold mb-3 text-gray-700 dark:text-gray-200 flex items-center">
+        <i class="fas fa-brain mr-2 text-indigo-500"></i>AI Model Configuration
+    </h4>
+    <div class="space-y-1.5 text-xs">
+        <p class="text-gray-600 dark:text-gray-300 flex items-center">
+            <i class="fas fa-comments mr-1.5 text-gray-400 dark:text-gray-500 w-4 text-center"></i>
+            <span class="font-medium mr-1">LLM:</span><span class="text-gray-700 dark:text-gray-200 truncate" title="{{ active_llm_model }}">{{ active_llm_model }}</span>
+        </p>
+        <p class="text-gray-600 dark:text-gray-300 flex items-center">
+            <i class="fas fa-atom mr-1.5 text-gray-400 dark:text-gray-500 w-4 text-center"></i> {# Changed icon #}
+            <span class="font-medium mr-1">Embedding:</span><span class="text-gray-700 dark:text-gray-200 truncate" title="{{ active_embedding_model }}">{{ active_embedding_model }}</span>
+        </p>
+        <p class="text-gray-600 dark:text-gray-300 flex items-center">
+            <i class="fas fa-desktop mr-1.5 text-gray-400 dark:text-gray-500 w-4 text-center"></i> {# Changed icon #}
+            <span class="font-medium mr-1">Devices:</span><span class="text-gray-700 dark:text-gray-200">{{ embedding_devices }}</span>
+        </p>
+    </div>
+</div>
