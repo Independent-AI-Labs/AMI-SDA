@@ -670,10 +670,10 @@ No active tasks.
             dead_code_df.select(self.handle_code_item_select, [repo_id_state, branch_state, dead_code_df], [modal_code_viewer]).then(
                 None, js="() => { const modal = document.getElementById('codeViewerModal'); if (modal) modal.style.display = 'flex'; }")
 
-            # New FileExplorer select event
-            file_explorer.select(
-                self.handle_file_explorer_select, # This is the new, simpler handler
-                inputs=[repo_id_state, branch_state], # Event data (evt: gr.SelectData) is implicitly passed as last arg
+            # New FileExplorer change event
+            file_explorer.change( # Changed from .select to .change
+                self.handle_file_explorer_select,
+                inputs=[repo_id_state, branch_state, file_explorer], # Pass file_explorer itself as input for its value
                 outputs=[embedding_html_viewer, code_viewer, image_viewer, selected_file_state]
             )
             # Removed event handlers for file_browser_radio, current_path_state, file_browser_back_btn
@@ -1072,14 +1072,19 @@ No active tasks.
     # handle_populate_file_browser_radio, handle_file_browser_go_up, handle_file_browser_radio_select are removed.
     # New handlers for gr.FileExplorer will be simpler.
 
-    def handle_file_explorer_select(self, repo_id: int, branch: str, evt: gr.SelectData) -> Tuple[gr.update, gr.update, gr.update, str]:
+    def handle_file_explorer_select(self, repo_id: int, branch: str, selected_file_path: Optional[str]) -> Tuple[gr.update, gr.update, gr.update, str]:
         # Returns updates for: embedding_html_viewer, code_viewer, image_viewer, selected_file_state
-        # evt.value is expected to be the selected file path string from gr.FileExplorer
-        file_path = evt.value
-        if not file_path or not isinstance(file_path, str): # Should be a path string
-            return gr.skip(), gr.skip(), gr.skip(), "" # Or some default selected_file_state
+        # selected_file_path is the new value of the FileExplorer component, passed by .change()
 
-        print(f"UI: FileExplorer selected: '{file_path}' for repo {repo_id}, branch {branch}")
+        if not selected_file_path or not isinstance(selected_file_path, str): # Path could be None if deselected or empty
+            # If no file is selected (e.g., selection cleared), provide default/empty states
+            embedding_html_update = gr.update(value="<div>Select a file for embedding visualization.</div>")
+            code_viewer_update = gr.update(value="// Select a file to view content/diff.", language=None, label="File Content / Diff", visible=True)
+            image_viewer_update = gr.update(value=None, visible=False)
+            return embedding_html_update, code_viewer_update, image_viewer_update, "" # Clear selected_file_state
+
+        file_path = selected_file_path # Use the direct value
+        print(f"UI: FileExplorer selection changed: '{file_path}' for repo {repo_id}, branch {branch}")
 
         new_selected_file_for_viewers = file_path
 
