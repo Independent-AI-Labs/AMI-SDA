@@ -10,6 +10,7 @@ It interacts exclusively with the CodeAnalysisFramework facade.
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Generator, Optional
 import os
+import asyncio # Added for asyncio.create_task
 import psutil # For CPU load and RAM
 import re # For _extract_progress_from_html
 from datetime import datetime, timezone # For time elapsed
@@ -22,11 +23,39 @@ import gradio as gr
 import pandas as pd
 from PIL import Image
 from llama_index.core.llms import ChatMessage
-from jinja2 import Environment, FileSystemLoader, select_autoescape # Added Jinja2 imports
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+# FastAPI and WebSocket imports
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
+import uvicorn
 
 from app import CodeAnalysisFramework
 from sda.core.models import Task
 from sda.config import IngestionConfig, AIConfig, PG_DB_NAME, DGRAPH_HOST, DGRAPH_PORT
+from sda.utils.websocket_manager import control_panel_manager
+
+
+from sda.utils.websocket_manager import control_panel_manager
+
+
+# WebSocket endpoint for the Control Panel
+async def websocket_control_panel_endpoint(websocket: WebSocket):
+    await control_panel_manager.connect(websocket)
+    try:
+        while True:
+            # Keep the connection alive, waiting for messages or disconnect
+            # We don't expect messages from client here, but FastAPI requires a receive loop
+            # or it will close the connection.
+            data = await websocket.receive_text()
+            # Optionally, log or handle client messages if any are expected in the future
+            # print(f"Received message from Control Panel client: {data}")
+    except WebSocketDisconnect:
+        control_panel_manager.disconnect(websocket)
+        print(f"Control Panel client disconnected: {websocket.client}")
+    except Exception as e:
+        print(f"Error in Control Panel WebSocket: {e}")
+        control_panel_manager.disconnect(websocket)
 
 
 class DashboardUI:
@@ -34,6 +63,11 @@ class DashboardUI:
 
     def __init__(self, framework: CodeAnalysisFramework):
         self.framework = framework
+        # It's important that the framework instance is accessible for polling logic
+        # that will eventually call control_panel_manager.broadcast()
+        # This might require passing `self` or `framework` to the polling function
+        # or making `control_panel_manager` accessible to it.
+        # For now, `handle_polling` is a method of `DashboardUI`, so it has `self.framework`.
         self.task_buttons: List[gr.Button] = []
         # Setup Jinja2 environment
         template_dir = Path(__file__).parent / "templates"
@@ -352,16 +386,16 @@ No active tasks.
             repo_id_state = gr.State()
             branch_state = gr.State()
             selected_file_state = gr.State()
-            last_status_text_state = gr.State("")
-            last_progress_html_state = gr.State("")
+            last_status_text_state = gr.State("") # Still used for overall status text, not modal HTML
+            last_progress_html_state = gr.State("") # For the external progress bar
             task_log_offset_state = gr.State(0)
             current_task_log_html_state = gr.State("")
-            js_update_data_output = gr.JSON(visible=False, label="JS Update Data", elem_id="js_update_data_json")
-            # States for tracking Control Panel structure
-            last_main_task_id_state = gr.State(None)
-            last_sub_task_ids_state = gr.State([])
-            last_main_task_has_details_state = gr.State(False)
-            last_main_task_has_error_state = gr.State(False)
+            # js_update_data_output = gr.JSON(visible=False, label="JS Update Data", elem_id="js_update_data_json") # REMOVED
+            # States for tracking Control Panel structure - REMOVED as modal is now self-contained
+            # last_main_task_id_state = gr.State(None)
+            # last_sub_task_ids_state = gr.State([])
+            # last_main_task_has_details_state = gr.State(False)
+            # last_main_task_has_error_state = gr.State(False)
 
 
             with gr.Column(elem_id="addRepoModal", elem_classes="modal-background"):
@@ -380,8 +414,10 @@ No active tasks.
             with gr.Column(elem_id="statusModal", elem_classes="modal-background"):
                 with gr.Column(elem_classes="modal-content-wrapper"):
                     gr.Markdown("## Control Panel")
-                    # Initialize with the full structure, showing "No active tasks" by default via the template logic
-                    status_details_html = gr.HTML(value=self._create_status_progress_html(None))
+                    # Control Panel is now an iframe loading the standalone HTML page
+                    status_details_html = gr.HTML(
+                        value='<iframe src="/static/control_panel.html" style="width: 100%; height: 70vh; border: none;"></iframe>'
+                    )
                     status_modal_close_btn = gr.Button("Close")
 
             with gr.Tabs() as tabs:
@@ -468,22 +504,24 @@ No active tasks.
             )
 
 
+            # Poll inputs updated: modal-specific states removed.
             poll_inputs = [
                 repo_id_state, branch_state,
-                last_status_text_state, last_progress_html_state,
-                # New state inputs for polling structural changes
-                last_main_task_id_state, last_sub_task_ids_state,
-                last_main_task_has_details_state, last_main_task_has_error_state
+                last_status_text_state,     # For overall status message logic
+                last_progress_html_state    # For external progress bar logic
             ]
+
+            # Poll outputs updated: components and states for the old modal update mechanism are removed.
             poll_outputs = [
-                status_output, status_details_html,
-                dead_code_df, duplicate_code_df, stats_df, lang_df,
-                last_status_text_state, main_progress_bar, progress_row, last_progress_html_state,
-                branch_dropdown, branch_state,
-                js_update_data_output,
-                # New state outputs from polling
-                last_main_task_id_state, last_sub_task_ids_state,
-                last_main_task_has_details_state, last_main_task_has_error_state
+                status_output,                      # Overall status message
+                # status_details_html,              # NO LONGER an output of polling for content change
+                dead_code_df, duplicate_code_df,    # Dataframe updates
+                stats_df, lang_df,                  # Dataframe updates
+                last_status_text_state,             # Pass-through state for overall status
+                main_progress_bar,                  # External progress bar
+                progress_row,                       # External progress row visibility
+                last_progress_html_state,           # State for external progress bar's HTML
+                branch_dropdown, branch_state       # Branch updates
             ] + self.task_buttons
             timer.tick(self.handle_polling, poll_inputs, poll_outputs)
 
@@ -585,107 +623,117 @@ No active tasks.
 
     def handle_polling(
         self, repo_id: int, branch: str,
-        last_status_text: str, last_progress_html: str,
-        # New state inputs
-        last_main_task_id: Optional[int],
-        last_sub_task_ids: List[int],
-        last_main_task_has_details: bool,
-        last_main_task_has_error: bool
+        last_status_text: str, # For overall status message
+        last_progress_html: str # For external progress bar
     ) -> Tuple:
         branch_dropdown_update = gr.update()
         branch_state_update = gr.update()
 
-        # Initialize new state outputs
-        new_last_main_task_id = last_main_task_id
-        new_last_sub_task_ids = list(last_sub_task_ids) # Copy
-        new_last_main_task_has_details = last_main_task_has_details
-        new_last_main_task_has_error = last_main_task_has_error
+        # Initialize new state outputs - these might be removed if not used by other components
+        # new_last_main_task_id = _last_main_task_id
+        # new_last_sub_task_ids = list(_last_sub_task_ids)
+        # new_last_main_task_has_details = _last_main_task_has_details
+        # new_last_main_task_has_error = _last_main_task_has_error
 
-        js_update_data = {
-            "control_panel": {"main_task": None, "sub_tasks": [], "hardware_info": None},
-            "external_progress_bar": {"task_name": "Idle", "progress": 0.0, "message": "Initializing..."}
+        # This data structure will be sent over WebSocket
+        control_panel_ws_data = {
+            "main_task": None, "sub_tasks": [], "hardware_info": None,
+            # We can also include the external progress bar data here if the main HTML page wants to show it too
+            # or keep it separate if only the old Gradio main_progress_bar needs it.
+            # For full decoupling, the new HTML page should handle its own version of external progress bar.
+            "external_progress_bar_data": {"task_name": "Idle", "progress": 0.0, "message": "Initializing..."},
+            "system_info": { # For model, storage, usage stats
+                "model_info": {},
+                "storage_info": {},
+                "usage_stats": {}
+            }
         }
+
+        # Populate system_info (can be done once or less frequently if these are static)
+        control_panel_ws_data["system_info"]["model_info"] = {
+            "active_llm_model": AIConfig.ACTIVE_LLM_MODEL,
+            "active_embedding_model": AIConfig.ACTIVE_EMBEDDING_MODEL,
+            "embedding_devices": AIConfig.EMBEDDING_DEVICES
+        }
+        pg_size_bytes = self.framework.get_postgres_db_size()
+        pg_size_str = "N/A"
+        if pg_size_bytes is not None:
+            if pg_size_bytes < 1024: pg_size_str = f"{pg_size_bytes} Bytes"
+            elif pg_size_bytes < 1024**2: pg_size_str = f"{pg_size_bytes/1024:.2f} KB"
+            elif pg_size_bytes < 1024**3: pg_size_str = f"{pg_size_bytes/1024**2:.2f} MB"
+            else: pg_size_str = f"{pg_size_bytes/1024**3:.2f} GB"
+        control_panel_ws_data["system_info"]["storage_info"] = {
+            "pg_db_name": PG_DB_NAME,
+            "pg_size_str": pg_size_str,
+            "dgraph_host": DGRAPH_HOST,
+            "dgraph_port": DGRAPH_PORT, # Note: HTML uses this to form host:port string
+            "dgraph_usage_str": self.framework.get_dgraph_disk_usage() or "N/A"
+        }
+        control_panel_ws_data["system_info"]["usage_stats"] = self.framework.get_usage_statistics()
+
 
         current_cpu_load = psutil.cpu_percent(interval=None)
         current_ram_percent = psutil.virtual_memory().percent
         current_ram_used_gb = psutil.virtual_memory().used / (1024**3)
         current_ram_total_gb = psutil.virtual_memory().total / (1024**3)
-        js_update_data["control_panel"]["hardware_info"] = {
+        control_panel_ws_data["hardware_info"] = {
             "cpu_load": current_cpu_load,
             "ram_percent": current_ram_percent,
             "ram_absolute_text": f"{current_ram_used_gb:.1f} / {current_ram_total_gb:.1f} GB"
         }
 
-        # full_html_update_needed_for_modal = False # This will be removed / re-evaluated
-        status_details_update = gr.update() # Default to no HTML update for the modal panel
-        new_last_status_text_for_state = last_status_text # Persist old HTML state unless specifically changed
+        # The status_details_html and its related states (_last_main_task_id etc.) are no longer updated here for Gradio.
+        # All Control Panel modal updates go via WebSocket.
 
         if not repo_id:
-            js_update_data["external_progress_bar"]["message"] = "No repository selected"
-            js_update_data["control_panel"]["main_task"] = None # Signal JS to show "No Task" state
+            control_panel_ws_data["external_progress_bar_data"]["message"] = "No repository selected"
+            control_panel_ws_data["main_task"] = None
             default_ext_progress_html = self._create_html_progress_bar(0, "No repository selected", "Idle", unique_prefix="external")
 
-            # If switching from a state with a task to no repo, update states
-            if last_main_task_id is not None:
-                new_last_main_task_id = None
-                new_last_sub_task_ids = []
-                new_last_main_task_has_details = False
-                new_last_main_task_has_error = False
-                # Potentially, if the "No active tasks" HTML is different and needs to be set once:
-                # current_modal_html = self._create_status_progress_html(None)
-                # status_details_update = gr.update(value=current_modal_html)
-                # new_last_status_text_for_state = current_modal_html
-                # For now, assume JS handles showing the "No task" section within existing HTML
+            asyncio.create_task(control_panel_manager.broadcast(control_panel_ws_data))
 
-            no_repo_updates_tuple = (
-                "No repository selected.", status_details_update, # status_details_update is now gr.update()
-                gr.update(), gr.update(), gr.update(), gr.update(),
-                new_last_status_text_for_state, # This state might become less relevant for status_details_html
-                gr.update(value=default_ext_progress_html) if default_ext_progress_html != last_progress_html else gr.update(),
-                gr.update(visible=False),
-                default_ext_progress_html,
-                branch_dropdown_update, branch_state_update,
-                js_update_data,
-                new_last_main_task_id, new_last_sub_task_ids, new_last_main_task_has_details, new_last_main_task_has_error
-            )
-            return no_repo_updates_tuple + self._get_task_button_updates(True)
+            return (
+                "No repository selected.", # status_output
+                # status_details_html output removed
+                gr.update(), # dead_code_df
+                gr.update(), # duplicate_code_df
+                gr.update(), # stats_df
+                gr.update(), # lang_df
+                last_status_text, # last_status_text_state (pass-through)
+                gr.update(value=default_ext_progress_html) if default_ext_progress_html != last_progress_html else gr.update(), # main_progress_bar
+                gr.update(visible=False), # progress_row
+                default_ext_progress_html if default_ext_progress_html != last_progress_html else last_progress_html, # last_progress_html_state for external bar
+                branch_dropdown_update,
+                branch_state_update
+            ) + self._get_task_button_updates(True)
 
         task = self.framework.get_latest_task(repo_id)
 
         if not task:
-            js_update_data["external_progress_bar"]["message"] = "No active tasks"
-            js_update_data["control_panel"]["main_task"] = None # Signal JS to show "No Task" state
+            control_panel_ws_data["external_progress_bar_data"]["message"] = "No active tasks"
+            control_panel_ws_data["main_task"] = None
             default_ext_progress_html = self._create_html_progress_bar(0, "No active tasks", "Idle", unique_prefix="external")
 
-            if last_main_task_id is not None: # Was showing a task, now isn't
-                new_last_main_task_id = None
-                new_last_sub_task_ids = []
-                new_last_main_task_has_details = False
-                new_last_main_task_has_error = False
-                # Potentially, if the "No active tasks" HTML is different and needs to be set once:
-                # current_modal_html = self._create_status_progress_html(None)
-                # status_details_update = gr.update(value=current_modal_html)
-                # new_last_status_text_for_state = current_modal_html
+            asyncio.create_task(control_panel_manager.broadcast(control_panel_ws_data))
 
-            no_task_updates_tuple = (
-                "No tasks found for this repository.", status_details_update, # status_details_update is now gr.update()
-                gr.update(), gr.update(), gr.update(), gr.update(),
-                new_last_status_text_for_state, # This state might become less relevant
-                gr.update(value=default_ext_progress_html) if default_ext_progress_html != last_progress_html else gr.update(),
-                gr.update(visible=False), default_ext_progress_html,
-                branch_dropdown_update, branch_state_update,
-                js_update_data,
-                new_last_main_task_id, new_last_sub_task_ids, new_last_main_task_has_details, new_last_main_task_has_error
-            )
-            return no_task_updates_tuple + self._get_task_button_updates(True)
+            return (
+                "No tasks found for this repository.", # status_output
+                gr.update(), gr.update(), gr.update(), gr.update(), # df_updates
+                last_status_text, # last_status_text_state
+                gr.update(value=default_ext_progress_html) if default_ext_progress_html != last_progress_html else gr.update(), # main_progress_bar
+                gr.update(visible=False), # progress_row
+                default_ext_progress_html if default_ext_progress_html != last_progress_html else last_progress_html, # last_progress_html_state
+                branch_dropdown_update,
+                branch_state_update,
+            ) + self._get_task_button_updates(True)
 
-        # --- Task exists, populate js_update_data and determine updates ---
+        # --- Task exists, populate control_panel_ws_data ---
         status_msg = f"Task '{task.name}': {task.message} ({task.progress:.0f}%)"
         is_running = task.status in ['running', 'pending']
 
-        js_update_data["external_progress_bar"]["task_name"] = task.name if is_running else "Idle"
-        js_update_data["external_progress_bar"]["progress"] = task.progress if is_running else (100.0 if task.status in ['completed', 'failed'] else 0.0)
-        js_update_data["external_progress_bar"]["message"] = task.message if is_running else ("Task " + task.status)
+        control_panel_ws_data["external_progress_bar_data"]["task_name"] = task.name if is_running else "Idle"
+        control_panel_ws_data["external_progress_bar_data"]["progress"] = task.progress if is_running else (100.0 if task.status in ['completed', 'failed'] else 0.0)
+        control_panel_ws_data["external_progress_bar_data"]["message"] = task.message if is_running else ("Task " + task.status)
 
         elapsed_str, _, duration_str = self._get_task_timing_values(task)
 
@@ -698,7 +746,7 @@ No active tasks.
         main_task_status_class = main_task_status_classes_map.get(task.status, "bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200")
         main_task_status_class += " px-3 py-1 text-xs font-semibold rounded-full"
 
-        js_update_data["control_panel"]["main_task"] = {
+        control_panel_ws_data["main_task"] = {
             "name": task.name, "status_text": task.status, "status_class": main_task_status_class,
             "progress": task.progress, "message": task.message,
             "time_elapsed": elapsed_str, "time_duration": duration_str,
@@ -706,23 +754,14 @@ No active tasks.
             "error_message": task.error_message,
         }
 
-        current_sub_task_ids = sorted([st.id for st in task.children]) if task.children else []
-        current_main_task_has_details = bool(task.details)
-        current_main_task_has_error = bool(task.error_message)
+        # current_sub_task_ids = sorted([st.id for st in task.children]) if task.children else [] # Not directly needed for Gradio return
+        # current_main_task_has_details = bool(task.details) # Not directly needed for Gradio return
+        # current_main_task_has_error = bool(task.error_message) # Not directly needed for Gradio return
 
-        # The full_html_update_needed_for_modal logic is removed.
-        # JS is expected to handle these changes based on js_update_data.
-        # If task.id changes, JS will effectively "re-render" the main task area.
-        # If sub_tasks change, JS's updateOrCreateSubTaskElement handles it.
-        # If details/error presence changes, JS's updateMainTaskDetails/Error handles it.
-
-        new_last_main_task_id = task.id
-        new_last_sub_task_ids = current_sub_task_ids # JS will compare with its current DOM state
-        new_last_main_task_has_details = current_main_task_has_details
-        new_last_main_task_has_error = current_main_task_has_error
-
-        # status_details_update remains gr.update() as set at the start of the function.
-        # new_last_status_text_for_state remains last_status_text (no HTML update from Python).
+        # new_last_main_task_id = task.id # These states are not part of the return tuple for Gradio anymore
+        # new_last_sub_task_ids = current_sub_task_ids
+        # new_last_main_task_has_details = current_main_task_has_details
+        # new_last_main_task_has_error = current_main_task_has_error
 
         sub_task_status_classes_map = {
             'running': "bg-blue-100 text-blue-700 dark:bg-blue-600 dark:text-blue-100",
@@ -736,25 +775,24 @@ No active tasks.
         if task.children:
             for child_task in sorted(task.children, key=lambda t: t.started_at or datetime.min.replace(tzinfo=timezone.utc)):
                 child_status_class = sub_task_status_classes_map.get(child_task.status, default_sub_task_class_base) + sub_task_badge_common_classes
-                js_update_data["control_panel"]["sub_tasks"].append({
+                control_panel_ws_data["sub_tasks"].append({
                     "id": child_task.id, "name": child_task.name, "status_text": child_task.status,
                     "status_class": child_status_class, "progress": child_task.progress,
                     "message": child_task.message, "details": child_task.details if child_task.details else {}
                 })
 
-        # HTML for status_details_html is no longer updated here.
-        # status_details_update remains gr.update() as set at the beginning of the function.
-        # new_last_status_text_for_state also remains as last_status_text.
-        # All visual changes in the modal are now driven by js_update_data.
+        asyncio.create_task(control_panel_manager.broadcast(control_panel_ws_data))
 
+        # Prepare updates for Gradio components (excluding the modal)
         current_ext_progress_html = self._create_html_progress_bar(
-            js_update_data["external_progress_bar"]["progress"],
-            js_update_data["external_progress_bar"]["message"],
-            js_update_data["external_progress_bar"]["task_name"],
+            control_panel_ws_data["external_progress_bar_data"]["progress"],
+            control_panel_ws_data["external_progress_bar_data"]["message"],
+            control_panel_ws_data["external_progress_bar_data"]["task_name"],
             unique_prefix="external"
         )
         main_progress_update = gr.update(value=current_ext_progress_html) if current_ext_progress_html != last_progress_html else gr.update()
-        new_last_progress_html_for_state = current_ext_progress_html if current_ext_progress_html != last_progress_html else last_progress_html
+        # new_last_progress_html_for_state = current_ext_progress_html if current_ext_progress_html != last_progress_html else last_progress_html
+        # The above state is an input to this function, so we update its corresponding output in the return tuple.
 
         progress_row_update = gr.update(visible=is_running)
         button_updates = self._get_task_button_updates(interactive=not is_running)
@@ -789,15 +827,15 @@ No active tasks.
             status_msg = f"Task '{task.name}' Failed: Check logs for details."
 
         return (
-            status_msg, status_details_update,
-            dead_code_update, dup_code_update, stats_update, lang_update,
-            new_last_status_text_for_state,
-            main_progress_update, progress_row_update,
-            new_last_progress_html_for_state,
-            branch_dropdown_update, branch_state_update,
-            js_update_data,
-            # New state outputs
-            new_last_main_task_id, new_last_sub_task_ids, new_last_main_task_has_details, new_last_main_task_has_error
+            status_msg, # status_output
+            # status_details_html output removed
+            dead_code_update, dup_code_update, stats_update, lang_update, # df_updates
+            last_status_text, # last_status_text_state (pass through)
+            main_progress_update, # main_progress_bar (external)
+            progress_row_update, # progress_row (external)
+            current_ext_progress_html if current_ext_progress_html != last_progress_html else last_progress_html, # last_progress_html_state (for external bar)
+            branch_dropdown_update, branch_state_update
+            # js_update_data_output and modal states removed
         ) + button_updates
 
     def handle_initial_load(self) -> Tuple[gr.update, gr.update, Optional[int], Optional[str], List[Dict[str, str]], int, str]:
@@ -963,7 +1001,33 @@ if __name__ == "__main__":
     if not bot_avatar_path.exists():
         Image.new('RGB', (100, 100), color = 'green').save(bot_avatar_path)
 
+    # Initialize the framework and UI
     framework_instance = CodeAnalysisFramework()
     dashboard = DashboardUI(framework_instance)
-    ui = dashboard.create_ui()
-    ui.launch()
+    gradio_ui_blocks = dashboard.create_ui() # This is the gr.Blocks instance
+
+    # Create a FastAPI app
+    app = FastAPI()
+
+    # Add the WebSocket route
+    app.add_api_websocket_route("/ws/controlpanel", websocket_control_panel_endpoint)
+
+    # Mount static files (for control_panel.html, css, js)
+    # Ensure the path is correct relative to where the script is run
+    # If sda/ui.py is run from the project root, then "sda/static" is correct.
+    static_files_path = Path(__file__).parent / "static"
+    app.mount("/static", StaticFiles(directory=static_files_path), name="static")
+
+    # Mount the Gradio app
+    # The path "/gradio" is where the Gradio UI will be served.
+    # If you want it at root, use "/" but ensure no conflict with other routes like /ws or /static.
+    # For simplicity, let's assume Gradio at root for now, and other routes are distinct.
+    app = gr.mount_gradio_app(app, gradio_ui_blocks, path="/") # Mount Gradio at root
+
+    print("FastAPI app with Gradio and WebSocket endpoint is ready.")
+    print(f"Access Gradio UI at http://127.0.0.1:7860 (or your configured host/port)")
+    print(f"Control Panel WebSocket will be at ws://127.0.0.1:7860/ws/controlpanel")
+
+    # Run the FastAPI app with uvicorn
+    # Default Gradio port is 7860. You can make this configurable.
+    uvicorn.run(app, host="0.0.0.0", port=7860)

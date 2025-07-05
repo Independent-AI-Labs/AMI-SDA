@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SDA Control Panel</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/css/control_panel.css">
+    <style>
+        /* Basic styling for visibility and layout */
+        body { font-family: sans-serif; margin: 0; background-color: #f9fafb; /* Tailwind bg-gray-50 */ }
+        .dark body { background-color: #1f2937; /* Tailwind bg-gray-800 */ }
+        /* Add other global styles if needed, or rely on control_panel.css */
+    </style>
+</head>
+<body class="text-gray-800 dark:text-gray-200">
+
+    <div class="status-container p-2">
+
+        <!-- Section 1: System & Configuration Overview -->
+        <div class="mb-4 p-3 bg-gray-100 dark:bg-gray-750 rounded-lg shadow-md">
+            <h3 class="text-lg font-semibold mb-2 text-gray-800 dark:text-gray-200 border-b border-gray-300 dark:border-gray-600 pb-2 flex items-center">
+                <i class="fas fa-cogs mr-2 text-gray-500 dark:text-gray-400"></i>System & Configuration
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <!-- Model Info Placeholder -->
+                <div class="p-3 border rounded-md dark:border-gray-600 bg-white dark:bg-gray-800 shadow">
+                    <div id="model-info-container">
+                        <h4 class="text-md font-semibold mb-2 text-gray-700 dark:text-gray-200 flex items-center"><i class="fas fa-brain mr-2 text-purple-500"></i>AI Models</h4>
+                        <div class="space-y-1 text-xs">
+                            <p><strong>LLM:</strong> <span id="model-info-llm">N/A</span></p>
+                            <p><strong>Embedding:</strong> <span id="model-info-embedding">N/A</span></p>
+                            <p><strong>Emb. Devices:</strong> <span id="model-info-embedding-devices">N/A</span></p>
+                        </div>
+                    </div>
+                </div>
+                <!-- Hardware Info Placeholder -->
+                <div class="p-3 border rounded-md dark:border-gray-600 bg-white dark:bg-gray-800 shadow">
+                    <div id="hardware-info-container">
+                        <h4 class="text-md font-semibold mb-3 text-gray-700 dark:text-gray-200 flex items-center"><i class="fas fa-server mr-2 text-indigo-500"></i>Hardware & Workers</h4>
+                        <div class="space-y-3">
+                            <div>
+                                <div class="flex justify-between items-center mb-0.5">
+                                    <span class="text-xs font-medium text-gray-600 dark:text-gray-300 flex items-center"><i class="fas fa-microchip mr-1.5 text-gray-400 dark:text-gray-500"></i>CPUs: <span id="hardware-cpus">N/A</span></span>
+                                    <span id="cpu-load-value" class="text-xs text-gray-500 dark:text-gray-400">0% Load</span>
+                                </div>
+                                <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2"><div id="cpu-load-bar" class="bg-blue-500 h-2 rounded-full" style="width: 0%"></div></div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between items-center mb-0.5">
+                                    <span class="text-xs font-medium text-gray-600 dark:text-gray-300 flex items-center"><i class="fas fa-memory mr-1.5 text-gray-400 dark:text-gray-500"></i>RAM</span>
+                                    <span id="ram-usage-value" class="text-xs text-gray-500 dark:text-gray-400">N/A (0%)</span>
+                                </div>
+                                <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2"><div id="ram-usage-bar" class="bg-green-500 h-2 rounded-full" style="width: 0%"></div></div>
+                            </div>
+                            <div id="gpu-info-static">
+                                <p class="text-xs text-gray-600 dark:text-gray-300 flex items-center"><i class="fas fa-tv-alt mr-1.5 text-gray-400 dark:text-gray-500"></i><strong>GPU:</strong> <span id="gpu-availability-text">Querying...</span></p>
+                            </div>
+                            <div id="worker-info-static" class="text-xs pt-1.5 border-t border-gray-200 dark:border-gray-700">
+                                <p class="font-medium text-gray-600 dark:text-gray-300 mb-0.5 flex items-center"><i class="fas fa-users-cog mr-1.5 text-gray-400 dark:text-gray-500"></i>Worker Config (Max: <span id="worker-max-total">N/A</span>)</p>
+                                <ul id="worker-config-list" class="list-none pl-5 text-xxs text-gray-500 dark:text-gray-400 leading-tight"><li>N/A</li></ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Storage Info Placeholder -->
+                <div class="p-3 border rounded-md dark:border-gray-600 bg-white dark:bg-gray-800 shadow">
+                    <div id="storage-info-container">
+                         <h4 class="text-md font-semibold mb-3 text-gray-700 dark:text-gray-200 flex items-center"><i class="fas fa-database mr-2 text-green-500"></i>Storage</h4>
+                        <div class="space-y-2 text-xs">
+                            <p><strong>PostgreSQL (<span id="pg-db-name">N/A</span>):</strong> <span id="pg-size">N/A</span></p>
+                            <p><strong>Dgraph (<span id="dgraph-host-port">N/A</span>):</strong> <span id="dgraph-usage">N/A</span></p>
+                        </div>
+                    </div>
+                </div>
+                <!-- Usage Stats Placeholder -->
+                <div class="p-3 border rounded-md dark:border-gray-600 bg-white dark:bg-gray-800 shadow">
+                    <div id="usage-stats-container">
+                        <h4 class="text-md font-semibold mb-3 text-gray-700 dark:text-gray-200 flex items-center"><i class="fas fa-chart-line mr-2 text-yellow-500"></i>Usage Statistics</h4>
+                        <div class="text-xs space-y-1">
+                            <p><strong>Repositories:</strong> <span id="usage-num-repos">N/A</span></p>
+                            <p><strong>AI LLM Calls:</strong> <span id="usage-llm-calls">N/A</span></p>
+                            <p><strong>AI Tokens:</strong> <span id="usage-llm-tokens">N/A</span></p>
+                            <p><strong>Est. AI Cost:</strong> $<span id="usage-llm-cost">N/A</span></p>
+                            <div id="usage-model-breakdown"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section 2: Current Task Activity -->
+        <div class="p-3 bg-gray-100 dark:bg-gray-750 rounded-lg shadow-md">
+            <div id="task-activity-toggle" class="flex justify-between items-center cursor-pointer mb-2 pb-2 border-b border-gray-300 dark:border-gray-600">
+                <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 flex items-center mb-0 pb-0 border-none">
+                    <i class="fas fa-tasks mr-2 text-gray-500 dark:text-gray-400"></i>Current Task Activity
+                </h3>
+                <span id="task-activity-chevron" class="text-gray-500 dark:text-gray-400 transform transition-transform duration-200"><i class="fas fa-chevron-down"></i></span>
+            </div>
+
+            <div id="task-activity-content" class="transition-all duration-300 ease-in-out overflow-hidden" style="max-height: 0px; opacity: 0;">
+                <div id="no-active-task-message" class="bg-blue-50 dark:bg-blue-900/30 border-l-4 border-blue-500 text-blue-700 dark:text-blue-300 p-3 rounded-md mt-2" role="alert">
+                    <p class="font-medium">No Active Task</p>
+                    <p class="text-sm">The system is currently idle or no repository is selected.</p>
+                </div>
+
+                <div id="active-task-details-wrapper" style="display: none;">
+                    <!-- Main Task Card -->
+                    <div class="bg-white dark:bg-gray-800 shadow-md rounded-lg p-4 mb-3">
+                        <h4 id="main-task-name-heading" class="text-xl font-semibold mb-2 text-gray-800 dark:text-gray-200 flex items-center">
+                            <i class="fas fa-flag-checkered mr-2 text-indigo-500"></i>Task: <span id="main-task-name">N/A</span>
+                        </h4>
+                        <div class="bg-gray-50 dark:bg-gray-700 p-3 rounded-md">
+                            <div class="flex justify-between items-center mb-2">
+                                <span class="font-medium text-gray-700 dark:text-gray-300">Status:</span>
+                                <span id="main-task-status" class="px-3 py-1 text-xs font-semibold rounded-full bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200">Unknown</span>
+                            </div>
+                            <!-- Main Task Progress Bar Placeholder -->
+                            <div id="main-task-progress-bar-container" class="progress-wrapper mb-1">
+                                <p class="text-xs text-gray-600 dark:text-gray-400 mb-0.5 flex justify-between items-center">
+                                    <span id="main-task-task-name" class="text-xs font-semibold text-gray-700 dark:text-gray-300 truncate pr-2" title="Idle">Idle</span>
+                                    <span id="main-task-progress-text" class="text-xxs whitespace-nowrap">Waiting for task (0%)</span>
+                                </p>
+                                <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                                    <div id="main-task-progress-bar" class="bg-blue-500 h-2 rounded-full transition-width duration-300 ease-out" style="width: 0%"></div>
+                                </div>
+                            </div>
+                            <!-- Main Task Timing Placeholder -->
+                            <div class="mt-2 pt-2 border-t border-gray-200 dark:border-gray-600">
+                                <div id="main-task-timing-container" class="text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
+                                     <p class="flex items-center"><i class='far fa-clock mr-1.5 w-3 text-center text-gray-400 dark:text-gray-500'></i><strong>Elapsed:</strong>&nbsp;<span id="main-task-time-elapsed" class="font-normal text-gray-600 dark:text-gray-300">N/A</span></p>
+                                     <p class="flex items-center"><i class='fas fa-stopwatch mr-1.5 w-3 text-center text-gray-400 dark:text-gray-500'></i><strong>Duration:</strong>&nbsp;<span id="main-task-time-duration" class="font-normal text-gray-600 dark:text-gray-300">N/A</span></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="main-task-details-card" class="bg-white dark:bg-gray-800 shadow-md rounded-lg p-4 mb-3" style="display: none;">
+                        <h5 class="text-md font-medium mb-2 text-gray-700 dark:text-gray-300">Details:</h5>
+                        <ul id="main-task-details-list" class="list-disc list-inside pl-2 space-y-0.5"></ul>
+                    </div>
+
+                    <div id="main-task-children-container" class="bg-white dark:bg-gray-800 shadow-md rounded-lg p-4 mb-3" style="display: none;">
+                        <h4 class="text-md font-semibold mb-2 text-gray-700 dark:text-gray-300">Sub-Tasks:</h4>
+                        <div id="sub-tasks-list-js" class="space-y-2">
+                            <!-- Sub-tasks will be injected here by JS -->
+                        </div>
+                    </div>
+
+                    <div id="main-task-error-card" class="bg-red-50 dark:bg-red-800/20 border border-red-300 dark:border-red-600 text-red-700 dark:text-red-300 px-3 py-2 rounded-lg relative" role="alert" style="display: none;">
+                        <strong class="font-bold flex items-center text-sm"><i class="fas fa-exclamation-triangle mr-1.5"></i>Error</strong>
+                        <pre id="main-task-error-message-content" class="mt-1.5 text-xs bg-red-100 dark:bg-red-700/30 p-2 rounded overflow-x-auto"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <template id="sub-task-template-js">
+        <div class="sub-task-card bg-gray-50 dark:bg-gray-750 shadow-sm rounded-lg p-3 my-1 border border-gray-200 dark:border-gray-600">
+            <div class="flex items-center justify-between mb-1">
+                <div class="flex items-center min-w-0 mr-2">
+                    <span data-id="status-icon" class="mr-2 flex-shrink-0"><i class="fas text-sm"></i></span>
+                    <span data-id="name" class="text-xs font-semibold text-gray-700 dark:text-gray-200 truncate" title="">SubTask Name</span>
+                </div>
+                <span data-id="status-badge" class="text-xxs px-1.5 py-0.5 rounded-full whitespace-nowrap flex-shrink-0">status</span>
+            </div>
+            <div data-id="progress-bar-container" class="mt-1">
+                <!-- JS will render progress_bar.html content here -->
+            </div>
+            <div data-id="details-container" class='mt-2 bg-gray-100 dark:bg-gray-600 p-2 rounded text-xxs' style="display: none;">
+                <p class="font-semibold text-gray-600 dark:text-gray-300 mb-0.5">Details:</p>
+                <ul data-id="details-list" class="list-disc list-inside pl-2 space-y-0.5"></ul>
+            </div>
+        </div>
+    </template>
+
+    <script src="/static/js/control_panel.js"></script>
+</body>
+</html>
