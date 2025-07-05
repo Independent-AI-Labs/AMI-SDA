@@ -1033,11 +1033,11 @@ if __name__ == "__main__":
     # Mount the Gradio app
     # The path "/gradio" is where the Gradio UI will be served.
     # If you want it at root, use "/" but ensure no conflict with other routes like /ws or /static.
-    # For simplicity, let's assume Gradio at root for now, and other routes are distinct.
-    app = gr.mount_gradio_app(app, gradio_ui_blocks, path="/") # Mount Gradio at root
+    # Let's try mounting Gradio at "/gradio" to see if it resolves URL issues.
+    app = gr.mount_gradio_app(app, gradio_ui_blocks, path="/gradio")
 
     print("FastAPI app with Gradio and WebSocket endpoint is ready.")
-    print(f"Access Gradio UI at http://127.0.0.1:7860 (or your configured host/port)")
+    print(f"Access Gradio UI at http://127.0.0.1:7860/gradio (or your configured host/port)")
     print(f"Control Panel WebSocket will be at ws://127.0.0.1:7860/ws/controlpanel")
 
     # Run the FastAPI app with uvicorn
