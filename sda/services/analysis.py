@@ -203,10 +203,34 @@ class EnhancedAnalysisEngine:
                     pair_key = tuple(sorted((chunk_a.id, chunk_b.id)))
                     if pair_key not in processed_pairs:
                         processed_pairs.add(pair_key)
+                        # Helper to create snippets
+                        snippet_max_len = 150
+                        snippet_max_lines = 3
+                        def get_snippet(content: str) -> str:
+                            if content is None: return ""
+                            lines = content.splitlines()
+                            snippet_lines_content = lines[:snippet_max_lines]
+                            snippet = "\n".join(snippet_lines_content)
+                            if len(snippet) > snippet_max_len:
+                                snippet = snippet[:snippet_max_len].rsplit(' ', 1)[0] + "..." # rsplit to avoid cutting word
+                            elif len(lines) > snippet_max_lines:
+                                snippet += "\n..."
+                            return snippet
+
+                        content_a_snippet_val = get_snippet(chunk_a.content)
+                        content_b_snippet_val = get_snippet(chunk_b.content)
+
                         duplicate_pairs.append(DuplicatePair(
-                            chunk_a_id=chunk_a.chunk_id, chunk_b_id=chunk_b.chunk_id,
-                            file_a=chunk_a.file.relative_path, file_b=chunk_b.file.relative_path,
-                            lines_a=f"{chunk_a.start_line}-{chunk_a.end_line}", lines_b=f"{chunk_b.start_line}-{chunk_b.end_line}",
-                            similarity=hit['score'], content_a=chunk_a.content, content_b=chunk_b.content
+                            chunk_a_id=chunk_a.chunk_id,
+                            chunk_b_id=chunk_b.chunk_id,
+                            file_a=chunk_a.file.relative_path,
+                            file_b=chunk_b.file.relative_path,
+                            lines_a=f"{chunk_a.start_line}-{chunk_a.end_line}",
+                            lines_b=f"{chunk_b.start_line}-{chunk_b.end_line}",
+                            similarity=hit['score'],
+                            content_a_snippet=content_a_snippet_val,
+                            content_b_snippet=content_b_snippet_val,
+                            chunk_a_token_count=chunk_a.token_count,
+                            chunk_b_token_count=chunk_b.token_count
                         ))
         return sorted(duplicate_pairs, key=lambda p: p.similarity, reverse=True)

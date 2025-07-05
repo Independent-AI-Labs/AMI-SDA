@@ -105,7 +105,13 @@ def _persist_nodes_for_schema(db_manager: DatabaseManager, schema_name: str, pay
             })
     if not node_mappings: return
     with db_manager.get_session(schema_name) as session:
+        # Clear old nodes for this branch within this schema before inserting new ones
+        logging.info(f"[{schema_name}] Clearing old ASTNode data for branch: {branch}")
+        session.query(ASTNode).filter(ASTNode.branch == branch).delete(synchronize_session=False)
+        # Note: If file_id is not unique across branches (it shouldn't be, as File table has branch),
+        # then filtering by branch is crucial. ASTNode has branch column.
         session.bulk_insert_mappings(ASTNode, node_mappings)
+        logging.info(f"[{schema_name}] Persisted {len(node_mappings)} AST nodes for branch: {branch}")
 
 def _persist_chunks_for_schema(db_manager: DatabaseManager, schema_name: str, payload: Dict, file_id_map: Dict[str, int], repo_id: int, branch: str, cache_path: Path, tokenizer: tiktoken.Encoding) -> Optional[Tuple[str, int]]:
     if not payload.get('chunks') or not file_id_map: return None
@@ -122,7 +128,15 @@ def _persist_chunks_for_schema(db_manager: DatabaseManager, schema_name: str, pa
                 'importance_score': c.get('importance_score', 0.5)})
     if not chunk_mappings: return None
     with db_manager.get_session(schema_name) as session:
+        # Clear old chunks for this repository and branch within this schema before inserting new ones
+        logging.info(f"[{schema_name}] Clearing old DBCodeChunk data for repo_id: {repo_id}, branch: {branch}")
+        session.query(DBCodeChunk).filter(
+            DBCodeChunk.repository_id == repo_id, # repository_id is on DBCodeChunk
+            DBCodeChunk.branch == branch
+        ).delete(synchronize_session=False)
         session.bulk_insert_mappings(DBCodeChunk, chunk_mappings)
+        logging.info(f"[{schema_name}] Persisted {len(chunk_mappings)} DBCodeChunks for repo_id: {repo_id}, branch: {branch}")
+
         all_persisted_chunks = session.query(DBCodeChunk.id, DBCodeChunk.content, DBCodeChunk.token_count).filter(
             DBCodeChunk.repository_id == repo_id, DBCodeChunk.branch == branch).all()
         if not all_persisted_chunks: return None

@@ -238,20 +238,76 @@ class DatabaseManager:
             raise
 
     def clear_dgraph_data_for_branch(self, repo_id: int, branch: str):
-        """Deletes all Dgraph nodes associated with a specific repository and branch."""
-        if not self.dgraph_client: return
-        query = f'{{ nodes(func: eq(repo_id, "{repo_id}")) @filter(eq(branch, "{branch}")) {{ uid }} }}'
-        try:
-            txn_ro = self.dgraph_client.txn(read_only=True)
-            res = json.loads(txn_ro.query(query).json)
-            if uids_to_delete := [node['uid'] for node in res.get('nodes', [])]:
+        """Deletes all Dgraph nodes associated with a specific repository and branch in batches."""
+        if not self.dgraph_client:
+            logging.info("Dgraph client not available, skipping clear_dgraph_data_for_branch.")
+            return
+
+        batch_size = 10000  # Number of UIDs to fetch and delete per batch
+        total_deleted_count = 0
+        logging.info(f"Starting batched Dgraph data clearing for repo {repo_id}, branch {branch}, batch size {batch_size}.")
+
+        while True:
+            # Query for a batch of UIDs
+            query = f'''{{
+                nodes(func: eq(repo_id, "{repo_id}"), first: {batch_size}) @filter(eq(branch, "{branch}")) {{
+                    uid
+                }}
+            }}'''
+
+            uids_to_delete = []
+            txn_ro = None # Ensure txn_ro is defined for potential discard in finally
+            try:
+                txn_ro = self.dgraph_client.txn(read_only=True)
+                res_json = txn_ro.query(query).json  # Fetch data as string
+                res = json.loads(res_json)      # Parse JSON
+                uids_to_delete = [node['uid'] for node in res.get('nodes', [])]
+            except Exception as e:
+                logging.error(f"Dgraph query failed during batch fetch for deletion (repo {repo_id}, branch {branch}): {e}", exc_info=True)
+                return # Stop if query fails
+            finally:
+                if txn_ro:
+                    txn_ro.discard()
+
+            if not uids_to_delete:
+                logging.info(f"No more Dgraph nodes found to delete for repo {repo_id}, branch {branch}. Loop terminating.")
+                break # No more nodes to delete
+
+            txn_rw = None # Ensure txn_rw is defined for potential discard in finally
+            try:
                 txn_rw = self.dgraph_client.txn()
-                for uid in uids_to_delete:
-                    txn_rw.mutate(del_nquads=f'<{uid}> * * .')
+                # Dgraph recommends using a single mutation with multiple UID dictionaries for deletion.
+                # Or a single Del Nquads string.
+                # Let's use the multiple UID dicts approach if `delete_obj` is suitable for `S * *` type deletes,
+                # otherwise stick to batched N-quads.
+                # The `S * *` pattern is best with N-quads.
+
+                nquads_list = [f'<{uid_val}> * * .' for uid_val in uids_to_delete]
+                mutation_body = "\n".join(nquads_list)
+
+                # For very large numbers of UIDs, even the mutation request string could be large.
+                # We might need to further batch the mutation itself if batch_size for UIDs is too high.
+                # For now, 10000 UIDs should result in a manageable N-quads string.
+                # Example: <0x123> * * . is ~15 bytes. 10000 * 15 bytes = 150KB, well within limits.
+
+                txn_rw.mutate(del_nquads=mutation_body)
                 txn_rw.commit()
-                logging.info(f"Cleared {len(uids_to_delete)} Dgraph nodes for repo {repo_id}, branch {branch}")
-        except Exception as e:
-            logging.warning(f"Could not clear Dgraph data for repo {repo_id}, branch {branch}: {e}")
+
+                count_in_batch = len(uids_to_delete)
+                total_deleted_count += count_in_batch
+                logging.info(f"Deleted batch of {count_in_batch} Dgraph nodes for repo {repo_id}, branch {branch}. Total so far: {total_deleted_count}")
+            except pydgraph.errors.AbortedError:
+                logging.warning(f"Dgraph transaction aborted during batch delete for repo {repo_id}, branch {branch}. Retrying logic might be needed or smaller batches.")
+                # For simplicity in this fix, we'll log and stop. A full retry mechanism is more complex.
+                return
+            except Exception as e:
+                logging.error(f"Dgraph batch delete mutation failed (repo {repo_id}, branch {branch}): {e}", exc_info=True)
+                return # Stop if mutation fails
+            finally:
+                if txn_rw and not txn_rw.finished:
+                    txn_rw.discard()
+
+        logging.info(f"Successfully cleared a total of {total_deleted_count} Dgraph nodes for repo {repo_id}, branch {branch}.")
 
     def execute_dgraph_mutations(self, mutations: List[Dict[str, Any]]):
         """Executes a batch of Dgraph mutations with retries for aborted transactions."""

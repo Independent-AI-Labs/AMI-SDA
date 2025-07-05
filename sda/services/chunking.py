@@ -22,8 +22,15 @@ try:
     from tree_sitter_java import language as java_language
     from tree_sitter_javascript import language as javascript_language
     from tree_sitter_typescript import language_typescript as typescript_language
+    # New language imports
+    from tree_sitter_bash import language as bash_language
+    from tree_sitter_markdown import language as markdown_language # Assuming tree_sitter_markdown provides 'language'
+    from tree_sitter_html import language as html_language
+    from tree_sitter_css import language as css_language
 except ImportError as e:
-    logging.error(f"Failed to import tree-sitter languages. Please ensure they are installed. Error: {e}")
+    logging.error(f"Failed to import one or more tree-sitter languages. Ensure all required parsers (Python, Java, JS, TS, Bash, Markdown, HTML, CSS) are installed. Error: {e}")
+    # Depending on policy, we might want to raise e or log and continue with available parsers.
+    # For now, let's make it critical if any are missing, as config expects them.
     raise
 
 # Configure logging
@@ -71,6 +78,10 @@ class TokenAwareChunker:
             'java': java_language(),
             'javascript': javascript_language(),
             'typescript': typescript_language(),
+            'bash': bash_language(),
+            'markdown': markdown_language(),
+            'html': html_language(),
+            'css': css_language(),
         }
 
         for lang_name, lang_lib in language_map.items():

@@ -10,7 +10,7 @@
                 {% else %}<i class="fas fa-question-circle text-gray-500"></i>
                 {% endif %}
             </span>
-            <span class="font-semibold text-gray-800 dark:text-gray-200">{{ task.name }} (ID: {{ task.id }})</span>
+            <span class="font-semibold text-gray-800 dark:text-gray-200">{{ display_task_name }} (ID: {{ task.id }})</span>
         </div>
         <span class="text-sm text-gray-600 dark:text-gray-400">Status: {{ task.status }}</span>
     </div>

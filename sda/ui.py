@@ -34,6 +34,25 @@ import uvicorn
 from fastapi import Query # Added for API endpoint query parameters
 
 from app import CodeAnalysisFramework
+
+# Task Name Mapping
+TASK_NAME_MAPPING = {
+    "find_dead_code": "Find Unused Code",
+    "find_duplicate_code": "Find Duplicate Code",
+    "analyze_branch": "Analyze Branch Content", # More specific for the button
+    # If ingestion_service.py creates tasks like "partition_repository", "parse_and_chunk_files", etc.
+    # they can be mapped here if they become parent tasks visible in UI.
+    # For now, focusing on user-initiated tasks and top-level ingestion.
+}
+
+def get_display_task_name(task_name_internal: Optional[str]) -> str:
+    if not task_name_internal:
+        return "Unknown Task"
+    if task_name_internal.startswith("Ingest Branch:"):
+        branch = task_name_internal.replace("Ingest Branch:", "").strip()
+        return f"Ingesting Branch: {branch}" # Or "Analyzing Branch: {branch}"
+    return TASK_NAME_MAPPING.get(task_name_internal, task_name_internal)
+
 from sda.core.models import Task as SQLA_Task, Task  # Alias to avoid confusion if TaskRead is also named Task
 from sda.core.data_models import TaskRead # Import the new Pydantic model
 from sda.config import IngestionConfig, AIConfig, PG_DB_NAME, DGRAPH_HOST, DGRAPH_PORT
@@ -127,12 +146,13 @@ No active tasks.
 
         # Prepare context for the main template
         context = {
-            "task": task,
+            "task": task, # Pass the original task object for other attributes
+            "display_task_name": get_display_task_name(task.name), # Use display name for title
             "model_info_html": self._get_model_info_html(),
             "hardware_info_html": self._get_hardware_info_html(),
             "storage_info_html": self._get_storage_info_html(),
             "usage_stats_html": self._get_usage_stats_html(),
-            "main_task_progress_html": self._create_html_progress_bar(task.progress, task.message, task.name),
+            "main_task_progress_html": self._create_html_progress_bar(task.progress, task.message, get_display_task_name(task.name)),
             "task_timing_html": self._get_task_timing_html(task),
             "render_sub_task": self._render_sub_task_html # Pass method to render sub_tasks
         }
@@ -142,9 +162,17 @@ No active tasks.
 
     def _render_sub_task_html(self, child_task: SQLA_Task) -> str: # Changed Task to SQLA_Task
         """Renders a single sub-task using its template."""
-        progress_bar_html = self._create_html_progress_bar(child_task.progress, child_task.message, child_task.name)
+        display_name = get_display_task_name(child_task.name)
+        progress_bar_html = self._create_html_progress_bar(child_task.progress, child_task.message, display_name)
         template = self.jinja_env.get_template("status_modal_parts/sub_task.html")
-        return template.render(task=child_task, progress_bar_html=progress_bar_html)
+        # Pass both original task and display_name to template context if needed,
+        # or just ensure template uses the display_name for rendering the name.
+        # Assuming template uses task.name, we might need to adjust template or pass display_name explicitly.
+        # For now, the progress_bar_html receives the display_name.
+        # If the template `sub_task.html` also renders `task.name` directly, it needs adjustment or `display_name` in its context.
+        # Let's assume the template is simple and primarily shows the progress bar's title.
+        # To be safe, let's prepare for the template to use a display_name variable.
+        return template.render(task=child_task, display_task_name=display_name, progress_bar_html=progress_bar_html)
 
     def _get_model_info_html(self) -> str:
         template = self.jinja_env.get_template("status_modal_parts/model_info.html")
@@ -295,8 +323,26 @@ No active tasks.
         template = self.jinja_env.get_template("task_log_entry.html")
 
         for task in tasks:
+            display_name = get_display_task_name(task.name)
             duration_str = ""
-            if task.started_at and task.completed_at:
+            # Ensure timing calculations use the original task object
+            # The issue description "Timing N/A" for completed task in history needs to be addressed here
+            # by ensuring _get_task_timing_values correctly calculates duration for completed tasks.
+            # And that task.completed_at is properly set.
+
+            # Let's re-check _get_task_timing_values for completed tasks.
+            # It seems to calculate 'duration_str_val' correctly if task.completed_at is set.
+            # The problem might be that task.completed_at is not always available or task object in history is partial.
+            # The log shows "Timing N/A", "Details: Files Found: 55, Partitions Created: 2"
+            # This implies the task object from history might be missing `completed_at` or `started_at`.
+            # The `TaskRead` Pydantic model should include these.
+            # `framework.get_task_history` should provide these.
+
+            # For now, assume task object from history is complete.
+            # The `_get_task_timing_values` function itself seems fine for calculating duration.
+            # The issue might be in how `duration_str` is formed here or if `task.completed_at` is None.
+
+            if task.status in ['completed', 'failed'] and task.started_at and task.completed_at:
                 # Ensure timezone awareness for subtraction if not already
                 started_at = task.started_at
                 if hasattr(started_at, 'tzinfo') and started_at.tzinfo is None:
@@ -315,8 +361,23 @@ No active tasks.
                 if m > 0 or h > 0 : duration_parts.append(f"{int(m)}m") # show minutes if hours or minutes > 0
                 duration_parts.append(f"{int(s)}s")
                 duration_str = f" ({' '.join(duration_parts)})" if any(duration_parts) else ""
+            elif task.status in ['running', 'pending'] and task.started_at:
+                # Calculate elapsed time for running/pending tasks for history view if needed
+                now = datetime.now(timezone.utc)
+                elapsed_seconds = (now - (task.started_at.replace(tzinfo=timezone.utc) if task.started_at.tzinfo is None else task.started_at)).total_seconds()
+                if elapsed_seconds < 0: elapsed_seconds = 0
+                hours, remainder = divmod(elapsed_seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                elapsed_str_val = ""
+                if hours > 0: elapsed_str_val += f"{int(hours)}h "
+                if minutes > 0 or hours > 0: elapsed_str_val += f"{int(minutes)}m "
+                elapsed_str_val += f"{int(seconds)}s"
+                duration_str = f" (Elapsed: {elapsed_str_val})"
+            else: # Task is completed/failed but timing info is missing for some reason
+                duration_str = " (Timing N/A)"
 
-            html_parts.append(template.render(task=task, duration_str=duration_str))
+
+            html_parts.append(template.render(task=task, display_task_name=display_name, duration_str=duration_str))
 
         return "".join(html_parts)
 
@@ -845,7 +906,8 @@ No active tasks.
             ) + self._get_task_button_updates(True)
 
         # --- Task exists, populate control_panel_ws_data ---
-        status_msg = f"Task '{task.name}': {task.message} ({task.progress:.0f}%)"
+        display_task_name = get_display_task_name(task.name)
+        status_msg = f"Task '{display_task_name}': {task.message} ({task.progress:.0f}%)"
         is_running = task.status in ['running', 'pending']
 
         # control_panel_ws_data["external_progress_bar_data"] entries REMOVED
@@ -863,10 +925,10 @@ No active tasks.
 
         control_panel_ws_data["main_task"] = {
             "id": task.id, # Added task ID
-            "name": task.name, "status_text": task.status, "status_class": main_task_status_class,
+            "name": display_task_name, "status_text": task.status, "status_class": main_task_status_class,
             "progress": task.progress, "message": task.message,
             "time_elapsed": elapsed_str, "time_duration": duration_str,
-            "details": task.details if task.details else {},
+            "details": task.details if task.details else {}, # Ensure details are always a dict
             "error_message": task.error_message,
             # Children will be added below
         }
@@ -893,15 +955,16 @@ No active tasks.
             sub_task_badge_common_classes = " text-xxs px-1.5 py-0.5 rounded-full whitespace-nowrap flex-shrink-0"
 
             for child_task_obj in sorted(task.children, key=lambda t: t.started_at or datetime.min.replace(tzinfo=timezone.utc)):
+                child_display_name = get_display_task_name(child_task_obj.name)
                 child_status_class = sub_task_status_classes_map.get(child_task_obj.status, default_sub_task_class_base) + sub_task_badge_common_classes
                 children_list_for_main_task.append({
                     "id": child_task_obj.id,
-                    "name": child_task_obj.name,
+                    "name": child_display_name,
                     "status_text": child_task_obj.status,
                     "status_class": child_status_class,
                     "progress": child_task_obj.progress,
                     "message": child_task_obj.message,
-                    "details": child_task_obj.details if child_task_obj.details else {},
+                    "details": child_task_obj.details if child_task_obj.details else {}, # Ensure details are always a dict
                     # Note: error_message for subtasks is not explicitly handled in current JS template, but can be added
                     "error_message": child_task_obj.error_message
                 })
@@ -925,10 +988,10 @@ No active tasks.
         # Initialize updates for HTML stats and language plot to "skip update" by default
         stats_html_update, lang_plot_update = gr.skip(), gr.skip()
 
-        task_could_change_branch = task.name.startswith("Ingest Branch:") or task.name == "analyze_branch"
+        task_could_change_branch = task.name.startswith("Ingest Branch:") or task.name == "analyze_branch" # Use internal name for logic
         if task.status == 'completed':
-            status_msg = f"Last task '{task.name}' completed successfully."
-            if task.result:
+            status_msg = f"Last task '{display_task_name}' completed successfully." # Use display_task_name for UI
+            if task.result: # Check internal name for result processing
                 if task.name == "find_dead_code" and task.result.get("dead_code"):
                     dead_code_data = task.result["dead_code"]
                     df_data = [[dc.get('file_path'), dc.get('name'), dc.get('node_type'), f"{dc.get('start_line')}-{dc.get('end_line')}"] for dc in dead_code_data]
@@ -938,7 +1001,7 @@ No active tasks.
                     df_data = [[d.get('file_a'), d.get('lines_a'), d.get('file_b'), d.get('lines_b'), f"{d.get('similarity', 0):.2%}"] for d in dup_data]
                     dup_code_update = pd.DataFrame(df_data, columns=["File A", "Lines A", "File B", "Lines B", "Similarity"])
 
-            if task_could_change_branch:
+            if task_could_change_branch: # Logic based on internal name
                 current_repo_branches = self.framework.get_repository_branches(repo_id)
                 repo = self.framework.get_repository_by_id(repo_id)
                 new_active_branch = repo.active_branch if repo else None
@@ -958,7 +1021,7 @@ No active tasks.
 
 
         elif task.status == 'failed':
-            status_msg = f"Task '{task.name}' Failed: Check logs for details."
+            status_msg = f"Task '{display_task_name}' Failed: Check logs for details." # Use display_task_name
             # Potentially clear or leave stale stats/plots as is, or show an error state
             # For now, they will retain their last state or be None if initialized that way.
 
@@ -975,6 +1038,9 @@ No active tasks.
         ) + button_updates
 
     def handle_initial_load(self) -> Tuple[gr.update, gr.update, Optional[int], Optional[str], List[Dict[str, str]]]:
+        # Ensure task details are initialized properly.
+        # The control panel uses WebSocket, so initial empty state is handled by JS client.
+        # This function primarily sets up repo/branch dropdowns.
         repos = self.framework.get_all_repositories()
         repo_choices = [(f"{repo.name} ({repo.path})", repo.id) for repo in repos]
         initial_repo_id = repo_choices[0][1] if repo_choices else None

@@ -28,13 +28,18 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 class SymbolReference:
     """A structured data class for returning symbol information."""
 
-    def __init__(self, file_path: str, start_line: int, end_line: int, code_snippet: str, name: Optional[str] = None, node_type: Optional[str] = None):
+    def __init__(self, file_path: str, start_line: int, end_line: int, code_snippet: str,
+                 name: Optional[str] = None, node_type: Optional[str] = None,
+                 node_id: Optional[str] = None, # Dgraph/internal ID
+                 analysis_reason: Optional[str] = None): # Reason for inclusion in a specific analysis
         self.file_path = file_path
         self.start_line = start_line
         self.end_line = end_line
         self.code_snippet = code_snippet
         self.name = name
         self.node_type = node_type
+        self.node_id = node_id
+        self.analysis_reason = analysis_reason
 
     def to_dict(self) -> Dict[str, Any]:
         return self.__dict__
@@ -83,12 +88,16 @@ class AdvancedCodeNavigationTools:
 
         def find_in_schema(schema: str, ids_to_find: List[str]):
             with self.db_manager.get_session(schema) as s:
-                nodes = s.query(ASTNode).filter(ASTNode.node_id.in_(ids_to_find)).options(joinedload(ASTNode.file)).all()
+                # Fetch nodes ensuring the original node_id (from Dgraph query) is preserved and passed to SymbolReference
+                nodes_data = s.query(ASTNode).filter(ASTNode.node_id.in_(ids_to_find)).options(joinedload(ASTNode.file)).all()
+                # Create a map of postgres_node.node_id to the original dgraph_node_id if they could differ
+                # (they should be the same, so n.node_id is the one we want)
                 return [SymbolReference(
                     file_path=n.file.relative_path, start_line=n.start_line,
                     end_line=n.end_line, code_snippet=self._read_file_snippet(n.file.file_path, n.start_line, n.end_line),
-                    name=n.name, node_type=n.node_type
-                ) for n in nodes]
+                    name=n.name, node_type=n.node_type,
+                    node_id=n.node_id # Populate the node_id field
+                ) for n in nodes_data]
 
         with ThreadPoolExecutor() as executor:
             futures = {executor.submit(find_in_schema, schema, node_ids): schema for schema in repo.db_schemas}
@@ -214,7 +223,14 @@ class AdvancedCodeNavigationTools:
             return []
 
         dead_node_ids = {node['node_id'] for node in response['dead'] if 'node_id' in node}
-        return self._get_nodes_from_db(list(dead_node_ids), repo_id) if dead_node_ids else []
+
+        results = []
+        if dead_node_ids:
+            symbol_references = self._get_nodes_from_db(list(dead_node_ids), repo_id)
+            for ref in symbol_references:
+                ref.analysis_reason = "Node is a definition with no incoming calls found in Dgraph."
+                results.append(ref)
+        return results
 
     def analyze_dependencies(self, file_path_str: str, repo_id: int, branch: str) -> Dict[str, Any]:
         """Analyzes a file's dependencies (placeholder)."""
