@@ -33,14 +33,14 @@ INGESTION_CACHE_DIR = str(DATA_DIR / "ingestion_cache")
 # --- PostgreSQL Database Configuration ---
 PG_USER = os.getenv("PG_USER", "postgres")
 PG_PASSWORD = os.getenv("PG_PASSWORD", "postgres")
-PG_HOST = os.getenv("PG_HOST", "192.168.50.99")
+PG_HOST = os.getenv("PG_HOST", "127.0.0.1")
 PG_PORT = os.getenv("PG_PORT", "5432")
 PG_DB_NAME = os.getenv("PG_DB_NAME", "ami_sda_db")
 DB_URL = f"postgresql+psycopg2://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/{PG_DB_NAME}"
 MAINTENANCE_DB_URL = f"postgresql+psycopg2://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/postgres"
 
 # --- Dgraph Configuration ---
-DGRAPH_HOST = os.getenv("DGRAPH_HOST", "192.168.50.99")
+DGRAPH_HOST = os.getenv("DGRAPH_HOST", "127.0.0.1")
 DGRAPH_PORT = os.getenv("DGRAPH_PORT", "9080")
 
 # --- AI Model Configuration (using Pydantic models) ---
