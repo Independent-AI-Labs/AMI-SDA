@@ -1165,37 +1165,38 @@ No active tasks.
         embedding_html_upd = gr.update(value="<div>Select a non-image file for embedding visualization.</div>")
         change_analysis_output_upd = gr.update(value="Select an analysis option.")
 
-        (current_modified_files_ca_upd,
-         branch_compare_older_version_ca_upd) = self.handle_populate_change_analysis_inputs(repo_id, branch)
+        # Corrected: handle_populate_change_analysis_inputs now returns only one value
+        branch_compare_older_version_ca_upd = self.handle_populate_change_analysis_inputs(repo_id, branch)
 
-        mod_files_dd_diff_upd, code_v_upd_from_git, img_v_upd_from_git, sel_file_s_upd_from_git = \
-            self.update_git_status_panel(repo_id)
+        # Removed call to obsolete self.update_git_status_panel and its result unpacking
+        # mod_files_dd_diff_upd, code_v_upd_from_git, img_v_upd_from_git, sel_file_s_upd_from_git = \
+        #     self.update_git_status_panel(repo_id)
 
-        final_code_view_upd = code_v_upd_from_git if code_v_upd_from_git != gr.skip() else code_view_upd
-        final_img_view_upd = img_v_upd_from_git if img_v_upd_from_git != gr.skip() else img_view_upd
-        final_sel_file_upd = sel_file_s_upd_from_git if sel_file_s_upd_from_git is not None and sel_file_s_upd_from_git != "" else sel_file_upd
+        # Default updates for these, as they are no longer set by update_git_status_panel
+        final_code_view_upd = code_view_upd # Use the default from earlier in the function
+        final_img_view_upd = img_view_upd   # Use the default
+        final_sel_file_upd = sel_file_upd   # Use the default
 
-        commit_msg_diff_upd = gr.update(value="")
+        # commit_msg_diff_upd = gr.update(value="") # This component was removed
 
-        # Order must match all_insight_outputs + doc_comp_outputs (10 items for doc_comp)
+        # Order must match all_insight_outputs + doc_comp_outputs
         # all_insight_outputs = [stats_cards_html, lang_plot] (2)
-        # doc_comp_outputs = [
-        #     file_explorer, (1)
-        #     embedding_html_viewer, change_analysis_output, (2)
-        #     code_viewer, image_viewer, selected_file_state, (3)
-        #     current_modified_files_dropdown_ca, branch_compare_older_version_ca, (2)
-        #     modified_files_dropdown_diff, commit_message_diff (2)
-        # ] Total 8 items for doc_comp_outputs (if modified_files_dropdown_diff and commit_message_diff are removed from outputs of this func)
+        # doc_comp_outputs = [ # Now 7 items
+        #     file_explorer,
+        #     embedding_html_viewer,
+        #     change_analysis_output,
+        #     code_viewer,
+        #     image_viewer,
+        #     selected_file_state,
+        #     branch_compare_older_version_ca,
+        # ] Total 2 + 7 = 9 outputs.
 
-        # mod_files_dd_diff_upd and commit_msg_diff_upd are no longer needed as outputs from this function
-        # as their components are removed. The update_git_status_panel call that generated them will also be removed.
-
-        return (stats_upd, lang_upd,  # 2
-                file_explorer_upd,  # 1
-                embedding_html_upd, change_analysis_output_upd,  # 2
-                final_code_view_upd, final_img_view_upd, final_sel_file_upd, # 3
-                current_modified_files_ca_upd, branch_compare_older_version_ca_upd) # 2
-                # Total 2 + 8 = 10 outputs.
+        return (stats_upd, lang_upd,  # Insight outputs (2)
+                file_explorer_upd,   # Doc Comp (1/7)
+                embedding_html_upd, change_analysis_output_upd,  # Doc Comp (3/7)
+                final_code_view_upd, final_img_view_upd, final_sel_file_upd, # Doc Comp (6/7)
+                branch_compare_older_version_ca_upd) # Doc Comp (7/7)
+                # Total 2 + 7 = 9 outputs.
 
     def _generate_embedding_html(self, file_content: str, file_path_for_display: str) -> str: # Renamed arg
         logging.info(f"[_generate_embedding_html] Called for file: {file_path_for_display}. Content length: {len(file_content if file_content else '')}")
