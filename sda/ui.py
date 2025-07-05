@@ -54,9 +54,9 @@ async def websocket_control_panel_endpoint(websocket: WebSocket):
             # print(f"Received message from Control Panel client: {data}")
     except WebSocketDisconnect:
         control_panel_manager.disconnect(websocket)
-        print(f"Control Panel client disconnected: {websocket.client}")
+        # print(f"Control Panel client disconnected: {websocket.client}") # Disabled verbose log
     except Exception as e:
-        print(f"Error in Control Panel WebSocket: {e}")
+        print(f"Error in Control Panel WebSocket: {e}") # Keep actual error logging
         control_panel_manager.disconnect(websocket)
 
 
@@ -681,8 +681,24 @@ No active tasks.
         control_panel_ws_data["hardware_info"] = {
             "cpu_load": current_cpu_load,
             "ram_percent": current_ram_percent,
-            "ram_absolute_text": f"{current_ram_used_gb:.1f} / {current_ram_total_gb:.1f} GB"
+            "ram_absolute_text": f"{current_ram_used_gb:.1f} / {current_ram_total_gb:.1f} GB",
+            "num_cpus": os.cpu_count(),
+            "total_allowed_workers": sum(IngestionConfig.MAX_DB_WORKERS_PER_TARGET.values()) + AIConfig.MAX_EMBEDDING_WORKERS,
+            "db_workers_per_target": IngestionConfig.MAX_DB_WORKERS_PER_TARGET,
+            "max_embedding_workers": AIConfig.MAX_EMBEDDING_WORKERS,
+            "gpu_info": {
+                "torch_available": torch is not None,
+                "cuda_available": False,
+                "cuda_version": None,
+                "num_gpus": 0,
+                "gpu_names": []
+            }
         }
+        if control_panel_ws_data["hardware_info"]["gpu_info"]["torch_available"] and torch.cuda.is_available():
+            control_panel_ws_data["hardware_info"]["gpu_info"]["cuda_available"] = True
+            control_panel_ws_data["hardware_info"]["gpu_info"]["cuda_version"] = torch.version.cuda
+            control_panel_ws_data["hardware_info"]["gpu_info"]["num_gpus"] = torch.cuda.device_count()
+            control_panel_ws_data["hardware_info"]["gpu_info"]["gpu_names"] = [torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())]
 
         # The status_details_html and its related states (_last_main_task_id etc.) are no longer updated here for Gradio.
         # All Control Panel modal updates go via WebSocket.

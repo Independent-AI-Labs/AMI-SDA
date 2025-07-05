@@ -71,22 +71,26 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function createProgressBarHTMLForJS(uniquePrefix, progress, message, taskName) {
+        // Ensure text colors provide good contrast on potentially varied card backgrounds
         const progressText = message ? `${message} (${progress.toFixed(0)}%)` : `(${progress.toFixed(0)}%)`;
         const taskNameDisplay = taskName ? `<span id="${uniquePrefix}-task-name" class="text-xs font-semibold text-gray-700 dark:text-gray-300 truncate pr-2" title="${taskName}">${taskName}</span>` : "";
+        // The overall <p> tag for progress text should also have good contrast.
+        const textContainerClass = "text-xs text-gray-600 dark:text-gray-400 mb-0.5 flex justify-between items-center";
+        const progressTextSpanClass = "text-xxs whitespace-nowrap text-gray-500 dark:text-gray-300"; // Explicit color for progress %
 
         return `
             <div class="progress-wrapper mb-1">
                 ${taskName || message ? `
-                <p class="text-xs text-gray-600 dark:text-gray-400 mb-0.5 flex justify-between items-center">
+                <p class="${textContainerClass}">
                     ${taskNameDisplay}
-                    <span id="${uniquePrefix}-progress-text" class="text-xxs whitespace-nowrap">${progressText}</span>
+                    <span id="${uniquePrefix}-progress-text" class="${progressTextSpanClass}">${progressText}</span>
                 </p>` : `
-                <p class="text-xs text-gray-600 dark:text-gray-400 mb-0.5 flex justify-end items-center">
-                     <span id="${uniquePrefix}-progress-text" class="text-xxs whitespace-nowrap">${progressText}</span>
+                <p class="${textContainerClass} justify-end">
+                     <span id="${uniquePrefix}-progress-text" class="${progressTextSpanClass}">${progressText}</span>
                 </p>
                 `}
                 <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                    <div id="${uniquePrefix}-progress-bar" class="bg-blue-500 h-2 rounded-full transition-width duration-300 ease-out" style="width: ${progress}%"></div>
+                    <div id="${uniquePrefix}-progress-bar" class="bg-blue-500 dark:bg-blue-400 h-2 rounded-full transition-width duration-300 ease-out" style="width: ${progress}%"></div>
                 </div>
             </div>
         `;
@@ -123,13 +127,52 @@ document.addEventListener('DOMContentLoaded', () => {
         if (hardwareInfo.ramUsageBar) hardwareInfo.ramUsageBar.style.width = (data.ram_percent || 0) + '%';
         updateText(hardwareInfo.ramUsageValue, (data.ram_absolute_text || 'N/A'));
 
-        // Static parts (assuming these don't change often, or are part of initial full load)
-        // These would typically be set once from a more comprehensive initial payload
-        // or require specific fields in the regular hardware_info updates if they can change.
-        // For now, this example assumes they are updated if present in `data`.
-        if (data.num_cpus) updateText(hardwareInfo.cpus, data.num_cpus);
-        if (data.gpu_info_html) hardwareInfo.gpuAvailabilityText.parentElement.innerHTML = data.gpu_info_html; // If HTML is sent
-        if (data.worker_info_html) hardwareInfo.workerConfigList.parentElement.innerHTML = data.worker_info_html; // If HTML is sent
+        updateText(hardwareInfo.cpus, data.num_cpus);
+        updateText(hardwareInfo.workerMaxTotal, data.total_allowed_workers);
+
+        // GPU Info
+        let gpuHtml = '';
+        if (data.gpu_info) {
+            const gpu = data.gpu_info;
+            if (gpu.torch_available && gpu.cuda_available) {
+                gpuHtml = `<p class="text-xs text-gray-600 dark:text-gray-300 mb-0 leading-tight flex items-center">
+                               <i class="fas fa-tv mr-1.5 text-gray-400 dark:text-gray-500"></i>
+                               <strong>GPU:</strong>&nbsp;CUDA ${gpu.cuda_version} | ${gpu.num_gpus} Device(s)
+                           </p>`;
+                if (gpu.num_gpus > 0 && gpu.gpu_names && gpu.gpu_names.length > 0) {
+                    gpuHtml += '<ul class="list-none pl-5 mt-0.5">';
+                    gpu.gpu_names.forEach(name => {
+                        gpuHtml += `<li class="text-xxs text-gray-500 dark:text-gray-400 leading-tight">${name}</li>`;
+                    });
+                    gpuHtml += '</ul>';
+                }
+            } else {
+                gpuHtml = `<p class="text-xs text-gray-600 dark:text-gray-300 flex items-center"><i class="fas fa-tv-alt mr-1.5 text-gray-400 dark:text-gray-500"></i><strong>GPU:</strong> CUDA not available</p>`;
+            }
+        } else {
+            gpuHtml = `<p class="text-xs text-gray-600 dark:text-gray-300 flex items-center"><i class="fas fa-tv-alt mr-1.5 text-gray-400 dark:text-gray-500"></i><strong>GPU:</strong> N/A</p>`;
+        }
+        if (hardwareInfo.gpuAvailabilityText && hardwareInfo.gpuAvailabilityText.parentElement) {
+             // Assuming gpuAvailabilityText is a span inside the parent div that should be replaced
+            hardwareInfo.gpuAvailabilityText.parentElement.innerHTML = gpuHtml;
+        }
+
+
+        // Worker Info
+        let workerHtml = '';
+        if (data.db_workers_per_target || data.max_embedding_workers) {
+            for (const [target, num_w] of Object.entries(data.db_workers_per_target || {})) {
+                workerHtml += `<li>${target.charAt(0).toUpperCase() + target.slice(1)}: ${num_w}</li>`;
+            }
+            if (data.max_embedding_workers !== undefined) {
+                workerHtml += `<li>Embedding: ${data.max_embedding_workers}</li>`;
+            }
+        } else {
+            workerHtml = '<li>N/A</li>';
+        }
+        if (hardwareInfo.workerConfigList) {
+            hardwareInfo.workerConfigList.innerHTML = workerHtml;
+        }
     }
 
     function updateStorageInfo(data) {
