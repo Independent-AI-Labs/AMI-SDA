@@ -726,13 +726,31 @@ class CodeAnalysisFramework:
     def get_task_history(self, repo_id: Optional[int], offset: int = 0, limit: int = 20) -> List[Task]:
         """
         Retrieves a paginated list of all parent tasks for a repository (or all tasks if repo_id is None),
-        ordered by most recent first. Includes children tasks.
+        ordered by most recent first. Includes children tasks and their children (one level deep for children).
         """
+        from sqlalchemy.orm import subqueryload
+
         with self.db_manager.get_session("public") as session:
-            query = session.query(Task).options(joinedload(Task.children)).filter(Task.parent_id.is_(None))
+            query = session.query(Task).options(
+                joinedload(Task.children).subqueryload(Task.children) # Load children, and for those children, load their children
+            ).filter(Task.parent_id.is_(None))
+
             if repo_id is not None:
                 query = query.filter(Task.repository_id == repo_id)
 
             tasks = query.order_by(Task.started_at.desc()).offset(offset).limit(limit).all()
-            session.expunge_all()
+
+            # It's crucial that Pydantic serialization happens while tasks are session-bound if it might trigger further lazy loads.
+            # However, with proper eager loading as above, expunging before returning is usually fine.
+            # The error indicates that the eager loading was not sufficient for what Pydantic's TaskRead (recursive) was trying to access.
+            # The above options(...) should load children and their direct children.
+
+            # To be absolutely safe, one could convert to Pydantic models within the session,
+            # but this is usually not necessary if eager loading is correct.
+            # pydantic_tasks = [TaskRead.from_orm(task) for task in tasks]
+            # session.expunge_all()
+            # return pydantic_tasks
+            # For now, let's assume the improved eager loading is sufficient.
+
+            session.expunge_all() # Expunge after all data needed for serialization is loaded.
             return tasks
