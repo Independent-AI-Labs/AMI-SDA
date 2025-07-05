@@ -1080,19 +1080,35 @@ No active tasks.
     # handle_populate_file_browser_radio, handle_file_browser_go_up, handle_file_browser_radio_select are removed.
     # New handlers for gr.FileExplorer will be simpler.
 
-    def handle_file_explorer_select(self, repo_id: int, branch: str, selected_file_path: Optional[str]) -> Tuple[gr.update, gr.update, gr.update, str]:
-        # Returns updates for: embedding_html_viewer, code_viewer, image_viewer, selected_file_state
-        # selected_file_path is the new value of the FileExplorer component, passed by .change()
+    def handle_file_explorer_select(self, repo_id: int, branch: str, selection_event_data: Any) -> Tuple[gr.update, gr.update, gr.update, str, gr.update, gr.update]:
+        # Returns updates for: embedding_html_viewer, code_viewer, image_viewer, selected_file_state,
+        # current_modified_files_dropdown_ca, file_to_compare_dropdown_ca
+        # selection_event_data is the value from FileExplorer's .change() event.
+        # If file_count="single", this should be a single path string when a user selects a file.
+        # If it's a list, it might be the initial population or a multi-select scenario we want to ignore for single-file processing.
 
-        if not selected_file_path or not isinstance(selected_file_path, str): # Path could be None if deselected or empty
-            # If no file is selected (e.g., selection cleared), provide default/empty states
+        file_path: Optional[str] = None
+        if isinstance(selection_event_data, str):
+            file_path = selection_event_data
+        elif isinstance(selection_event_data, list):
+            # If file_count="single" is truly effective, this case might only occur if the component's value
+            # (the whole list of files) is updated programmatically, triggering .change.
+            # In such a case, we don't have a single user-selected file to process.
+            logging.info(f"FileExplorer .change event triggered with a list (count: {len(selection_event_data)}). Assuming no single file selection by user. Skipping detailed view updates.")
+            # We still need to return the correct number of updates.
+            # Let's return skip for viewers and current selected file, but potentially update dropdowns if needed (though likely not here).
+            return gr.skip(), gr.skip(), gr.skip(), "", gr.skip(), gr.skip()
+
+        if not file_path: # Path could be None if deselected or if it was a list and we decided to skip.
             embedding_html_update = gr.update(value="<div>Select a file for embedding visualization.</div>")
             code_viewer_update = gr.update(value="// Select a file to view content/diff.", language=None, label="File Content / Diff", visible=True)
             image_viewer_update = gr.update(value=None, visible=False)
-            return embedding_html_update, code_viewer_update, image_viewer_update, "" # Clear selected_file_state
+            # Also reset dependent dropdowns in Change Analysis
+            current_modified_files_ca_upd = gr.update(value=None)
+            file_to_compare_ca_upd = gr.update(value=None)
+            return embedding_html_update, code_viewer_update, image_viewer_update, "", current_modified_files_ca_upd, file_to_compare_ca_upd
 
-        file_path = selected_file_path # Use the direct value
-        print(f"UI: FileExplorer selection changed: '{file_path}' for repo {repo_id}, branch {branch}")
+        print(f"UI: FileExplorer selection changed to: '{file_path}' for repo {repo_id}, branch {branch}")
 
         new_selected_file_for_viewers = file_path
 
