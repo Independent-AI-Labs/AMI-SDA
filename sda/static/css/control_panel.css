@@ -284,3 +284,9 @@
     padding: 10px; border-radius: 4px;
     font-size: 0.85em; overflow-x: auto;
 }
+
+/* Hide scrollbars on specific components */
+#component-30,
+#component-29 {
+    overflow: hidden !important; /* Use !important to override inline style */
+}

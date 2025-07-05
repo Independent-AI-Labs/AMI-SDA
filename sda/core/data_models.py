@@ -1,4 +1,5 @@
 from typing import Optional, List, Dict, Any
+from datetime import datetime # Added datetime import
 from pydantic import BaseModel, Field
 
 class DuplicatePair(BaseModel):
@@ -10,8 +11,35 @@ class DuplicatePair(BaseModel):
     lines_a: str
     lines_b: str
     similarity: float
-    content_a: str
-    content_b: str
+
+# Pydantic models for API responses, especially for ORM conversion.
+
+class TaskRead(BaseModel):
+    id: int
+    uuid: str
+    repository_id: int
+    parent_id: Optional[int] = None
+    name: str
+    created_by: str
+    status: str
+    progress: float
+    message: Optional[str] = None
+    # log_history: Optional[str] = None # Usually not sent to frontend unless specifically needed
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    result: Optional[Dict[str, Any]] = None # Keep as dict for flexibility
+    error_message: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None # Keep as dict
+
+    children: List['TaskRead'] = [] # Recursive model
+
+    class Config:
+        from_attributes = True
+
+# If using Pydantic v2, update_forward_refs is often not needed if types are correctly quoted.
+# However, for older Pydantic or complex scenarios, it might be.
+# TaskRead.model_rebuild() # For Pydantic v2, or TaskRead.update_forward_refs() for V1
+# For Pydantic v2, this is typically handled automatically if type hints are correct.
 
 class SemanticSearchResult(BaseModel):
     """Represents a single result from a semantic search."""
