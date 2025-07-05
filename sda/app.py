@@ -478,8 +478,12 @@ class CodeAnalysisFramework:
         if not repo: return None
         return self.git_service.get_status(repo.path)
 
-    def get_file_diff_or_content(self, repo_id: int, file_path: str) -> tuple[Optional[str], Optional[Image.Image]]:
-        """Gets the git diff for a modified file or the raw content for an image."""
+    def get_file_diff_or_content(self, repo_id: int, file_path: str, is_new_file_from_explorer: bool = False) -> tuple[Optional[str], Optional[Image.Image]]:
+        """
+        Gets the git diff for a modified file, or raw content for an image or a new file from explorer.
+        If is_new_file_from_explorer is True, it will try to read the file content directly
+        instead of getting a git diff, unless it's an image.
+        """
         repo = self.get_repository_by_id(repo_id)
         if not repo: return None, None
 
@@ -491,7 +495,49 @@ class CodeAnalysisFramework:
             except Exception as e:
                 return f"Error opening image: {e}", None
         else:
-            return self.git_service.get_diff(repo.path, file_path), None
+            if is_new_file_from_explorer:
+                # If called from file explorer for a non-image, get raw content
+                try:
+                    return full_path.read_text(encoding='utf-8'), None
+                except Exception as e:
+                    return f"Error reading file: {e}", None
+            else:
+                # Original behavior: get git diff for (presumably) modified files
+                return self.git_service.get_diff(repo.path, file_path), None
+
+    def get_file_tree(self, repo_id: int, branch: str) -> List[Tuple[str, str]]:
+        """
+        Returns a list of (value, label) tuples for files in the repository,
+        suitable for gr.Tree. Value and label are typically the relative file path.
+        This is a placeholder. A real implementation would scan the repo directory
+        or query a database of indexed files for the given branch.
+        """
+        # Placeholder implementation - mirrors the dummy data in UI for now
+        # In a real scenario, this would involve:
+        # 1. Checking out the specified branch (if not already active).
+        # 2. Walking the file system of the repo path.
+        # 3. Filtering out .git directory, and potentially other ignored files (.gitignore).
+        # 4. Formatting into List[Tuple[str, str]] where paths are relative to repo root.
+        # Example: [("README.md", "README.md"), ("src/app.py", "src/app.py")]
+        repo = self.get_repository_by_id(repo_id)
+        if not repo:
+            return []
+
+        # This is a very basic placeholder.
+        # A more robust version would use self.git_service.list_files_in_tree(repo.path, branch)
+        # or walk the filesystem after ensuring the correct branch is checked out.
+        # For now, returning a fixed list similar to UI's dummy data.
+        # This method *must* be implemented properly for the feature to work.
+        logging.warning(f"Placeholder get_file_tree called for repo {repo_id}, branch {branch}. Returning dummy data.")
+        return [
+            ("README.md", "README.md"),
+            ("src/app.py", "src/app.py"),
+            ("src/utils.py", "src/utils.py"),
+            ("tests/test_app.py", "tests/test_app.py"),
+            ("assets/image.png", "assets/image.png"),
+            (".gitignore", ".gitignore")
+        ]
+
 
     def revert_file_changes(self, repo_id: int, file_path: str) -> bool:
         """Reverts uncommitted changes to a specific file."""
