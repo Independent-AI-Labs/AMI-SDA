@@ -554,7 +554,7 @@ No active tasks.
 
                                 with gr.TabItem("Raw Diff", id="raw_diff_tab"):
                                     gr.Markdown("### Raw File Diff")
-                                    code_viewer = gr.Code(label="Raw Diff Output", language="diff", interactive=False, visible=True)
+                                    code_viewer = gr.Code(label="Raw Diff Output", language=None, interactive=False, visible=True)
                                     image_viewer = gr.Image(label="Image Content", interactive=False, visible=False)
 
             self.task_buttons = [analyze_branch_btn, analyze_dead_code_btn, analyze_duplicates_btn, add_repo_submit_btn,
