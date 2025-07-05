@@ -24,67 +24,86 @@
         </div>
 
         <div id="task-activity-content" class="transition-all duration-300 ease-in-out overflow-hidden"> <!-- Content to be collapsed, initially not hidden, with transition -->
-            {% if not task %}
-            <div class="bg-blue-50 dark:bg-blue-900/30 border-l-4 border-blue-500 text-blue-700 dark:text-blue-300 p-3 rounded-md mt-2" role="alert"> {# Added mt-2 for spacing when visible #}
+            <div id="no-active-task-message" class="bg-blue-50 dark:bg-blue-900/30 border-l-4 border-blue-500 text-blue-700 dark:text-blue-300 p-3 rounded-md mt-2" role="alert" {% if task %}style="display: none;"{% endif %}>
                 <p class="font-medium">No Active Task</p>
                 <p class="text-sm">The system is currently idle or no repository is selected.</p>
             </div>
-        {% else %}
-            <!-- Main Task Card -->
-            <div class="bg-white dark:bg-gray-800 shadow-md rounded-lg p-4 mb-3">
-                <h4 id="main-task-name-heading" class="text-xl font-semibold mb-2 text-gray-800 dark:text-gray-200 flex items-center">
-                    <i class="fas fa-flag-checkered mr-2 text-indigo-500"></i>Task: <span id="main-task-name">{{ task.name }}</span>
-                </h4>
-                <div class="bg-gray-50 dark:bg-gray-700 p-3 rounded-md">
-                    <div class="flex justify-between items-center mb-2">
-                        <span class="font-medium text-gray-700 dark:text-gray-300">Status:</span>
-                        <span id="main-task-status" class="px-3 py-1 text-xs font-semibold rounded-full
-                            {% if task.status == 'running' %}bg-blue-200 text-blue-800 dark:bg-blue-700 dark:text-blue-200
-                            {% elif task.status == 'completed' %}bg-green-200 text-green-800 dark:bg-green-700 dark:text-green-200
-                            {% elif task.status == 'failed' %}bg-red-200 text-red-800 dark:bg-red-700 dark:text-red-200
-                            {% elif task.status == 'pending' %}bg-yellow-200 text-yellow-800 dark:bg-yellow-700 dark:text-yellow-200
-                            {% else %}bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200
-                            {% endif %}">
-                            {{ task.status }}
-                        </span>
-                    </div>
-                    {{ main_task_progress_html|safe }} {# Assumes this contains its own padding/styling for progress bar #}
-                    <div class="mt-2 pt-2 border-t border-gray-200 dark:border-gray-600">
-                        {{ task_timing_html|safe }} {# Assumes this is styled appropriately #}
+
+            <div id="active-task-details-wrapper" {% if not task %}style="display: none;"{% endif %}>
+                <!-- Main Task Card -->
+                <div class="bg-white dark:bg-gray-800 shadow-md rounded-lg p-4 mb-3">
+                    <h4 id="main-task-name-heading" class="text-xl font-semibold mb-2 text-gray-800 dark:text-gray-200 flex items-center">
+                        <i class="fas fa-flag-checkered mr-2 text-indigo-500"></i>Task: <span id="main-task-name">{{ task.name if task else 'N/A' }}</span>
+                    </h4>
+                    <div class="bg-gray-50 dark:bg-gray-700 p-3 rounded-md">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="font-medium text-gray-700 dark:text-gray-300">Status:</span>
+                            <span id="main-task-status" class="px-3 py-1 text-xs font-semibold rounded-full
+                                {% if task and task.status == 'running' %}bg-blue-200 text-blue-800 dark:bg-blue-700 dark:text-blue-200
+                                {% elif task and task.status == 'completed' %}bg-green-200 text-green-800 dark:bg-green-700 dark:text-green-200
+                                {% elif task and task.status == 'failed' %}bg-red-200 text-red-800 dark:bg-red-700 dark:text-red-200
+                                {% elif task and task.status == 'pending' %}bg-yellow-200 text-yellow-800 dark:bg-yellow-700 dark:text-yellow-200
+                                {% else %}bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200
+                                {% endif %}">
+                                {{ task.status if task else 'Unknown' }}
+                            </span>
+                        </div>
+                        {% if main_task_progress_html %}
+                            {{ main_task_progress_html|safe }}
+                        {% else %}
+                            {# Fallback minimal progress bar structure if needed when 'task' is None but wrapper somehow visible #}
+                            <div class="progress-wrapper mb-1">
+                                <p class="text-xs text-gray-600 dark:text-gray-400 mb-0.5 flex justify-between items-center">
+                                    <span id="main-task-task-name" class="text-xs font-semibold text-gray-700 dark:text-gray-300 truncate pr-2" title="Idle">Idle</span>
+                                    <span id="main-task-progress-text" class="text-xxs whitespace-nowrap">No task (0%)</span>
+                                </p>
+                                <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                                    <div id="main-task-progress-bar" class="bg-blue-500 h-2 rounded-full transition-width duration-300 ease-out" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        {% endif %}
+                        <div class="mt-2 pt-2 border-t border-gray-200 dark:border-gray-600">
+                             {% if task_timing_html %}
+                                {{ task_timing_html|safe }}
+                             {% else %}
+                                <div class="text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
+                                    <p class="flex items-center"><i class='fas fa-ban mr-1.5 w-3 text-center text-gray-400 dark:text-gray-500'></i><strong>Timing:</strong>&nbsp;<span id="main-task-time-na" class="font-normal text-gray-600 dark:text-gray-300">N/A</span></p>
+                                </div>
+                             {% endif %}
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            {% if task.details %}
-            <div class="bg-white dark:bg-gray-800 shadow-md rounded-lg p-4 mb-3">
-                <h5 class="text-md font-medium mb-2 text-gray-700 dark:text-gray-300">Details:</h5>
-                <ul class="list-disc list-inside pl-2 space-y-0.5">
-                    {% for k, v in task.details.items()|sort %}
-                    <li class="text-xs text-gray-600 dark:text-gray-400"><strong class="font-medium text-gray-700 dark:text-gray-300">{{ k }}:</strong> {{ v }}</li>
-                    {% endfor %}
-                </ul>
-            </div>
-            {% endif %}
-
-            {% if task.children %}
-            <div class="bg-white dark:bg-gray-800 shadow-md rounded-lg p-4 mb-3">
-                <h4 class="text-md font-semibold mb-2 text-gray-700 dark:text-gray-300">Sub-Tasks:</h4>
-                <div class="space-y-2">
-                {% for child_task in task.children|sort(attribute='started_at') %}
-                    {{ render_sub_task(child_task)|safe }} {# sub_task.html should define its own card structure #}
-                {% endfor %}
+                {# Details, Children, Error sections are now inside active-task-details-wrapper #}
+                {# These also need to handle the 'task' being potentially None initially #}
+                <div id="main-task-details-card" class="bg-white dark:bg-gray-800 shadow-md rounded-lg p-4 mb-3" {% if not task or not task.details %}style="display: none;"{% endif %}>
+                    <h5 class="text-md font-medium mb-2 text-gray-700 dark:text-gray-300">Details:</h5>
+                    <ul id="main-task-details-list" class="list-disc list-inside pl-2 space-y-0.5">
+                        {% if task and task.details %}
+                            {% for k, v in task.details.items()|sort %}
+                            <li class="text-xs text-gray-600 dark:text-gray-400"><strong class="font-medium text-gray-700 dark:text-gray-300">{{ k }}:</strong> {{ v }}</li>
+                            {% endfor %}
+                        {% endif %}
+                    </ul>
                 </div>
-            </div>
-            {% endif %}
 
-            {% if task.error_message %}
-            <div class="bg-red-50 dark:bg-red-800/20 border border-red-300 dark:border-red-600 text-red-700 dark:text-red-300 px-3 py-2 rounded-lg relative" role="alert">
-                <strong class="font-bold flex items-center text-sm"><i class="fas fa-exclamation-triangle mr-1.5"></i>Error</strong>
-                <pre class="mt-1.5 text-xs bg-red-100 dark:bg-red-700/30 p-2 rounded overflow-x-auto">{{ task.error_message }}</pre>
-            </div>
-            {% endif %}
-        {% endif %}
-    </div>
+                <div id="main-task-children-container" class="bg-white dark:bg-gray-800 shadow-md rounded-lg p-4 mb-3" {% if not task or not task.children %}style="display: none;"{% endif %}>
+                    <h4 class="text-md font-semibold mb-2 text-gray-700 dark:text-gray-300">Sub-Tasks:</h4>
+                    <div class="space-y-2">
+                    {% if task and task.children %}
+                        {% for child_task in task.children|sort(attribute='started_at') %}
+                            {{ render_sub_task(child_task)|safe }}
+                        {% endfor %}
+                    {% endif %}
+                    </div>
+                </div>
+
+                <div id="main-task-error-card" class="bg-red-50 dark:bg-red-800/20 border border-red-300 dark:border-red-600 text-red-700 dark:text-red-300 px-3 py-2 rounded-lg relative" role="alert" {% if not task or not task.error_message %}style="display: none;"{% endif %}>
+                    <strong class="font-bold flex items-center text-sm"><i class="fas fa-exclamation-triangle mr-1.5"></i>Error</strong>
+                    <pre id="main-task-error-message-content" class="mt-1.5 text-xs bg-red-100 dark:bg-red-700/30 p-2 rounded overflow-x-auto">{{ task.error_message if task else '' }}</pre>
+                </div>
+            </div> {# End of active-task-details-wrapper #}
+        </div>
 
     <template id="sub-task-template-js">
         <div class="sub-task-card bg-gray-50 dark:bg-gray-750 shadow-sm rounded-lg p-3 my-1 border border-gray-200 dark:border-gray-600">
