@@ -415,7 +415,7 @@ No active tasks.
             gr.Markdown("# Software Development Analytics")
             with gr.Row():
                 status_output = gr.Textbox(label="Status", interactive=False, placeholder="Status messages will appear here...", scale=4)
-                view_status_modal_btn = gr.Button("View Control Panel", scale=1)
+                view_status_modal_btn = gr.Button("<i class='fas fa-tasks mr-1'></i>View Control Panel", scale=1)
             
             # Redundant progress_row and main_progress_bar REMOVED
 
@@ -464,14 +464,14 @@ No active tasks.
                     status_modal_close_btn = gr.Button("Close")
 
             with gr.Tabs() as tabs:
-                with gr.TabItem("Repository & Agent", id=0):
+                with gr.TabItem("<i class='fas fa-code-branch mr-2'></i>Repository & Agent", id=0):
                     with gr.Row():
                         with gr.Column(scale=1):
                             repo_dropdown = gr.Dropdown(label="Select Repository", interactive=True)
-                            open_add_repo_modal_btn = gr.Button("Add New Repository")
+                            open_add_repo_modal_btn = gr.Button("<i class='fas fa-plus-circle mr-1'></i>Add New Repository")
                         with gr.Column(scale=1):
                             branch_dropdown = gr.Dropdown(label="Select Branch", interactive=True)
-                            analyze_branch_btn = gr.Button("Force Re-Analyze Branch", variant="primary")
+                            analyze_branch_btn = gr.Button("<i class='fas fa-sync-alt mr-1'></i>Force Re-Analyze Branch", variant="primary")
 
                     chatbot = gr.Chatbot(
                         label="Chat with your Codebase", height=600,
@@ -485,7 +485,7 @@ No active tasks.
                         additional_inputs=[repo_id_state, branch_state]
                     )
 
-                with gr.TabItem("Insights Dashboard", id=1):
+                with gr.TabItem("<i class='fas fa-chart-line mr-2'></i>Insights Dashboard", id=1):
                     with gr.Row():
                         with gr.Column(scale=1): # This column will now hold the HTML stat cards
                             gr.Markdown('### <i class="fas fa-chart-bar"></i> Key Statistics') # Title adjusted
@@ -495,8 +495,8 @@ No active tasks.
                             lang_plot = gr.Plot(label="Language Breakdown") # This remains a plot
                     gr.Markdown('### <i class="fas fa-search-plus"></i> In-Depth Analysis (runs in background)')
                     with gr.Row():
-                        analyze_dead_code_btn = gr.Button("Find Potentially Unused Code")
-                        analyze_duplicates_btn = gr.Button("Find Potentially Duplicate Code")
+                        analyze_dead_code_btn = gr.Button("<i class='fas fa-code-slash mr-1'></i>Find Unused Code")
+                        analyze_duplicates_btn = gr.Button("<i class='far fa-copy mr-1'></i>Find Duplicate Code")
                     # Full Task History Accordion REMOVED
                     with gr.Tabs():
                         with gr.TabItem("Unused Code Results"):
@@ -506,14 +506,14 @@ No active tasks.
                             duplicate_code_df = gr.DataFrame(headers=["File A", "Lines A", "File B", "Lines B", "Similarity"], interactive=False,
                                                              max_height=400)
 
-                with gr.TabItem("Code Browser & Version Control", id=2):
+                with gr.TabItem("<i class='fas fa-folder-open mr-2'></i>Code Browser & VC", id=2):
                     with gr.Row():
                         with gr.Column(scale=1):
-                            gr.Markdown("#### Git Status")
+                            gr.Markdown('#### <i class="fab fa-git-alt mr-2"></i>Git Status')
                             modified_files_dropdown = gr.Dropdown(label="Select Modified File to View", interactive=True)
-                            revert_file_btn = gr.Button("Revert Changes for Selected File")
+                            revert_file_btn = gr.Button("<i class='fas fa-history mr-1'></i>Revert File")
                             commit_message = gr.Textbox(label="Commit Message", placeholder="Enter commit message...")
-                            commit_btn = gr.Button("Commit All Changes")
+                            commit_btn = gr.Button("<i class='fas fa-save mr-1'></i>Commit All")
                         with gr.Column(scale=3):
                             code_viewer = gr.Code(label="File Content / Diff", language=None, interactive=False, visible=True)
                             image_viewer = gr.Image(label="Image Content", interactive=False, visible=False)
@@ -852,8 +852,8 @@ No active tasks.
 
         button_updates = self._get_task_button_updates(interactive=not is_running)
         dead_code_update, dup_code_update = gr.update(), gr.update()
-        # Initialize updates for HTML stats and language plot to "no change" by default
-        stats_html_update, lang_plot_update = gr.update(), gr.update()
+        # Initialize updates for HTML stats and language plot to "skip update" by default
+        stats_html_update, lang_plot_update = gr.skip(), gr.skip()
 
         task_could_change_branch = task.name.startswith("Ingest Branch:") or task.name == "analyze_branch"
         if task.status == 'completed':
@@ -987,18 +987,22 @@ No active tasks.
             stats_html = f"""
             <div class="stat-cards-container">
                 <div class="stat-card">
+                    <div class="stat-icon"><i class="fas fa-file-alt"></i></div>
                     <div class="stat-value">{file_count:,}</div>
                     <div class="stat-label">FILES</div>
                 </div>
                 <div class="stat-card">
+                    <div class="stat-icon"><i class="fas fa-stream"></i></div>
                     <div class="stat-value">{total_lines:,}</div>
                     <div class="stat-label">TOTAL LINES</div>
                 </div>
                 <div class="stat-card">
+                    <div class="stat-icon"><i class="fas fa-brain"></i></div>
                     <div class="stat-value">{total_tokens:,}</div>
                     <div class="stat-label">TOTAL TOKENS</div>
                 </div>
                 <div class="stat-card">
+                    <div class="stat-icon"><i class="fas fa-cubes"></i></div>
                     <div class="stat-value">{schema_count}</div>
                     <div class="stat-label">SUB-MODULES</div>
                 </div>

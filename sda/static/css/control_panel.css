@@ -395,3 +395,16 @@ html.dark .stat-value {
 html.dark .stat-label {
     color: var(--body-text-color-subdued-dark, #9ca3af);
 }
+
+.stat-icon {
+    font-size: 1.75rem; /* Adjust size as needed, e.g., text-3xl */
+    margin-bottom: 0.75rem; /* mb-3, space between icon and value */
+    color: var(--accent-color-primary, #007bff); /* Use accent color or a specific theme color */
+    /* Alternative: Use a more subdued color if accent is too strong for all cards */
+    /* color: var(--body-text-color-subdued, #6b7280); */
+}
+
+html.dark .stat-icon {
+    color: var(--accent-color-primary-dark, #3b82f6); /* Accent color for dark mode */
+    /* color: var(--body-text-color-subdued-dark, #9ca3af); */
+}

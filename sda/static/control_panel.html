@@ -124,8 +124,8 @@
 
             <div id="task-activity-content" class="transition-all duration-300 ease-in-out overflow-hidden" style="max-height: 0px; opacity: 0;">
                 <div id="no-active-task-message" class="bg-blue-50 dark:bg-blue-900/30 border-l-4 border-blue-500 text-blue-700 dark:text-blue-300 p-3 rounded-md mt-2" role="alert">
-                    <p class="font-medium">No Active Task</p>
-                    <p class="text-sm">The system is currently idle or no repository is selected.</p>
+                    <p class="font-medium flex items-center"><i class="fas fa-info-circle mr-2"></i>No Active Task</p>
+                    <p class="text-sm ml-6">The system is currently idle or no repository is selected.</p> <!-- Added ml-6 to align with icon -->
                 </div>
 
                 <div id="active-task-details-wrapper" style="display: none;">
@@ -139,10 +139,10 @@
 
                 <!-- Container for Historical Tasks -->
                 <div id="historical-tasks-container" class="mt-4 pt-4 border-t border-gray-300 dark:border-gray-600">
-                    <h4 class="text-md font-semibold mb-3 text-gray-700 dark:text-gray-100">Task History:</h4>
+                    <h4 class="text-md font-semibold mb-3 text-gray-700 dark:text-gray-100 flex items-center"><i class="fas fa-archive mr-2 text-gray-500 dark:text-gray-400"></i>Task History:</h4>
                     <div id="task-history-list" class="space-y-3">
                         <!-- Historical tasks will be injected here by JS -->
-                        <p id="no-history-message" class="text-sm text-gray-500 dark:text-gray-400" style="display: none;">No historical tasks found.</p>
+                        <p id="no-history-message" class="text-sm text-gray-500 dark:text-gray-400 flex items-center" style="display: none;"><i class="fas fa-folder-open mr-2"></i>No historical tasks found.</p>
                     </div>
                     <button id="load-more-tasks-btn" class="mt-4 w-full bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-md text-sm transition duration-150 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed">
                         <i class="fas fa-plus mr-1"></i> Load More Tasks
@@ -178,11 +178,11 @@
             <div class="task-content-collapsible" style="display: none;"> <!-- Collapsible content area -->
                 <div class="p-3 border-t border-gray-200 dark:border-gray-600">
                     <div class="task-details-card mb-2" style="display: none;">
-                        <h5 class="text-sm font-medium mb-1 text-gray-700 dark:text-gray-200">Details:</h5>
+                        <h5 class="text-sm font-medium mb-1 text-gray-700 dark:text-gray-200 flex items-center"><i class="fas fa-info-circle mr-1.5 text-blue-500"></i>Details:</h5>
                         <ul class="task-details-list list-disc list-inside pl-2 space-y-0.5 text-xs text-gray-600 dark:text-gray-300"></ul>
                     </div>
                     <div class="task-children-container mb-2" style="display: none;">
-                        <h5 class="text-sm font-medium mb-1 text-gray-700 dark:text-gray-200">Sub-Tasks:</h5>
+                        <h5 class="text-sm font-medium mb-1 text-gray-700 dark:text-gray-200 flex items-center"><i class="fas fa-sitemap mr-1.5 text-purple-500"></i>Sub-Tasks:</h5>
                         <div class="sub-tasks-list space-y-1">
                             <!-- Collapsible sub-tasks will be injected here -->
                         </div>
