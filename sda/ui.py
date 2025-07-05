@@ -523,7 +523,7 @@ No active tasks.
                             # For dynamic updates based on repo/branch, populating 'value' is more flexible.
                             # The actual API (root_dir vs value) needs to be confirmed from docs.
                             # For now, I'll assume it can take `value` as a list of strings.
-                            file_explorer = gr.FileExplorer(label="Repository Files", interactive=True)
+                            file_explorer = gr.FileExplorer(label="Repository Files", interactive=True, file_count="single") # Added file_count="single"
                             # Removed current_path_display, file_browser_radio, file_browser_back_btn, current_path_state
                         with gr.Column(scale=3): # Content Column
                             with gr.Tabs() as content_tabs:
@@ -674,9 +674,18 @@ No active tasks.
             file_explorer.change( # Changed from .select to .change
                 self.handle_file_explorer_select,
                 inputs=[repo_id_state, branch_state, file_explorer], # Pass file_explorer itself as input for its value
-                outputs=[embedding_html_viewer, code_viewer, image_viewer, selected_file_state]
+                outputs=[
+                outputs=[
+                    embedding_html_viewer, code_viewer, image_viewer, selected_file_state,
+                    current_modified_files_dropdown_ca, file_to_compare_dropdown_ca
+                ]
             )
-            # Removed event handlers for file_browser_radio, current_path_state, file_browser_back_btn
+
+            content_tabs.select(
+                self.handle_content_tab_select,
+                inputs=[repo_id_state, branch_state, selected_file_state],
+                outputs=[change_analysis_output]
+            )
 
             # Connect Change Analysis buttons
             analyze_current_changes_btn.click(
@@ -1094,10 +1103,17 @@ No active tasks.
             raw_content = f"// Error: Could not load content for {file_path}"
 
         is_image_for_embedding = file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp'))
+        generated_html_for_embedding = ""
         if not is_image_for_embedding:
-            embedding_html_update = gr.update(value=self._generate_embedding_html(raw_content, file_path))
+            generated_html_for_embedding = self._generate_embedding_html(raw_content, file_path)
+            embedding_html_update = gr.update(value=generated_html_for_embedding)
+            logging.info(f"Generated embedding HTML for {file_path}, length {len(generated_html_for_embedding)}")
+            if len(generated_html_for_embedding) < 300: # Log short HTML
+                 logging.info(f"Short HTML content: {generated_html_for_embedding}")
         else:
-            embedding_html_update = gr.update(value=f"<div>Embedding visualization is not available for image: {file_path}</div>")
+            generated_html_for_embedding = f"<div>Embedding visualization is not available for image: {file_path}</div>"
+            embedding_html_update = gr.update(value=generated_html_for_embedding)
+            logging.info(f"Skipping embedding HTML for image {file_path}")
 
         # Handle Diff Tab (code_viewer and image_viewer)
         diff_content, image_obj = self.framework.get_file_diff_or_content(repo_id, file_path, is_new_file_from_explorer=True)
@@ -1111,7 +1127,47 @@ No active tasks.
             code_viewer_update = gr.update(value=diff_content, language=lang, label=f"Content/Diff: {file_path}", visible=True)
             image_viewer_update = gr.update(value=None, visible=False)
 
-        return embedding_html_update, code_viewer_update, image_viewer_update, new_selected_file_for_viewers
+        # Updates for Change Analysis dropdowns
+        # If the selected file is a known modified file, set it in current_modified_files_dropdown_ca
+        # For now, always set file_to_compare_dropdown_ca to the selected file.
+        # A more robust way would be to check if file_path is in the choices of current_modified_files_dropdown_ca.
+        # This requires passing the choices state or re-fetching. For simplicity, we'll just update.
+        current_modified_files_ca_upd = gr.update(value=file_path) # Might select it even if not modified, user can change
+        file_to_compare_ca_upd = gr.update(value=file_path)
+
+        return embedding_html_update, code_viewer_update, image_viewer_update, new_selected_file_for_viewers, current_modified_files_ca_upd, file_to_compare_ca_upd
+
+    def handle_content_tab_select(self, evt: gr.SelectData, repo_id: int, branch: str, selected_file: str) -> gr.update:
+        # evt.value will be the ID of the selected tab_item (e.g., "change_analysis_tab")
+        # For gr.Tabs, evt.index gives the integer index, evt.value might be None or the id if provided to TabItem.
+        # Let's assume we check against the id="change_analysis_tab". Or index 1.
+        # Gradio's SelectData for Tabs usually gives `index` (int) and `value` (label of TabItem).
+
+        # Check if the "Change Analysis" tab is selected. Its ID is "change_analysis_tab".
+        # The gr.Tabs component itself is named `content_tabs`.
+        # The TabItems are "Embedding" (id="embedding_tab"), "Change Analysis" (id="change_analysis_tab"), "Diff" (id="diff_tab").
+        # Gradio's .select event on Tabs provides SelectData with evt.value being the *label* of the TabItem.
+
+        if evt.value == "Change Analysis": # evt.value is the label of the TabItem
+            logging.info(f"Change Analysis tab selected. Current file: {selected_file}")
+            if repo_id and branch and selected_file:
+                status = self.framework.get_repository_status(repo_id)
+                modified_files = []
+                if status:
+                    modified_files.extend(status.get('modified', []))
+                    modified_files.extend(status.get('new', []))
+
+                if selected_file in modified_files:
+                    logging.info(f"File {selected_file} is modified. Triggering analysis.")
+                    # Call the existing handler for analyzing current changes.
+                    # This handler uses gr.Progress, which should work here too.
+                    return self.handle_analyze_current_file_changes(repo_id, branch, selected_file)
+                else:
+                    logging.info(f"File {selected_file} is not in modified list for Change Analysis tab auto-trigger.")
+                    return gr.update(value="Selected file is not modified. Use controls below to analyze specific changes or compare versions.")
+            else:
+                return gr.update(value="Select a repository, branch, and file to enable automatic change analysis.")
+        return gr.skip() # No update for other tabs or if conditions not met
 
 
     def update_all_panels(self, repo_id: int, branch: str) -> Tuple:
@@ -1119,8 +1175,8 @@ No active tasks.
 
         file_list_for_explorer = []
         if repo_id and branch:
-            # get_file_tree returns List[Tuple[path, label]]
-            file_list_for_explorer = [item[0] for item in self.framework.get_file_tree(repo_id, branch)]
+            # get_file_tree now returns List[str] directly suitable for FileExplorer's value
+            file_list_for_explorer = self.framework.get_file_tree(repo_id, branch)
         file_explorer_upd = gr.update(value=file_list_for_explorer) # For gr.FileExplorer
 
         initial_code_view_text = "// Select a file from the explorer."

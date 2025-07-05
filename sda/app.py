@@ -527,16 +527,43 @@ class CodeAnalysisFramework:
         # A more robust version would use self.git_service.list_files_in_tree(repo.path, branch)
         # or walk the filesystem after ensuring the correct branch is checked out.
         # For now, returning a fixed list similar to UI's dummy data.
-        # This method *must* be implemented properly for the feature to work.
-        logging.warning(f"Placeholder get_file_tree called for repo {repo_id}, branch {branch}. Returning dummy data.")
-        return [
-            ("README.md", "README.md"),
-            ("src/app.py", "src/app.py"),
-            ("src/utils.py", "src/utils.py"),
-            ("tests/test_app.py", "tests/test_app.py"),
-            ("assets/image.png", "assets/image.png"),
-            (".gitignore", ".gitignore")
-        ]
+        repo = self.get_repository_by_id(repo_id)
+        if not repo:
+            logging.error(f"get_file_tree: Repository with ID {repo_id} not found.")
+            return [("Error: Repository not found.", "Error: Repository not found.")]
+
+        # Ensure the correct branch is active for listing files from the working directory.
+        # This is a simplified approach. A robust solution would handle potential errors during checkout
+        # (e.g., dirty state) or list files from a specific tree-ish without checkout if possible.
+        current_git_branch = self.git_service.get_current_branch(repo.path)
+        if current_git_branch != branch:
+            logging.info(f"Framework: Switching branch in {repo.path} from {current_git_branch} to {branch} for get_file_tree.")
+            try:
+                # This assumes checkout_branch updates the working tree.
+                # If list_files_in_tree_formatted can read from a specific tree-ish without checkout, that's better.
+                self.git_service.checkout_branch(repo.path, branch)
+                # Update active branch in DB
+                with self.db_manager.get_session("public") as session:
+                    db_repo = session.get(Repository, repo_id)
+                    if db_repo:
+                        db_repo.active_branch = branch
+                        # session.commit() # Persist change if checkout is successful
+            except Exception as e:
+                logging.error(f"Framework: Failed to checkout branch {branch} for repo {repo.path} during get_file_tree: {e}")
+                return [("Error: Could not switch branch.", "Error: Could not switch branch.")]
+
+        # Assuming list_files_in_tree_formatted lists all files in the current HEAD of the repo_path.
+        # It should return List[Tuple[str, str]] where the first element is the full path for selection,
+        # and the second is the display label. For gr.FileExplorer, these are often the same.
+        files = self.git_service.list_files_in_tree_formatted(repo.path, branch) # Pass branch to ensure it lists from correct tree if supported
+
+        if not files:
+            logging.warning(f"get_file_tree: No files found by git_service.list_files_in_tree_formatted for repo {repo_id}, branch {branch}.")
+            return [("No files found in this branch.", "No files found in this branch.")]
+
+        # gr.FileExplorer expects a list of file paths (strings).
+        # The list_files_in_tree_formatted returns List[Tuple[str,str]], so we take the first element.
+        return [file_data[0] for file_data in files]
 
     def list_directory(self, repo_id: int, branch: str, dir_path: str) -> List[str]:
         """
