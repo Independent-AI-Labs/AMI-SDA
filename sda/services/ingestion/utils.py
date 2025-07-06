@@ -11,7 +11,7 @@ def _stream_chunks_from_files(file_paths: List[str]) -> Generator[Tuple[str, int
                 for line in f:
                     if line.strip():
                         data = json.loads(line)
-                        yield (data['schema'], data['id'], data['content'], data['token_count'])
+                        yield data # Yield the dictionary directly
         except FileNotFoundError:
             logging.warning(f"Chunk cache file not found, skipping: {file_path}")
         except Exception as e:

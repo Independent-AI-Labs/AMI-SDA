@@ -55,20 +55,35 @@ class SemanticSearchResult(BaseModel):
     score: float
 
 class TransientNode(BaseModel):
-    """A temporary, serializable representation of an AST node for pipeline processing."""
-    node_id: str
+    """
+    A temporary, serializable representation of an AST node for pipeline processing.
+    Includes character offsets for precise slicing from a source blob.
+    """
+    node_id: str # Example: {file_path}:{node_type}:{start_char_offset}-{end_char_offset}
+    file_path: str # Relative path of the file this node belongs to
+
     node_type: str
-    name: Optional[str]
+    name: Optional[str] = None
+
+    # Line and column information (1-indexed for lines, 0-indexed for columns)
     start_line: int
     start_column: int
     end_line: int
     end_column: int
-    text_content: str
-    signature: Optional[str]
-    docstring: Optional[str]
+
+    # Absolute character offsets (0-indexed) within the source file content
+    start_char_offset: int
+    end_char_offset: int # Exclusive end (content[start:end])
+
+    signature: Optional[str] = None # This might still be useful if parsers can extract it cleanly
+                                    # rather than re-parsing the slice later.
+    docstring: Optional[str] = None # Same as signature.
+
     depth: int
-    complexity_score: Optional[float]
+    complexity_score: Optional[float] = None
     parent_id: Optional[str] = None
+
+    # Contains repository_id, branch etc.
     repo_metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class TransientChunk(BaseModel):

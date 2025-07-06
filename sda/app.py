@@ -15,6 +15,7 @@ import queue
 import requests # Added for Dgraph metrics
 import threading
 import traceback
+from collections import defaultdict # Import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -27,7 +28,7 @@ from sqlalchemy.orm import joinedload
 
 from sda.config import DB_URL, WORKSPACE_DIR, AIConfig, GOOGLE_API_KEY, DGRAPH_HOST # Added DGRAPH_HOST
 from sda.core.db_management import DatabaseManager
-from sda.core.models import Repository, File as DBFile, DBCodeChunk, Task, BillingUsage
+from sda.core.models import Repository, File as DBFile, DBCodeChunk, Task, BillingUsage, CodeBlob # Ensure CodeBlob is imported
 from sda.services.agent import AgentManager
 from sda.services.analysis import EnhancedAnalysisEngine
 from sda.services.chunking import TokenAwareChunker
@@ -375,42 +376,50 @@ class CodeAnalysisFramework:
         if not repo or not repo.db_schemas:
             return {}
 
-        def _get_stats_from_schema(schema: str) -> Dict[str, Any]:
-            stats = {"file_count": 0, "total_lines": 0, "total_tokens": 0, "language_breakdown": {}}
-            with self.db_manager.get_session(schema) as session:
-                file_stats = session.query(func.count(DBFile.id), func.sum(DBFile.line_count)).filter(
+        def _get_file_stats_from_schema(schema_name: str) -> Dict[str, Any]:
+            # Fetches file counts, line counts, and language breakdown from a specific partition schema
+            schema_stats = {"file_count": 0, "total_lines": 0, "language_breakdown": {}}
+            with self.db_manager.get_session(schema_name) as session:
+                file_query_results = session.query(
+                    DBFile.language,
+                    func.count(DBFile.id),
+                    func.sum(DBFile.line_count)
+                ).filter(
                     DBFile.repository_id == repo_id, DBFile.branch == branch
-                ).first()
-                if file_stats:
-                    stats["file_count"] = file_stats[0] or 0
-                    stats["total_lines"] = file_stats[1] or 0
-                
-                token_sum = session.query(func.sum(DBCodeChunk.token_count)).filter(
-                    DBCodeChunk.repository_id == repo_id, DBCodeChunk.branch == branch
-                ).scalar()
-                stats["total_tokens"] = token_sum or 0
-                
-                lang_breakdown = session.query(DBFile.language, func.count(DBFile.id)).filter(
-                    DBFile.repository_id == repo_id, DBFile.branch == branch, DBFile.language.isnot(None)
                 ).group_by(DBFile.language).all()
-                stats["language_breakdown"] = {lang: count for lang, count in lang_breakdown}
-            return stats
 
-        total_stats = {"file_count": 0, "total_lines": 0, "total_tokens": 0, "language_breakdown": {}}
-        with ThreadPoolExecutor() as executor:
-            futures = {executor.submit(_get_stats_from_schema, schema): schema for schema in repo.db_schemas}
-            for future in as_completed(futures):
-                try:
-                    schema_stats = future.result()
-                    total_stats["file_count"] += schema_stats["file_count"]
-                    total_stats["total_lines"] += schema_stats["total_lines"]
-                    total_stats["total_tokens"] += schema_stats["total_tokens"]
-                    for lang, count in schema_stats["language_breakdown"].items():
-                        total_stats["language_breakdown"][lang] = total_stats["language_breakdown"].get(lang, 0) + count
-                except Exception as e:
-                    logging.error(f"Failed to get stats from schema {futures[future]}: {e}")
+                for lang, count, lines in file_query_results:
+                    schema_stats["file_count"] += count or 0
+                    schema_stats["total_lines"] += lines or 0
+                    if lang: # Language can be None
+                        schema_stats["language_breakdown"][lang] = schema_stats["language_breakdown"].get(lang, 0) + count
+            return schema_stats
+
+        total_stats = {"file_count": 0, "total_lines": 0, "total_tokens": 0, "language_breakdown": defaultdict(int)}
+
+        # Aggregate file-level stats from partition schemas
+        if repo.db_schemas:
+            with ThreadPoolExecutor(max_workers=len(repo.db_schemas) or 1) as executor:
+                futures = {executor.submit(_get_file_stats_from_schema, sch): sch for sch in repo.db_schemas}
+                for future in as_completed(futures):
+                    try:
+                        partition_stats = future.result()
+                        total_stats["file_count"] += partition_stats["file_count"]
+                        total_stats["total_lines"] += partition_stats["total_lines"]
+                        for lang, count in partition_stats["language_breakdown"].items():
+                            total_stats["language_breakdown"][lang] += count
+                    except Exception as e:
+                        logging.error(f"Failed to get file stats from schema {futures[future]}: {e}", exc_info=True)
+
+        # Get total_tokens from public.DBCodeChunk table
+        with self.db_manager.get_session("public") as public_session:
+            token_sum_result = public_session.query(func.sum(DBCodeChunk.token_count)).filter(
+                DBCodeChunk.repository_id == repo_id, DBCodeChunk.branch == branch
+            ).scalar()
+            total_stats["total_tokens"] = token_sum_result or 0
 
         total_stats["schema_count"] = len(repo.db_schemas) if repo.db_schemas else 0
+        total_stats["language_breakdown"] = dict(total_stats["language_breakdown"]) # Convert defaultdict to dict for output
         return total_stats
 
     def get_cpg_analysis(self, repo_id: int, branch: str) -> Dict[str, Any]:
@@ -773,3 +782,85 @@ class CodeAnalysisFramework:
 
             session.expunge_all() # Expunge after all data needed for serialization is loaded.
             return tasks
+
+    # --- NEW METHOD FOR CONTENT RETRIEVAL ---
+    def get_ast_node_content_by_uid(self, dgraph_node_uid: str) -> Optional[str]:
+        """
+        Retrieves the specific code content for a given Dgraph AST node UID.
+        Fetches file path and offsets from Dgraph, then retrieves the content
+        slice from the CodeBlobs table in PostgreSQL.
+        """
+        if not dgraph_node_uid:
+            logging.warning("get_ast_node_content_by_uid: dgraph_node_uid is required.")
+            return None
+
+        # 1. Query Dgraph for the AST node's metadata
+        # The Dgraph schema for ASTNode was defined with these:
+        # file_path: string, startCharOffset: int, endCharOffset: int, repo_id: string, branch: string
+
+        query = """
+        query getNodeContentInfo($uid: string) {
+          node(func: uid($uid)) {
+            uid
+            file_path
+            startCharOffset
+            endCharOffset
+            repo_id
+            branch
+          }
+        }
+        """
+        variables = {"$uid": dgraph_node_uid}
+        dgraph_response = self.db_manager.query_dgraph(query, variables)
+
+        if not dgraph_response or not dgraph_response.get('node'):
+            logging.warning(f"No node found in Dgraph for UID: {dgraph_node_uid}")
+            return None
+
+        node_data_list = dgraph_response['node']
+        if not node_data_list: # Should not happen if 'node' key exists and is not empty list
+            logging.warning(f"Node list empty in Dgraph response for UID: {dgraph_node_uid}")
+            return None
+
+        node_data = node_data_list[0]
+
+        file_path = node_data.get('file_path')
+        start_offset_str = node_data.get('startCharOffset')
+        end_offset_str = node_data.get('endCharOffset')
+        dgraph_repo_id_str = node_data.get('repo_id')
+        dgraph_branch = node_data.get('branch')
+
+        if file_path is None or start_offset_str is None or end_offset_str is None or \
+           dgraph_repo_id_str is None or dgraph_branch is None:
+            logging.error(f"Dgraph node {dgraph_node_uid} is missing required fields (file_path, offsets, repo_id, or branch). Data: {node_data}")
+            return None
+
+        try:
+            start_offset = int(start_offset_str)
+            end_offset = int(end_offset_str)
+            dgraph_repo_id_int = int(dgraph_repo_id_str)
+        except (ValueError, TypeError) as e:
+            logging.error(f"Error converting Dgraph offset/repo_id data for node {dgraph_node_uid}: {e}. Data: {node_data}")
+            return None
+
+        # 2. Query PostgreSQL's CodeBlobs table
+        with self.db_manager.get_session("public") as session:
+            code_blob_entry = session.query(CodeBlob).filter_by(
+                repository_id=dgraph_repo_id_int,
+                branch=dgraph_branch,
+                file_path=file_path
+            ).first()
+
+            if not code_blob_entry:
+                logging.warning(f"No CodeBlob found for repo_id={dgraph_repo_id_int}, branch='{dgraph_branch}', file_path='{file_path}' (from Dgraph node {dgraph_node_uid})")
+                return None
+
+            full_content = code_blob_entry.content
+
+            # 3. Perform slicing
+            if not (0 <= start_offset <= end_offset <= len(full_content)):
+                logging.error(f"Invalid offsets for Dgraph node {dgraph_node_uid}: start={start_offset}, end={end_offset}, content_len={len(full_content)}")
+                return None
+
+            sliced_content = full_content[start_offset:end_offset]
+            return sliced_content
