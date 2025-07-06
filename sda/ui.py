@@ -1115,169 +1115,165 @@ No active tasks.
 
     # handle_populate_file_browser_radio, handle_file_browser_go_up, handle_file_browser_radio_select are removed.
     # New handlers for gr.FileExplorer will be simpler.
+    # import asyncio # Already at top
+    import urllib.parse # For URL encoding
 
-    def handle_file_explorer_select(self, repo_id: int, branch: str, selection_event_data: Any) -> Tuple[gr.update, gr.update, gr.update, str, gr.update]:
+    async def handle_file_explorer_select(self, repo_id: int, branch: str, selection_event_data: Any) -> Tuple[gr.update, gr.update, gr.update, str, gr.update]:
         # Returns updates for: embedding_html_viewer, code_viewer, image_viewer, selected_file_state, no_changes_message_html
-        # selection_event_data is the value from FileExplorer's .change() event.
-        # If file_count="single", this should be a single path string when a user selects a file.
-        # If it's a list, it might be the initial population or a multi-select scenario we want to ignore for single-file processing.
 
-        file_path: Optional[str] = None
+        absolute_file_path_str: Optional[str] = None
         if isinstance(selection_event_data, str):
-            file_path = selection_event_data
+            absolute_file_path_str = selection_event_data
+        elif isinstance(selection_event_data, list) and len(selection_event_data) > 0 and isinstance(selection_event_data[0], str) :
+            # FileExplorer might return a list with one item for single selection
+            absolute_file_path_str = selection_event_data[0]
         elif isinstance(selection_event_data, list):
-            # If file_count="single" is truly effective, this case might only occur if the component's value
-            # (the whole list of files) is updated programmatically, triggering .change.
-            # In such a case, we don't have a single user-selected file to process.
-            logging.info(f"FileExplorer .change event triggered with a list (count: {len(selection_event_data)}). Assuming no single file selection by user. Skipping detailed view updates.")
-            # We still need to return the correct number of updates.
-            return gr.skip(), gr.skip(), gr.skip(), "" # Removed 2 gr.skip()
+            logging.info(f"FileExplorer .change event triggered with a list (count: {len(selection_event_data)}). Assuming no single file selection by user or deselect. Skipping detailed view updates.")
+            return gr.skip(), gr.update(value="// No file selected or multiple files selected.", language=None, label="File Content / Diff", visible=True), gr.update(value=None, visible=False), "", gr.update(visible=False)
 
-        if not file_path: # Path could be None if deselected or if it was a list and we decided to skip.
+
+        if not absolute_file_path_str:
             embedding_html_update = gr.update(value="<div>Select a file for embedding visualization.</div>")
             code_viewer_update = gr.update(value="// Select a file to view content/diff.", language=None, label="File Content / Diff", visible=True)
             image_viewer_update = gr.update(value=None, visible=False)
             no_changes_html_update = gr.update(visible=False)
             return embedding_html_update, code_viewer_update, image_viewer_update, "", no_changes_html_update
 
-        print(f"UI: FileExplorer selection changed to: '{file_path}' for repo {repo_id}, branch {branch}")
+        logging.info(f"UI: FileExplorer selection: '{absolute_file_path_str}' for repo {repo_id}, branch {branch}")
 
-        # Convert absolute path from FileExplorer to relative path for framework
         repo = self.framework.get_repository_by_id(repo_id)
         if not repo or not repo.path:
-            error_msg = "Error: Could not determine repository path to make file path relative."
+            error_msg = "Error: Could not determine repository path."
             logging.error(error_msg)
-            embedding_html_update = gr.update(value=self._generate_embedding_html(error_msg, file_path))
-            code_viewer_update = gr.update(value=error_msg, language=None, label="Error", visible=True)
-            image_viewer_update = gr.update(value=None, visible=False)
-            no_changes_html_update = gr.update(visible=False)
-            return embedding_html_update, code_viewer_update, image_viewer_update, file_path, no_changes_html_update
+            # For all outputs, return an update:
+            return (
+                gr.update(value=f"<div class='error-message'>{error_msg}</div>"),
+                gr.update(value=error_msg, language=None, label="Error", visible=True),
+                gr.update(value=None, visible=False),
+                absolute_file_path_str,  # selected_file_state (absolute path)
+                gr.update(visible=False)
+            )
 
         try:
             repo_root = Path(repo.path).resolve()
-            absolute_file_path = Path(file_path).resolve()
-            relative_file_path = str(absolute_file_path.relative_to(repo_root))
-            # Convert to forward slashes for consistency, as git typically uses them
-            relative_file_path = relative_file_path.replace("\\", "/")
-            logging.info(f"Converted absolute path '{absolute_file_path}' to relative path '{relative_file_path}' for repo '{repo_root}'")
+            absolute_file_path_resolved = Path(absolute_file_path_str).resolve()
+            relative_file_path = str(absolute_file_path_resolved.relative_to(repo_root)).replace("\\", "/")
+            logging.info(f"Converted absolute path '{absolute_file_path_resolved}' to relative path '{relative_file_path}' for repo root '{repo_root}'")
         except ValueError as e:
-            error_msg = f"Error: Could not make path relative: {e}. Absolute: {file_path}, Repo Root: {repo_root}"
+            error_msg = f"Error making path relative: {e}. Abs: {absolute_file_path_str}, Repo Root: {repo_root}"
             logging.error(error_msg)
-            embedding_html_update = gr.update(value=self._generate_embedding_html(error_msg, file_path))
-            code_viewer_update = gr.update(value=error_msg, language=None, label="Error", visible=True)
-            image_viewer_update = gr.update(value=None, visible=False)
-            no_changes_html_update = gr.update(visible=False)
-            return embedding_html_update, code_viewer_update, image_viewer_update, file_path, no_changes_html_update
+            return (
+                gr.update(value=f"<div class='error-message'>{error_msg}</div>"),
+                gr.update(value=error_msg, language=None, label="Error", visible=True),
+                gr.update(value=None, visible=False),
+                absolute_file_path_str,
+                gr.update(visible=False)
+            )
 
-        new_selected_file_for_viewers = relative_file_path # This state should hold the relative path
+        new_selected_file_for_state = relative_file_path # Store relative path in state
 
-        # --- Embedding Tab Update ---
-        # The _generate_embedding_html function now produces HTML with an embedded script.
-        # We need to inject repo_id and branch_name into that script.
-        # The `raw_content_for_embedding` is no longer directly passed to _generate_embedding_html for display.
+        # --- Differentiate based on file type ---
+        is_pdf = relative_file_path.lower().endswith('.pdf')
+        is_image_for_raw_view = relative_file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'))
 
-        is_image = relative_file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'))
-
-        if not is_image:
-            # Ensure branch_name and relative_file_path are URL-encoded for the iframe src
-            import urllib.parse
-            encoded_branch_name = urllib.parse.quote_plus(branch)
-            encoded_relative_file_path = urllib.parse.quote_plus(relative_file_path)
-
-            iframe_url = f"/static/ast_visualization.html?repo_id={str(repo_id)}&branch_name={encoded_branch_name}&file_path={encoded_relative_file_path}"
-            embedding_html_content = f'<iframe src="{iframe_url}" style="width:100%; height:580px; border:none;"></iframe>'
-            embedding_html_update = gr.update(value=embedding_html_content)
-            logging.info(f"[handle_file_explorer_select] Set iframe for AST viewer: {iframe_url}")
-        else:
-            embedding_html_update = gr.update(value=f"<div style='padding:10px;'>AST visualization is not available for image: {relative_file_path}</div>")
-            logging.info(f"[handle_file_explorer_select] AST visualization skipped for image: {relative_file_path}")
-        # --- End Embedding Tab Update ---
-
-        # --- Raw Diff Tab Update ---
+        embedding_html_update = gr.skip()
         code_viewer_update = gr.skip()
         image_viewer_update = gr.skip()
         no_changes_html_update = gr.skip()
 
-        if is_image:
-            # For images, try to load the image directly for the Raw Diff tab
-            # This reuses part of the logic from get_file_diff_or_content for images
-            full_abs_path_for_image = repo_root / relative_file_path
+        if is_pdf:
+            logging.info(f"PDF file selected: {relative_file_path}. Attempting to get/process for viewing.")
             try:
-                img_obj = Image.open(full_abs_path_for_image)
-                img_obj.load() # Ensure image data is loaded
+                pdf_doc_uuid = await self.framework.get_or_process_pdf_document(
+                    absolute_pdf_path=str(absolute_file_path_resolved),
+                    repo_id=repo_id,
+                    branch_name=branch,
+                    relative_path=relative_file_path
+                )
+
+                if pdf_doc_uuid:
+                    iframe_url = f"/static/pdf_visualization.html?pdf_doc_uuid={pdf_doc_uuid}"
+                    embedding_html_update = gr.update(value=f'<iframe src="{iframe_url}" style="width:100%; height:580px; border:none;"></iframe>')
+                    logging.info(f"PDF selected. Set iframe for PDF viewer: {iframe_url}")
+                    code_viewer_update = gr.update(value="// PDF view active in Embedding tab.", visible=True, language=None, label="File Content / Diff")
+                    image_viewer_update = gr.update(visible=False)
+                    no_changes_html_update = gr.update(visible=False)
+                else:
+                    err_msg = f"Could not get or process PDF: {relative_file_path}"
+                    logging.error(err_msg)
+                    embedding_html_update = gr.update(value=f"<div class='error-message'>{err_msg}</div>")
+                    code_viewer_update = gr.update(value=err_msg, visible=True, language=None, label="Error")
+                    image_viewer_update = gr.update(visible=False)
+                    no_changes_html_update = gr.update(visible=False)
+
+            except Exception as e:
+                err_msg = f"Error processing PDF {relative_file_path}: {e}"
+                logging.error(err_msg, exc_info=True)
+                embedding_html_update = gr.update(value=f"<div class='error-message'>{err_msg}</div>")
+                code_viewer_update = gr.update(value=err_msg, visible=True, language=None, label="Error")
+                image_viewer_update = gr.update(visible=False)
+                no_changes_html_update = gr.update(visible=False)
+
+        elif not is_image_for_raw_view: # Assumed code file for AST view
+            logging.info(f"Code file selected: {relative_file_path}. Setting iframe for AST viewer.")
+            encoded_branch_name = urllib.parse.quote_plus(branch)
+            encoded_relative_file_path_for_url = urllib.parse.quote_plus(relative_file_path)
+
+            # The _generate_embedding_html function returns an iframe template string.
+            # We need to fill in the placeholders.
+            iframe_template_str = self._generate_embedding_html("ignored_content_placeholder", relative_file_path)
+
+            final_iframe_html = iframe_template_str.replace("{repo_id_placeholder}", str(repo_id))
+            final_iframe_html = final_iframe_html.replace("{branch_name_placeholder}", encoded_branch_name)
+            final_iframe_html = final_iframe_html.replace("{encoded_relative_file_path_placeholder}", encoded_relative_file_path_for_url)
+
+            embedding_html_update = gr.update(value=final_iframe_html)
+
+            # Existing logic for Raw Diff tab for code files (check if modified or new)
+            status = self.framework.get_repository_status(repo_id)
+            file_status = "clean"
+            if status:
+                if relative_file_path in status.get('modified', []): file_status = "modified"
+                elif relative_file_path in status.get('new', []): file_status = "new"
+
+            lang = IngestionConfig.LANGUAGE_MAPPING.get(Path(relative_file_path).suffix.lower())
+            if file_status == "modified":
+                diff_content, _ = self.framework.get_file_diff_or_content(repo_id, relative_file_path, is_new_file_from_explorer=False)
+                code_viewer_update = gr.update(value=diff_content or "", language=lang or 'diff', label=f"Diff: {relative_file_path}", visible=True)
+                image_viewer_update = gr.update(visible=False)
+                no_changes_html_update = gr.update(visible=False)
+            elif file_status == "new":
+                raw_content = self.framework.get_file_content_by_path(repo_id, branch, relative_file_path)
+                code_viewer_update = gr.update(value=raw_content or "", language=lang, label=f"Content (New File): {relative_file_path}", visible=True)
+                image_viewer_update = gr.update(visible=False)
+                no_changes_html_update = gr.update(visible=False)
+            else: # Clean or unknown
+                code_viewer_update = gr.update(value="", visible=False) # Hide code viewer for clean files
+                image_viewer_update = gr.update(visible=False)
+                no_changes_html_update = gr.update(visible=True) # Show NO CHANGES message
+
+        else: # Is an image for raw view (but not PDF)
+            logging.info(f"Image file selected for raw view: {relative_file_path}")
+            embedding_html_update = gr.update(value=f"<div style='padding:10px;'>Embedding view not applicable for image: {relative_file_path}. View in 'Raw Diff' tab.</div>")
+
+            try:
+                img_obj = Image.open(absolute_file_path_resolved)
+                img_obj.load()
                 image_viewer_update = gr.update(value=img_obj, visible=True)
                 code_viewer_update = gr.update(visible=False)
                 no_changes_html_update = gr.update(visible=False)
             except Exception as e:
-                logging.error(f"Error opening image {full_abs_path_for_image} for Raw Diff tab: {e}")
+                logging.error(f"Error opening image {absolute_file_path_resolved} for Raw Diff tab: {e}")
                 image_viewer_update = gr.update(value=None, visible=False)
                 code_viewer_update = gr.update(value=f"// Error opening image: {e}", language=None, label="Error", visible=True)
                 no_changes_html_update = gr.update(visible=False)
-        else:
-            # For non-images, determine if modified, new, or clean
-            status = self.framework.get_repository_status(repo_id)
-            file_status = "clean" # Default to clean
-            if status:
-                if relative_file_path in status.get('modified', []):
-                    file_status = "modified"
-                elif relative_file_path in status.get('new', []):
-                    file_status = "new"
-                # Add other statuses if needed (e.g., deleted, renamed)
-
-            diff_content_for_tab = None
-            lang = IngestionConfig.LANGUAGE_MAPPING.get(Path(relative_file_path).suffix.lower())
-
-            if file_status == "modified":
-                # Get actual diff
-                diff_content_for_tab, _ = self.framework.get_file_diff_or_content(repo_id, relative_file_path, is_new_file_from_explorer=False)
-                if diff_content_for_tab is None: # Should not happen if modified, but as a fallback
-                    diff_content_for_tab = f"// Error: Could not get diff for modified file {relative_file_path}"
-                code_viewer_update = gr.update(value=diff_content_for_tab, language=lang or 'diff', label=f"Diff: {relative_file_path}", visible=True)
-                image_viewer_update = gr.update(visible=False)
-                no_changes_html_update = gr.update(visible=False)
-            elif file_status == "new":
-                # Get raw content for new files
-                diff_content_for_tab = self.framework.get_file_content_by_path(repo_id, branch, relative_file_path)
-                if diff_content_for_tab is None or diff_content_for_tab.startswith("Error: File"): # Check for framework error string
-                    diff_content_for_tab = f"// Error: Could not load content for new file {relative_file_path}. DB Error: {diff_content_for_tab}"
-                code_viewer_update = gr.update(value=diff_content_for_tab, language=lang, label=f"Content (New File): {relative_file_path}", visible=True)
-                image_viewer_update = gr.update(visible=False)
-                no_changes_html_update = gr.update(visible=False)
-            elif file_status == "clean":
-                # Display "NO CHANGES"
-                code_viewer_update = gr.update(value="", visible=False) # Clear and hide code viewer
-                image_viewer_update = gr.update(visible=False)
-                no_changes_html_update = gr.update(visible=True)
-            else: # Fallback for unknown status or if status is None
-                diff_content_for_tab = self.framework.get_file_content_by_path(repo_id, branch, relative_file_path)
-                if diff_content_for_tab is None or diff_content_for_tab.startswith("Error: File"):
-                     diff_content_for_tab = f"// Error: Could not load content for file {relative_file_path} (unknown status). DB Error: {diff_content_for_tab}"
-                code_viewer_update = gr.update(value=diff_content_for_tab, language=lang, label=f"Content: {relative_file_path}", visible=True)
-                image_viewer_update = gr.update(visible=False)
-                no_changes_html_update = gr.update(visible=False)
-        # --- End Raw Diff Tab Update ---
-
-        # Diagnostic logging for the HTML content being sent to embedding_html_viewer
-        final_html_for_viewer = "ERROR: HTML content was not correctly set"
-        is_skip_update_val = False
-
-        if isinstance(embedding_html_update, dict) and embedding_html_update.get("__type__") == "skip_update":
-            is_skip_update_val = True
-            final_html_for_viewer = "GR.SKIP_UPDATE"
-        elif isinstance(embedding_html_update, dict) and embedding_html_update.get("__type__") == "update" and 'value' in embedding_html_update:
-            final_html_for_viewer = embedding_html_update['value']
-        elif isinstance(embedding_html_update, str): # Should ideally not happen if gr.update() is used
-             final_html_for_viewer = embedding_html_update
-
-        logging.info(f"[handle_file_explorer_select] Attempting to update embedding_html_viewer. Is Skip: {is_skip_update_val}. Final HTML (preview): {str(final_html_for_viewer)[:500]}...")
 
         return (
             embedding_html_update,
             code_viewer_update,
             image_viewer_update,
-            new_selected_file_for_viewers,
+            new_selected_file_for_state, # selected_file_state (relative path)
             no_changes_html_update
-            # ast_trigger_update  # Removed
         )
 
     def handle_content_tab_select(self, evt: gr.SelectData, repo_id: int, branch: str, selected_file: str) -> gr.update:
@@ -1399,186 +1395,45 @@ No active tasks.
         # It was previously used for the snippet. We will rely on the API call.
         # The `file_path_for_display` (which is the relative_file_path) is crucial for the API call.
 
-        if not file_path_for_display:
-            return "<div style='padding:10px; border:1px solid #ccc; height: 580px; overflow-y:auto;'><h2>AST Visualization</h2><p>No file selected. Please select a file from the explorer.</p></div>"
+        # This function is now primarily for code files. PDF viewing will use a different HTML.
+        # However, the placeholder replacement logic might still be useful if we adapt it.
 
-        # The repo_id and branch_name are not directly available in _generate_embedding_html's signature.
-        # This function is called by handle_file_explorer_select, which *does* have repo_id and branch.
-        # So, handle_file_explorer_select needs to pass these to _generate_embedding_html,
-        # or _generate_embedding_html needs to be refactored to not need them directly for the HTML structure,
-        # and the JS call needs to be constructed with these values in handle_file_explorer_select.
+        if not file_path_for_display: # This is the relative_file_path
+            return "<div style='padding:10px;'>Error: No file path provided for AST generation.</div>"
 
-        # Let's assume `handle_file_explorer_select` will construct the script call with the correct parameters.
-        # `_generate_embedding_html` will now just return the container and the script structure.
-        # The actual API parameters will be filled in by `handle_file_explorer_select`.
+        # For code files, this generates the container and a script that calls ast_viewer.js functions
+        # The ast_viewer.js will then fetch from /api/repo/.../file-ast
 
-        # The `file_path_for_display` here is the relative path.
-        # api_call_url = f"/api/repo/{{repo_id}}/branch/{{branch_name}}/file-ast?path={file_path_for_display}" # Placeholders for repo/branch
+        # The actual HTML for the iframe content for code ASTs is in /static/ast_visualization.html
+        # This function was likely misinterpreting its role. It should not generate the *entire* script.
+        # It should generate the *iframe tag* that points to ast_visualization.html with correct query params.
 
-        # script_content = f"""
-        # <div id="ast-visualization-container" style="height: 580px; overflow-y: auto; font-family: monospace; padding: 10px; border: 1px solid #ccc;">
-        #     Loading AST for {file_path_for_display}...
-        # </div>
-        # <script>
-        # console.log('[AST Viz] SCRIPT TAG EXECUTION STARTED');
-        # (async function() {{
-        #     // These values will be replaced by Gradio when rendering the HTML update
-        #     const repoId = "{{repo_id}}";
-        #     const branchName = "{{branch_name}}";
-        #     const filePath = "{file_path_for_display}"; // Already correctly escaped by f-string for JS string literal
+        # Corrected logic: This function should return an iframe tag string for code files.
+        # PDF files will be handled differently in handle_file_explorer_select.
 
-        #     console.log("[AST Viz] Initializing script for file:", filePath);
-        #     console.log("[AST Viz] Raw injected repoId:", repoId, "branchName:", branchName);
+        logging.info(f"[_generate_embedding_html called for code file] Path: {file_path_for_display}")
+        # Caller (handle_file_explorer_select) will provide actual repo_id and branch
+        # This function will return an iframe string that handle_file_explorer_select will fill.
 
-        #     const container = document.getElementById('ast-visualization-container');
-        #     if (!repoId || repoId === "None" || repoId === "null" || !branchName || branchName === "None" || branchName === "null" || !filePath) {{
-        #         let errorMsg = "<p>Error: Missing or invalid data to load AST:<ul>";
-        #         if (!repoId || repoId === "None" || repoId === "null") errorMsg += "<li>Repository ID missing</li>";
-        #         if (!branchName || branchName === "None" || branchName === "null") errorMsg += "<li>Branch name missing</li>";
-        #         if (!filePath) errorMsg += "<li>File path missing</li>";
-        #         errorMsg += "</ul></p>";
-        #         console.error("[AST Viz] Validation failed:", errorMsg);
-        #         container.innerHTML = errorMsg;
-        #         return;
-        #     }}
+        # Placeholders {repo_id_placeholder}, {branch_name_placeholder}, {file_path_placeholder}
+        # will be replaced by handle_file_explorer_select before returning to Gradio.
 
-        #     // Ensure repoId is treated as a number if it's a numeric string, though API path uses it as string.
-        #     // The main concern is it not being "None" or "null" as a string.
-        #     console.log(`[AST Viz] Validated params - Repo ID: ${{repoId}}, Branch: ${{(branchName)}}, File: ${{filePath}}`);
+        import urllib.parse
+        # The file_path_for_display (relative_file_path) must be URL encoded by the caller before inserting here.
+        # This template string is what _generate_embedding_html returns.
+        # The actual replacement of placeholders is done in handle_file_explorer_select.
 
-        #     const apiUrl = `/api/repo/${{repoId}}/branch/${{encodeURIComponent(branchName)}}/file-ast?path=${{encodeURIComponent(filePath)}}`;
-        #     console.log("[AST Viz] Fetching AST data from:", apiUrl);
+        # The string returned here is an HTML string for an IFRAME.
+        # The actual parameters like repo_id, branch_name, file_path will be injected
+        # by the caller (handle_file_explorer_select) into this template.
+        # For clarity, let's use more distinct placeholders.
 
-        #     try {{
-        #         const response = await fetch(apiUrl);
-        #         if (!response.ok) {{
-        #             const errorData = await response.json();
-        #             throw new Error(`API Error (${{response.status}}): ${{errorData.detail || response.statusText}}`);
-        #         }}
-        #         const astData = await response.json();
+        encoded_file_path_placeholder = "{encoded_relative_file_path_placeholder}" # Caller will URL encode
 
-        #         container.innerHTML = ''; // Clear loading message
-        #         if (astData.length === 0) {{
-        #             container.innerHTML = "<p>No AST data found for this file (it might be empty, a non-code file, or not parsed).</p>";
-        #             return;
-        #         }}
-        #         renderAST(astData, container);
-        #     }} catch (error) {{
-        #         console.error("Failed to load or render AST:", error);
-        #         container.innerHTML = `<p style='color:red;'>Failed to load AST data: ${{error.message}}</p>`;
-        #     }}
+        iframe_src = f"/static/ast_visualization.html?repo_id={{repo_id_placeholder}}&branch_name={{branch_name_placeholder}}&file_path={encoded_file_path_placeholder}"
 
-        #     function renderAST(nodes, parentElement) {{
-        #         nodes.forEach(node => {{
-        #             const nodeDiv = document.createElement('div');
-        #             nodeDiv.className = 'ast-node';
-        #             nodeDiv.style.marginLeft = (node.depth * 15) + 'px'; // Indentation based on depth
-        #             nodeDiv.style.border = '1px dashed #ddd';
-        #             nodeDiv.style.padding = '5px';
-        #             nodeDiv.style.marginBottom = '5px';
-        #             nodeDiv.style.whiteSpace = 'pre-wrap'; // Preserve whitespace and newlines in code
+        return f'<iframe src="{iframe_src}" style="width:100%; height:580px; border:none;"></iframe>'
 
-        #             // Store metadata in data attributes for tooltip
-        #             nodeDiv.dataset.nodeType = node.type;
-        #             nodeDiv.dataset.nodeName = node.name || 'N/A';
-        #             nodeDiv.dataset.startLine = node.start_line;
-        #             nodeDiv.dataset.endLine = node.end_line;
-        #             // Add more data attributes as needed (degree, connectivity, tokens)
-
-        #             // Simple header for the node
-        #             const header = document.createElement('div');
-        #             header.className = 'ast-node-header';
-        #             header.textContent = `[${{node.type}}] ${{node.name || ''}} (L${{node.start_line}}-L${{node.end_line}})`;
-        #             header.style.fontSize = '0.9em';
-        #             header.style.color = '#666';
-        #             header.style.marginBottom = '3px';
-        #             nodeDiv.appendChild(header);
-
-        #             const codeContent = document.createElement('div');
-        #             codeContent.className = 'ast-node-code';
-        #             codeContent.textContent = node.code_snippet;
-        #             nodeDiv.appendChild(codeContent);
-
-        #             // Tooltip setup
-        #             const tooltip = document.createElement('div');
-        #             tooltip.className = 'ast-tooltip';
-        #             tooltip.style.position = 'absolute';
-        #             tooltip.style.visibility = 'hidden';
-        #             tooltip.style.backgroundColor = 'black';
-        #             tooltip.style.color = 'white';
-        #             tooltip.style.padding = '5px';
-        #             tooltip.style.borderRadius = '3px';
-        #             tooltip.style.zIndex = '1000';
-        #             tooltip.style.fontSize = '0.8em';
-        #             document.body.appendChild(tooltip); // Append to body to avoid clipping issues
-
-        #             nodeDiv.addEventListener('mouseover', (e) => {{
-        #                 nodeDiv.style.backgroundColor = '#f0f0f0';
-        #                 tooltip.innerHTML = `Type: ${{nodeDiv.dataset.nodeType}}<br>Name: ${{nodeDiv.dataset.nodeName}}<br>Lines: ${{nodeDiv.dataset.startLine}}-${{nodeDiv.dataset.endLine}}`;
-        #                 tooltip.style.visibility = 'visible';
-        #             }});
-        #             nodeDiv.addEventListener('mousemove', (e) => {{
-        #                 tooltip.style.left = (e.pageX + 10) + 'px';
-        #                 tooltip.style.top = (e.pageY + 10) + 'px';
-        #             }});
-        #             nodeDiv.addEventListener('mouseout', () => {{
-        #                 nodeDiv.style.backgroundColor = '';
-        #                 tooltip.style.visibility = 'hidden';
-        #             }});
-
-        #             parentElement.appendChild(nodeDiv);
-
-        #             if (node.children && node.children.length > 0) {{
-        #                 renderAST(node.children, nodeDiv); // Recursive call for children, append to current nodeDiv
-        #             }}
-        #         }});
-        #     }}
-        # }})();
-        # </script>
-        # """
-        # # The actual repoId and branchName will be injected by the calling Python function (handle_file_explorer_select)
-        # # This is a placeholder structure for the script.
-        # # The key is that `handle_file_explorer_select` must format this string.
-        # # logging.info(f"[_generate_embedding_html] Returning HTML with script for AST visualization for {file_path_for_display}.")
-        # return script_content # This will be further processed by handle_file_explorer_select
-
-        # This function now returns an HTML template string.
-        # Placeholders {repo_id}, {branch_name}, {file_path} will be replaced by the caller.
-        # The file_content argument is now entirely vestigial.
-
-        logging.info(f"[_generate_embedding_html] Generating HTML structure for AST viewer for: {file_path_for_display}")
-
-        if not file_path_for_display: # Should be caught by caller, but as a safeguard
-            return "<div id='ast-visualization-container' style='padding:10px;'>Error: No file path provided to _generate_embedding_html.</div>"
-
-        html_template = f"""
-<div id="ast-visualization-container"
-     data-repo-id="{{repo_id}}"
-     data-branch-name="{{branch_name}}"
-     data-file-path="{{file_path}}"
-     style="height: 580px; overflow-y: auto; font-family: monospace; padding: 10px; border: 1px solid #ccc;">
-    Loading AST for {{file_path_display}}...
-</div>
-<script>
-    // Brief delay to ensure the div is in the DOM if Gradio updates asynchronously
-    setTimeout(() => {{
-        if (typeof window.loadAndRenderAST === 'function') {{
-            console.log('[AST Viz Initializer] Calling window.loadAndRenderAST()');
-            window.loadAndRenderAST();
-        }} else {{
-            console.error('[AST Viz Initializer] window.loadAndRenderAST is not defined. Ensure ast_viewer.js is loaded correctly.');
-            const container = document.getElementById('ast-visualization-container');
-            if (container) {{
-                container.innerHTML = "<p style='color:red;'>Error: AST viewer script (ast_viewer.js) not loaded or function not defined.</p>";
-            }}
-        }}
-    }}, 100); // 100ms delay, adjust if needed
-</script>
-"""
-        # Note: The placeholders {{repo_id}}, {{branch_name}}, {{file_path}}, {{file_path_display}}
-        # will be replaced by handle_file_explorer_select.
-        # file_path_for_display is used here just for the initial log.
-        return html_template
 
     def handle_populate_change_analysis_inputs(self, repo_id: int, branch: str) -> gr.update:
         # Returns update for: branch_compare_older_version_ca
