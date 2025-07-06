@@ -169,21 +169,21 @@ function renderAST(nodes, parentElement, parentNodeObject = null) {
                 codeContainer.appendChild(pre);
             } else {
                 // Node has children, process snippet line by line
-                const lines = node.code_snippet.split('\\n');
+                const lines = node.code_snippet.split('\n'); // Corrected split character
                 let currentLineInSnippet = 0;
                 let childIndex = 0;
-                let buffer = "";
+                let lineBuffer = []; // Use an array to store lines for current segment
 
-                const flushBuffer = () => {
-                    if (buffer.length > 0) {
+                const flushLineBuffer = () => {
+                    if (lineBuffer.length > 0) {
                         const pre = document.createElement('pre');
                         pre.className = `language-${languageClass}`;
                         const code = document.createElement('code');
                         code.className = `language-${languageClass}`;
-                        code.textContent = buffer;
+                        code.textContent = lineBuffer.join('\n'); // Join lines with a single newline
                         pre.appendChild(code);
                         codeContainer.appendChild(pre);
-                        buffer = "";
+                        lineBuffer = []; // Reset buffer
                     }
                 };
 
@@ -199,7 +199,7 @@ function renderAST(nodes, parentElement, parentNodeObject = null) {
                     }
 
                     if (childToRender) {
-                        flushBuffer(); // Render any preceding lines of the parent
+                        flushLineBuffer(); // Render any preceding lines of the parent
                         // Recursively render the child node into the current codeContainer
                         renderAST([childToRender], codeContainer, node); // Pass node as parentNodeObject
                         // Advance snippet lines past this child's content
@@ -207,11 +207,11 @@ function renderAST(nodes, parentElement, parentNodeObject = null) {
                         childIndex++;
                     } else {
                         // This line is part of the parent node, not a child.
-                        buffer += (lines[currentLineInSnippet] + '\\n');
+                        lineBuffer.push(lines[currentLineInSnippet]); // Add line to buffer
                         currentLineInSnippet++;
                     }
                 }
-                flushBuffer(); // Render any remaining lines in the buffer
+                flushLineBuffer(); // Render any remaining lines in the buffer
             }
         }
 
