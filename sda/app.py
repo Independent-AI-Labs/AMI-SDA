@@ -28,7 +28,7 @@ from sqlalchemy.orm import joinedload
 
 from sda.config import DB_URL, WORKSPACE_DIR, AIConfig, GOOGLE_API_KEY, DGRAPH_HOST # Added DGRAPH_HOST
 from sda.core.db_management import DatabaseManager
-from sda.core.models import Repository, File as DBFile, DBCodeChunk, Task, BillingUsage, CodeBlob # Ensure CodeBlob is imported
+from sda.core.models import Repository, File as DBFile, DBCodeChunk, Task, BillingUsage, CodeBlob, PDFDocument # Ensure CodeBlob and PDFDocument are imported
 from sda.services.agent import AgentManager
 from sda.services.analysis import EnhancedAnalysisEngine
 from sda.services.chunking import TokenAwareChunker
