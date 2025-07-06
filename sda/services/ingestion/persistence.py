@@ -178,22 +178,34 @@ def _persist_files_for_schema(db_manager: DatabaseManager, schema_name: str, pay
         if file_mappings:
             sample_paths_in_mappings = [fm.get('relative_path') for fm in file_mappings[:5]]
             logging.info(f"[{schema_name}] Details of file_mappings (len={len(file_mappings)}, sample paths: {sample_paths_in_mappings}) before insert for repo_id {repo_id}, branch: '{branch}'.")
+            # If it's the sda schema, log all paths for deeper debugging
+            if "sda" in schema_name.lower() and len(file_mappings) == 54: # Heuristic for the problematic case
+                all_paths_in_mappings = sorted([fm.get('relative_path') for fm in file_mappings])
+                logging.info(f"[{schema_name}] ALL {len(all_paths_in_mappings)} relative_paths in file_mappings for sda schema: {all_paths_in_mappings}")
 
-        stmt = insert(File).values(file_mappings)
-        set_data = dict(
-            content_hash=stmt.excluded.content_hash,
-            blob_hash=stmt.excluded.blob_hash,
-            last_modified=stmt.excluded.last_modified,
-            processed_at=stmt.excluded.processed_at,
-            line_count=stmt.excluded.line_count,
-            chunk_count=stmt.excluded.chunk_count
-            # Ensure all updatable fields in File model are covered
-        )
-        stmt = stmt.on_conflict_do_update(
-            index_elements=['repository_id', 'branch', 'relative_path'], # UK constraint
-            set_=set_data
-        )
-        session.execute(stmt)
+        # TEMPORARY CHANGE: Use direct bulk_insert_mappings to isolate issue
+        # This assumes the table is empty due to prior delete, which is logged as affecting 0 rows.
+        # Original code with on_conflict_do_update:
+        # stmt = insert(File).values(file_mappings)
+        # set_data = dict(
+        #     content_hash=stmt.excluded.content_hash,
+        #     blob_hash=stmt.excluded.blob_hash,
+        #     last_modified=stmt.excluded.last_modified,
+        #     processed_at=stmt.excluded.processed_at,
+        #     line_count=stmt.excluded.line_count,
+        #     chunk_count=stmt.excluded.chunk_count
+        # )
+        # stmt = stmt.on_conflict_do_update(
+        #     index_elements=['repository_id', 'branch', 'relative_path'], # UK constraint
+        #     set_=set_data
+        # )
+        # session.execute(stmt)
+        try:
+            session.bulk_insert_mappings(File, file_mappings)
+            logging.info(f"[{schema_name}] Executed bulk_insert_mappings with {len(file_mappings)} items.")
+        except Exception as e_bulk_insert:
+            logging.error(f"[{schema_name}] Error during bulk_insert_mappings: {e_bulk_insert}", exc_info=True)
+            raise # Re-raise to see if this causes transaction rollback for tokens later
 
         # Efficiently get IDs for the inserted/updated files
         # Assuming relative_path is unique per repo_id and branch
@@ -291,16 +303,17 @@ def _persist_chunks_for_schema(db_manager: DatabaseManager, schema_name: str, pa
     if not chunk_mappings_for_db: return None
 
     chunks_for_embedding_jsonl: List[Dict[str, Any]] = []
-    with db_manager.get_session("public") as session: # DBCodeChunk is in public schema
-        # Clear old chunks for this repo/branch was done in pipeline.py
+    try: # Wrap the whole session in a try/except to catch issues causing rollback
+        with db_manager.get_session("public") as session: # DBCodeChunk is in public schema
+            # Clear old chunks for this repo/branch was done in pipeline.py
 
-        # Perform bulk insert of chunk definitions
-        # Assuming DBCodeChunk SQLAlchemy model matches db_chunk_map structure
-        session.bulk_insert_mappings(DBCodeChunk, chunk_mappings_for_db)
-        logging.info(f"[public] Inserted {len(chunk_mappings_for_db)} DBCodeChunk definitions for repo_id: {repo_id}, branch: {branch}")
+            # Perform bulk insert of chunk definitions
+            # Assuming DBCodeChunk SQLAlchemy model matches db_chunk_map structure
+            session.bulk_insert_mappings(DBCodeChunk, chunk_mappings_for_db)
+            logging.info(f"[public] Inserted {len(chunk_mappings_for_db)} DBCodeChunk definitions for repo_id: {repo_id}, branch: {branch}")
 
-        # Fetch content for .jsonl file generation
-        blob_contents_cache: Dict[str, str] = {}
+            # Fetch content for .jsonl file generation
+            blob_contents_cache: Dict[str, str] = {}
         required_blob_hashes = list(chunks_grouped_by_blob_hash.keys())
         if required_blob_hashes:
             blobs_from_db = session.query(CodeBlob.blob_hash, CodeBlob.content).filter(CodeBlob.blob_hash.in_(required_blob_hashes)).all()
@@ -392,6 +405,10 @@ def _persist_chunks_for_schema(db_manager: DatabaseManager, schema_name: str, pa
 
     logging.info(f"[{schema_name}] Prepared {len(chunks_for_embedding_jsonl)} chunks for embedding in {jsonl_file_path}")
     return str(jsonl_file_path), len(chunks_for_embedding_jsonl)
+    except Exception as e_persist_chunks:
+        logging.error(f"[public] CRITICAL ERROR in _persist_chunks_for_schema for repo_id {repo_id}, branch '{branch}', schema '{schema_name}': {e_persist_chunks}", exc_info=True)
+        # This exception will likely cause the session to rollback, losing token updates.
+        raise # Re-raise so TaskExecutor can also see it.
 
 
 def _persist_dgraph_nodes(db_manager: DatabaseManager, repo_id: int, branch: str, dgraph_nodes_data: List[Dict[str, Any]], task_id: int, updater: StatusUpdater):
