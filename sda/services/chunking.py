@@ -321,7 +321,7 @@ class TokenAwareChunker:
             # otherwise, propagate the parent_node_id_str from the level above.
             effective_parent_id_for_children = current_node_id if node_type in identifier_nodes else parent_node_id_str
             for child_node in node.children:
-                traverse(child_node, parent_id=effective_parent_id_for_children, depth=depth + 1)
+                traverse(child_node, parent_node_id_str=effective_parent_id_for_children, depth=depth + 1)
 
         traverse(root_node)
         return nodes
