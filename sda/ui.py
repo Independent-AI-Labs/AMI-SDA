@@ -31,7 +31,8 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 import uvicorn
-from fastapi import Query # Added for API endpoint query parameters
+from fastapi import Query, HTTPException # Added HTTPException
+from sqlalchemy.orm import joinedload # Added for eager loading
 
 from app import CodeAnalysisFramework
 
@@ -1167,17 +1168,25 @@ No active tasks.
         new_selected_file_for_viewers = relative_file_path # This state should hold the relative path
 
         # --- Embedding Tab Update ---
-        # Get text content primarily for embedding view
-        raw_content_for_embedding = self.framework.get_file_content_by_path(repo_id, branch, relative_file_path)
-        if raw_content_for_embedding is None: # Should use the error string from the framework if that's the case
-            raw_content_for_embedding = f"// Error: Could not load content for {relative_file_path} for embedding tab."
+        # The _generate_embedding_html function now produces HTML with an embedded script.
+        # We need to inject repo_id and branch_name into that script.
+        # The `raw_content_for_embedding` is no longer directly passed to _generate_embedding_html for display.
 
         is_image = relative_file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp')) # Added webp
+        embedding_html_content = ""
         if not is_image:
-            generated_html_for_embedding = self._generate_embedding_html(raw_content_for_embedding, relative_file_path)
-            embedding_html_update = gr.update(value=generated_html_for_embedding)
+            # `_generate_embedding_html` now takes only file_path_for_display.
+            # The actual content is fetched by the JS from the API.
+            # The first argument to _generate_embedding_html (file_content) is vestigial for its new role.
+            # We can pass None or an empty string.
+            base_script_html = self._generate_embedding_html("", relative_file_path)
+
+            # Inject repo_id and branch_name into the script placeholders
+            embedding_html_content = base_script_html.replace("{{repo_id}}", str(repo_id))
+            embedding_html_content = embedding_html_content.replace("{{branch_name}}", branch) # branch is already a string
+            embedding_html_update = gr.update(value=embedding_html_content)
         else:
-            embedding_html_update = gr.update(value=f"<div>Embedding visualization is not available for image: {relative_file_path}</div>")
+            embedding_html_update = gr.update(value=f"<div>AST visualization is not available for image: {relative_file_path}</div>")
         # --- End Embedding Tab Update ---
 
         # --- Raw Diff Tab Update ---
@@ -1345,40 +1354,153 @@ No active tasks.
                 # Total 2 + 8 = 10 outputs.
 
     def _generate_embedding_html(self, file_content: str, file_path_for_display: str) -> str: # Renamed arg
-        logging.info(f"[_generate_embedding_html] Called for file: {file_path_for_display}. Content length: {len(file_content if file_content else '')}")
+        logging.info(f"[_generate_embedding_html] Called for file: {file_path_for_display}. Content length: {len(file_content if file_content else '')}") # file_content is not directly used anymore for main view
 
-        if file_content is not None and file_content.startswith("Error: File"):
-            # Specific handling for "File not found in the database" error from framework.get_file_content_by_path
-            return f"""<div style='padding:10px; border:1px solid red; color: red; background-color: #ffe0e0; font-family:monospace; height: 580px; overflow-y:auto;'>
-                       <h3>Data Not Available</h3>
-                       <p>{file_content}</p>
-                       <p>This means the file's metadata was not found in the database for the current branch.
-                       This can happen if the file was not included in the last analysis/ingestion of this branch,
-                       or if it's a new file not yet processed.</p>
-                       <p><strong>Suggestion:</strong> Try re-analyzing the branch from the 'Repository & Agent' tab.</p>
-                       </div>"""
-        elif file_content is not None and (file_content.startswith("// Error:") or file_content.startswith("Error:")):
-            # Generic error from file reading or other issues
-            return f"""<div style='padding:10px; border:1px solid red; color: red; background-color: #ffe0e0; font-family:monospace; height: 580px; overflow-y:auto;'>
-                       <h3>Embedding View Error</h3><p>{file_content}</p>
-                       </div>"""
+        # These error conditions are now primarily handled by the API endpoint.
+        # The JS will call the API. If the API returns an error, JS should display it.
+        # If file_path_for_display is empty, JS won't be called with valid params.
 
-        if not file_path_for_display and (file_content is None or file_content == ""):
-             return "<div style='padding:10px; border:1px solid #ccc; height: 580px; overflow-y:auto;'><h2>Embedding Tab</h2><p>No file selected or content is empty.</p></div>"
+        # Get current repo_id and branch_name from states if possible (this is tricky from a simple HTML generation function)
+        # For now, assume these will be available to the JS via Gradio's mechanisms or passed explicitly.
+        # The call to this function is from handle_file_explorer_select, which has repo_id and branch.
+        # We need to pass these to the JS.
 
-        # Placeholder for actual embedding visualization
-        placeholder_html = f"""
-        <div style='padding:10px; border:1px solid #ccc; height: 580px; overflow-y:auto;'>
-            <h2>Embedding Visualization for: {Path(file_path_for_display).name if file_path_for_display else 'Unknown File'}</h2>
-            <p><strong>Note:</strong> This is a placeholder. Actual interactive node embedding visualization is not yet implemented.</p>
-            <p>Once implemented, this view will display a breakdown of Abstract Syntax Tree (AST) nodes, their relationships, and associated embeddings for the selected file.</p>
-            <hr>
-            <h4>File Content Snippet:</h4>
-            <pre style='white-space:pre-wrap; background:#f0f0f0; padding:5px; max-height: 300px; overflow-y:auto;'>{str(file_content)[:1000]}{'...' if len(str(file_content)) > 1000 else ''}</pre>
-        </div>
+        # Let's reconstruct how repo_id and branch are available:
+        # handle_file_explorer_select(self, repo_id: int, branch: str, selection_event_data: Any)
+        # It gets repo_id and branch. It also determines relative_file_path.
+        # This information needs to be embedded into the script call.
+
+        # The `file_content` parameter to `_generate_embedding_html` is no longer the primary source of data for display.
+        # It was previously used for the snippet. We will rely on the API call.
+        # The `file_path_for_display` (which is the relative_file_path) is crucial for the API call.
+
+        if not file_path_for_display:
+            return "<div style='padding:10px; border:1px solid #ccc; height: 580px; overflow-y:auto;'><h2>AST Visualization</h2><p>No file selected. Please select a file from the explorer.</p></div>"
+
+        # The repo_id and branch_name are not directly available in _generate_embedding_html's signature.
+        # This function is called by handle_file_explorer_select, which *does* have repo_id and branch.
+        # So, handle_file_explorer_select needs to pass these to _generate_embedding_html,
+        # or _generate_embedding_html needs to be refactored to not need them directly for the HTML structure,
+        # and the JS call needs to be constructed with these values in handle_file_explorer_select.
+
+        # Let's assume `handle_file_explorer_select` will construct the script call with the correct parameters.
+        # `_generate_embedding_html` will now just return the container and the script structure.
+        # The actual API parameters will be filled in by `handle_file_explorer_select`.
+
+        # The `file_path_for_display` here is the relative path.
+        api_call_url = f"/api/repo/{{repo_id}}/branch/{{branch_name}}/file-ast?path={file_path_for_display}" # Placeholders for repo/branch
+
+        script_content = f"""
+<div id="ast-visualization-container" style="height: 580px; overflow-y: auto; font-family: monospace; padding: 10px; border: 1px solid #ccc;">
+    Loading AST for {file_path_for_display}...
+</div>
+<script>
+(async function() {{
+    // These values will be replaced by Gradio when rendering the HTML update
+    const repoId = "{{repo_id}}";
+    const branchName = "{{branch_name}}";
+    const filePath = "{file_path_for_display}"; // Already correctly escaped by f-string for JS string literal
+
+    const container = document.getElementById('ast-visualization-container');
+    if (!repoId || !branchName || !filePath) {{
+        container.innerHTML = "<p>Error: Missing repository, branch, or file path to load AST data.</p>";
+        return;
+    }}
+
+    const apiUrl = `/api/repo/${{repoId}}/branch/${{encodeURIComponent(branchName)}}/file-ast?path=${{encodeURIComponent(filePath)}}`;
+
+    try {{
+        const response = await fetch(apiUrl);
+        if (!response.ok) {{
+            const errorData = await response.json();
+            throw new Error(`API Error (${{response.status}}): ${{errorData.detail || response.statusText}}`);
+        }}
+        const astData = await response.json();
+
+        container.innerHTML = ''; // Clear loading message
+        if (astData.length === 0) {{
+            container.innerHTML = "<p>No AST data found for this file (it might be empty, a non-code file, or not parsed).</p>";
+            return;
+        }}
+        renderAST(astData, container);
+    }} catch (error) {{
+        console.error("Failed to load or render AST:", error);
+        container.innerHTML = `<p style='color:red;'>Failed to load AST data: ${{error.message}}</p>`;
+    }}
+
+    function renderAST(nodes, parentElement) {{
+        nodes.forEach(node => {{
+            const nodeDiv = document.createElement('div');
+            nodeDiv.className = 'ast-node';
+            nodeDiv.style.marginLeft = (node.depth * 15) + 'px'; // Indentation based on depth
+            nodeDiv.style.border = '1px dashed #ddd';
+            nodeDiv.style.padding = '5px';
+            nodeDiv.style.marginBottom = '5px';
+            nodeDiv.style.whiteSpace = 'pre-wrap'; // Preserve whitespace and newlines in code
+
+            // Store metadata in data attributes for tooltip
+            nodeDiv.dataset.nodeType = node.type;
+            nodeDiv.dataset.nodeName = node.name || 'N/A';
+            nodeDiv.dataset.startLine = node.start_line;
+            nodeDiv.dataset.endLine = node.end_line;
+            // Add more data attributes as needed (degree, connectivity, tokens)
+
+            // Simple header for the node
+            const header = document.createElement('div');
+            header.className = 'ast-node-header';
+            header.textContent = `[${{node.type}}] ${{node.name || ''}} (L${{node.start_line}}-L${{node.end_line}})`;
+            header.style.fontSize = '0.9em';
+            header.style.color = '#666';
+            header.style.marginBottom = '3px';
+            nodeDiv.appendChild(header);
+
+            const codeContent = document.createElement('div');
+            codeContent.className = 'ast-node-code';
+            codeContent.textContent = node.code_snippet;
+            nodeDiv.appendChild(codeContent);
+
+            // Tooltip setup
+            const tooltip = document.createElement('div');
+            tooltip.className = 'ast-tooltip';
+            tooltip.style.position = 'absolute';
+            tooltip.style.visibility = 'hidden';
+            tooltip.style.backgroundColor = 'black';
+            tooltip.style.color = 'white';
+            tooltip.style.padding = '5px';
+            tooltip.style.borderRadius = '3px';
+            tooltip.style.zIndex = '1000';
+            tooltip.style.fontSize = '0.8em';
+            document.body.appendChild(tooltip); // Append to body to avoid clipping issues
+
+            nodeDiv.addEventListener('mouseover', (e) => {{
+                nodeDiv.style.backgroundColor = '#f0f0f0';
+                tooltip.innerHTML = `Type: ${{nodeDiv.dataset.nodeType}}<br>Name: ${{nodeDiv.dataset.nodeName}}<br>Lines: ${{nodeDiv.dataset.startLine}}-${{nodeDiv.dataset.endLine}}`;
+                tooltip.style.visibility = 'visible';
+            }});
+            nodeDiv.addEventListener('mousemove', (e) => {{
+                tooltip.style.left = (e.pageX + 10) + 'px';
+                tooltip.style.top = (e.pageY + 10) + 'px';
+            }});
+            nodeDiv.addEventListener('mouseout', () => {{
+                nodeDiv.style.backgroundColor = '';
+                tooltip.style.visibility = 'hidden';
+            }});
+
+            parentElement.appendChild(nodeDiv);
+
+            if (node.children && node.children.length > 0) {{
+                renderAST(node.children, nodeDiv); // Recursive call for children, append to current nodeDiv
+            }}
+        }});
+    }}
+}})();
+</script>
         """
-        logging.info(f"[_generate_embedding_html] Returning placeholder HTML for embedding visualization for {file_path_for_display}.")
-        return placeholder_html
+        # The actual repoId and branchName will be injected by the calling Python function (handle_file_explorer_select)
+        # This is a placeholder structure for the script.
+        # The key is that `handle_file_explorer_select` must format this string.
+        # logging.info(f"[_generate_embedding_html] Returning HTML with script for AST visualization for {file_path_for_display}.")
+        return script_content # This will be further processed by handle_file_explorer_select
 
     def handle_populate_change_analysis_inputs(self, repo_id: int, branch: str) -> gr.update:
         # Returns update for: branch_compare_older_version_ca
@@ -1618,6 +1740,135 @@ if __name__ == "__main__":
         tasks = framework_instance.get_task_history(repo_id=repo_id, offset=offset, limit=limit)
         return tasks
     # --- End API Endpoint ---
+
+    # --- API Endpoint for AST Data ---
+    from sda.core.models import ASTNode as SQLA_ASTNode, File as SQLA_File # Use SQLA_ prefix for SQLAlchemy models
+    from pydantic import BaseModel
+    from typing import List, Dict, Any, Optional # Ensure these are imported
+
+    class ASTVisualizationNode(BaseModel):
+        id: str # node_id
+        type: str
+        name: Optional[str] = None
+        start_line: int
+        end_line: int
+        depth: int
+        # For simplicity, metadata like degree, connectivity, token_counts are omitted for now
+        # but can be added later.
+        code_snippet: str
+        children: List['ASTVisualizationNode'] = [] # Recursive definition
+
+    # This is needed for Pydantic to handle recursive models
+    ASTVisualizationNode.model_rebuild()
+
+
+    def build_ast_hierarchy(
+        nodes_data: List[Dict[str, Any]], # List of dicts from SQLAlchemy objects
+        source_lines: List[str],
+        parent_id: Optional[str] = None
+    ) -> List[ASTVisualizationNode]:
+        hierarchy = []
+        for node_dict in nodes_data:
+            if node_dict['parent_id'] == parent_id:
+                # Extract code snippet for the current node
+                # ASTNode line numbers are 1-based, list indices are 0-based
+                snippet_lines = source_lines[node_dict['start_line'] - 1 : node_dict['end_line']]
+                code_snippet = "".join(snippet_lines)
+
+                children = build_ast_hierarchy(nodes_data, source_lines, node_dict['node_id'])
+
+                vis_node = ASTVisualizationNode(
+                    id=node_dict['node_id'],
+                    type=node_dict['node_type'],
+                    name=node_dict['name'],
+                    start_line=node_dict['start_line'],
+                    end_line=node_dict['end_line'],
+                    depth=node_dict['depth'],
+                    code_snippet=code_snippet,
+                    children=children
+                )
+                hierarchy.append(vis_node)
+        # Sort by start_line to maintain order
+        hierarchy.sort(key=lambda n: n.start_line)
+        return hierarchy
+
+    @app.get("/api/repo/{repo_id}/branch/{branch_name}/file-ast", response_model=List[ASTVisualizationNode])
+    async def get_file_ast_visualization(
+        repo_id: int,
+        branch_name: str,
+        path: str = Query(..., description="Relative path to the file, POSIX style (e.g., 'src/main.py')")
+    ):
+        framework: CodeAnalysisFramework = framework_instance # Access the global framework instance
+
+        repo = framework.get_repository_by_id(repo_id)
+        if not repo:
+            raise HTTPException(status_code=404, detail="Repository not found")
+        if not repo.db_schemas:
+            raise HTTPException(status_code=404, detail="Repository has not been analyzed or has no data schemas.")
+
+        # Normalize the input path to ensure it's POSIX style (though Query description already suggests it)
+        normalized_relative_path = Path(path).as_posix()
+
+        file_record: Optional[SQLA_File] = None
+        ast_nodes_sqla: List[SQLA_ASTNode] = []
+
+        for schema_name in repo.db_schemas:
+            with framework.db_manager.get_session(schema_name) as session:
+                # Query for the file
+                current_file_record = session.query(SQLA_File).filter(
+                    SQLA_File.repository_id == repo_id,
+                    SQLA_File.branch == branch_name,
+                    SQLA_File.relative_path == normalized_relative_path
+                ).options(joinedload(SQLA_File.ast_nodes)).first() # Eager load ast_nodes
+
+                if current_file_record:
+                    file_record = current_file_record
+                    # ASTNodes are already loaded due to joinedload
+                    ast_nodes_sqla = sorted(file_record.ast_nodes, key=lambda n: (n.start_line, n.start_column or 0))
+                    break # Found the file and its nodes
+
+        if not file_record:
+            raise HTTPException(status_code=404, detail=f"File '{normalized_relative_path}' not found in branch '{branch_name}' for this repository.")
+
+        if not ast_nodes_sqla:
+            # File exists but no AST nodes, return empty list for visualization (could be non-code file or parsing issue)
+            return []
+
+        # Read file content
+        try:
+            full_file_path = Path(file_record.file_path)
+            if not full_file_path.is_file():
+                raise HTTPException(status_code=500, detail=f"File path '{file_record.file_path}' from database does not exist on disk.")
+            source_code = full_file_path.read_text(encoding='utf-8')
+            source_lines = source_code.splitlines(keepends=True)
+        except Exception as e:
+            logging.error(f"Error reading file content for AST viz: {file_record.file_path}, Error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Could not read file content: {e}")
+
+        # Convert SQLAlchemy ASTNode objects to dictionaries for easier processing
+        # This is important because SQLAlchemy objects might have session state issues
+        # when passed around, especially if the session closes.
+        ast_nodes_data = []
+        for node_sqla in ast_nodes_sqla:
+            ast_nodes_data.append({
+                "node_id": node_sqla.node_id,
+                "node_type": node_sqla.node_type,
+                "name": node_sqla.name,
+                "start_line": node_sqla.start_line,
+                "end_line": node_sqla.end_line,
+                "parent_id": node_sqla.parent_id, # Crucial for hierarchy building
+                "depth": node_sqla.depth,
+                # Add other relevant fields here if needed by ASTVisualizationNode
+            })
+
+        # Build hierarchical structure
+        # The parent_id for top-level nodes in the file should be None or a file-level sentinel.
+        # Assuming top-level nodes have parent_id = None or a specific file-level ID not matching any node_id.
+        # The ASTNode model stores parent_id which can be None for root nodes of the file.
+        hierarchical_ast = build_ast_hierarchy(ast_nodes_data, source_lines, parent_id=None)
+
+        return hierarchical_ast
+    # --- End API Endpoint for AST Data ---
 
     # Mount static files
     static_files_path = Path(__file__).parent / "static"
