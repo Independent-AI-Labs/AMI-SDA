@@ -1868,10 +1868,10 @@ if __name__ == "__main__":
         hierarchy.sort(key=lambda n: n.start_line)
         return hierarchy
 
-    @app.get("/api/repo/{repo_id}/branch/{branch_name}/file-ast", response_model=List[ASTVisualizationNode])
+    @app.get("/api/repo/{repo_id}/branch/{branch_name:path}/file-ast", response_model=List[ASTVisualizationNode])
     async def get_file_ast_visualization(
         repo_id: int,
-        branch_name: str,
+        branch_name: str, # FastAPI will receive the decoded path here
         path: str = Query(..., description="Relative path to the file, POSIX style (e.g., 'src/main.py')")
     ):
         framework: CodeAnalysisFramework = framework_instance # Access the global framework instance
