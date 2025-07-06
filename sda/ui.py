@@ -1253,6 +1253,20 @@ No active tasks.
                 no_changes_html_update = gr.update(visible=False)
         # --- End Raw Diff Tab Update ---
 
+        # Diagnostic logging for the HTML content being sent to embedding_html_viewer
+        final_html_for_viewer = "ERROR: HTML content was not correctly set"
+        is_skip_update_val = False
+
+        if isinstance(embedding_html_update, dict) and embedding_html_update.get("__type__") == "skip_update":
+            is_skip_update_val = True
+            final_html_for_viewer = "GR.SKIP_UPDATE"
+        elif isinstance(embedding_html_update, dict) and embedding_html_update.get("__type__") == "update" and 'value' in embedding_html_update:
+            final_html_for_viewer = embedding_html_update['value']
+        elif isinstance(embedding_html_update, str): # Should ideally not happen if gr.update() is used
+             final_html_for_viewer = embedding_html_update
+
+        logging.info(f"[handle_file_explorer_select] Attempting to update embedding_html_viewer. Is Skip: {is_skip_update_val}. Final HTML (preview): {str(final_html_for_viewer)[:500]}...")
+
         return embedding_html_update, code_viewer_update, image_viewer_update, new_selected_file_for_viewers, no_changes_html_update
 
     def handle_content_tab_select(self, evt: gr.SelectData, repo_id: int, branch: str, selected_file: str) -> gr.update:
