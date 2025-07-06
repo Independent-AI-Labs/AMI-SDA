@@ -121,7 +121,13 @@ def _persist_code_blobs(db_manager: DatabaseManager, all_code_blob_data: List[Di
 
 
 def _persist_files_for_schema(db_manager: DatabaseManager, schema_name: str, payload: Dict, repo_id: int, branch: str, repo_path_str: str) -> Dict[str, int]:
-    if not payload.get('files'): return {}
+    if not payload.get('files'):
+        logging.info(f"[_persist_files_for_schema] No files in payload for schema: '{schema_name}'. Repo_id: {repo_id}, branch: '{branch}'.")
+        return {}
+
+    # Log details of the payload being processed for this schema
+    payload_file_keys = list(payload['files'].keys())
+    logging.info(f"[_persist_files_for_schema] For schema: '{schema_name}', repo_id: {repo_id}, branch: '{branch}', processing payload with {len(payload_file_keys)} files. Sample keys: {payload_file_keys[:5]}")
 
     file_mappings = []
     repo_path_obj = Path(repo_path_str) # repo_path_obj for clarity
