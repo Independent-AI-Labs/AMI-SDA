@@ -1388,134 +1388,138 @@ No active tasks.
         # The actual API parameters will be filled in by `handle_file_explorer_select`.
 
         # The `file_path_for_display` here is the relative path.
-        api_call_url = f"/api/repo/{{repo_id}}/branch/{{branch_name}}/file-ast?path={file_path_for_display}" # Placeholders for repo/branch
+        # api_call_url = f"/api/repo/{{repo_id}}/branch/{{branch_name}}/file-ast?path={file_path_for_display}" # Placeholders for repo/branch
 
-        script_content = f"""
-<div id="ast-visualization-container" style="height: 580px; overflow-y: auto; font-family: monospace; padding: 10px; border: 1px solid #ccc;">
-    Loading AST for {file_path_for_display}...
-</div>
-<script>
-console.log('[AST Viz] SCRIPT TAG EXECUTION STARTED');
-(async function() {{
-    // These values will be replaced by Gradio when rendering the HTML update
-    const repoId = "{{repo_id}}";
-    const branchName = "{{branch_name}}";
-    const filePath = "{file_path_for_display}"; // Already correctly escaped by f-string for JS string literal
+        # script_content = f"""
+        # <div id="ast-visualization-container" style="height: 580px; overflow-y: auto; font-family: monospace; padding: 10px; border: 1px solid #ccc;">
+        #     Loading AST for {file_path_for_display}...
+        # </div>
+        # <script>
+        # console.log('[AST Viz] SCRIPT TAG EXECUTION STARTED');
+        # (async function() {{
+        #     // These values will be replaced by Gradio when rendering the HTML update
+        #     const repoId = "{{repo_id}}";
+        #     const branchName = "{{branch_name}}";
+        #     const filePath = "{file_path_for_display}"; // Already correctly escaped by f-string for JS string literal
 
-    console.log("[AST Viz] Initializing script for file:", filePath);
-    console.log("[AST Viz] Raw injected repoId:", repoId, "branchName:", branchName);
+        #     console.log("[AST Viz] Initializing script for file:", filePath);
+        #     console.log("[AST Viz] Raw injected repoId:", repoId, "branchName:", branchName);
 
-    const container = document.getElementById('ast-visualization-container');
-    if (!repoId || repoId === "None" || repoId === "null" || !branchName || branchName === "None" || branchName === "null" || !filePath) {{
-        let errorMsg = "<p>Error: Missing or invalid data to load AST:<ul>";
-        if (!repoId || repoId === "None" || repoId === "null") errorMsg += "<li>Repository ID missing</li>";
-        if (!branchName || branchName === "None" || branchName === "null") errorMsg += "<li>Branch name missing</li>";
-        if (!filePath) errorMsg += "<li>File path missing</li>";
-        errorMsg += "</ul></p>";
-        console.error("[AST Viz] Validation failed:", errorMsg);
-        container.innerHTML = errorMsg;
-        return;
-    }}
+        #     const container = document.getElementById('ast-visualization-container');
+        #     if (!repoId || repoId === "None" || repoId === "null" || !branchName || branchName === "None" || branchName === "null" || !filePath) {{
+        #         let errorMsg = "<p>Error: Missing or invalid data to load AST:<ul>";
+        #         if (!repoId || repoId === "None" || repoId === "null") errorMsg += "<li>Repository ID missing</li>";
+        #         if (!branchName || branchName === "None" || branchName === "null") errorMsg += "<li>Branch name missing</li>";
+        #         if (!filePath) errorMsg += "<li>File path missing</li>";
+        #         errorMsg += "</ul></p>";
+        #         console.error("[AST Viz] Validation failed:", errorMsg);
+        #         container.innerHTML = errorMsg;
+        #         return;
+        #     }}
 
-    // Ensure repoId is treated as a number if it's a numeric string, though API path uses it as string.
-    // The main concern is it not being "None" or "null" as a string.
-    console.log(`[AST Viz] Validated params - Repo ID: ${{repoId}}, Branch: ${{(branchName)}}, File: ${{filePath}}`);
+        #     // Ensure repoId is treated as a number if it's a numeric string, though API path uses it as string.
+        #     // The main concern is it not being "None" or "null" as a string.
+        #     console.log(`[AST Viz] Validated params - Repo ID: ${{repoId}}, Branch: ${{(branchName)}}, File: ${{filePath}}`);
 
-    const apiUrl = `/api/repo/${{repoId}}/branch/${{encodeURIComponent(branchName)}}/file-ast?path=${{encodeURIComponent(filePath)}}`;
-    console.log("[AST Viz] Fetching AST data from:", apiUrl);
+        #     const apiUrl = `/api/repo/${{repoId}}/branch/${{encodeURIComponent(branchName)}}/file-ast?path=${{encodeURIComponent(filePath)}}`;
+        #     console.log("[AST Viz] Fetching AST data from:", apiUrl);
 
-    try {{
-        const response = await fetch(apiUrl);
-        if (!response.ok) {{
-            const errorData = await response.json();
-            throw new Error(`API Error (${{response.status}}): ${{errorData.detail || response.statusText}}`);
-        }}
-        const astData = await response.json();
+        #     try {{
+        #         const response = await fetch(apiUrl);
+        #         if (!response.ok) {{
+        #             const errorData = await response.json();
+        #             throw new Error(`API Error (${{response.status}}): ${{errorData.detail || response.statusText}}`);
+        #         }}
+        #         const astData = await response.json();
 
-        container.innerHTML = ''; // Clear loading message
-        if (astData.length === 0) {{
-            container.innerHTML = "<p>No AST data found for this file (it might be empty, a non-code file, or not parsed).</p>";
-            return;
-        }}
-        renderAST(astData, container);
-    }} catch (error) {{
-        console.error("Failed to load or render AST:", error);
-        container.innerHTML = `<p style='color:red;'>Failed to load AST data: ${{error.message}}</p>`;
-    }}
+        #         container.innerHTML = ''; // Clear loading message
+        #         if (astData.length === 0) {{
+        #             container.innerHTML = "<p>No AST data found for this file (it might be empty, a non-code file, or not parsed).</p>";
+        #             return;
+        #         }}
+        #         renderAST(astData, container);
+        #     }} catch (error) {{
+        #         console.error("Failed to load or render AST:", error);
+        #         container.innerHTML = `<p style='color:red;'>Failed to load AST data: ${{error.message}}</p>`;
+        #     }}
 
-    function renderAST(nodes, parentElement) {{
-        nodes.forEach(node => {{
-            const nodeDiv = document.createElement('div');
-            nodeDiv.className = 'ast-node';
-            nodeDiv.style.marginLeft = (node.depth * 15) + 'px'; // Indentation based on depth
-            nodeDiv.style.border = '1px dashed #ddd';
-            nodeDiv.style.padding = '5px';
-            nodeDiv.style.marginBottom = '5px';
-            nodeDiv.style.whiteSpace = 'pre-wrap'; // Preserve whitespace and newlines in code
+        #     function renderAST(nodes, parentElement) {{
+        #         nodes.forEach(node => {{
+        #             const nodeDiv = document.createElement('div');
+        #             nodeDiv.className = 'ast-node';
+        #             nodeDiv.style.marginLeft = (node.depth * 15) + 'px'; // Indentation based on depth
+        #             nodeDiv.style.border = '1px dashed #ddd';
+        #             nodeDiv.style.padding = '5px';
+        #             nodeDiv.style.marginBottom = '5px';
+        #             nodeDiv.style.whiteSpace = 'pre-wrap'; // Preserve whitespace and newlines in code
 
-            // Store metadata in data attributes for tooltip
-            nodeDiv.dataset.nodeType = node.type;
-            nodeDiv.dataset.nodeName = node.name || 'N/A';
-            nodeDiv.dataset.startLine = node.start_line;
-            nodeDiv.dataset.endLine = node.end_line;
-            // Add more data attributes as needed (degree, connectivity, tokens)
+        #             // Store metadata in data attributes for tooltip
+        #             nodeDiv.dataset.nodeType = node.type;
+        #             nodeDiv.dataset.nodeName = node.name || 'N/A';
+        #             nodeDiv.dataset.startLine = node.start_line;
+        #             nodeDiv.dataset.endLine = node.end_line;
+        #             // Add more data attributes as needed (degree, connectivity, tokens)
 
-            // Simple header for the node
-            const header = document.createElement('div');
-            header.className = 'ast-node-header';
-            header.textContent = `[${{node.type}}] ${{node.name || ''}} (L${{node.start_line}}-L${{node.end_line}})`;
-            header.style.fontSize = '0.9em';
-            header.style.color = '#666';
-            header.style.marginBottom = '3px';
-            nodeDiv.appendChild(header);
+        #             // Simple header for the node
+        #             const header = document.createElement('div');
+        #             header.className = 'ast-node-header';
+        #             header.textContent = `[${{node.type}}] ${{node.name || ''}} (L${{node.start_line}}-L${{node.end_line}})`;
+        #             header.style.fontSize = '0.9em';
+        #             header.style.color = '#666';
+        #             header.style.marginBottom = '3px';
+        #             nodeDiv.appendChild(header);
 
-            const codeContent = document.createElement('div');
-            codeContent.className = 'ast-node-code';
-            codeContent.textContent = node.code_snippet;
-            nodeDiv.appendChild(codeContent);
+        #             const codeContent = document.createElement('div');
+        #             codeContent.className = 'ast-node-code';
+        #             codeContent.textContent = node.code_snippet;
+        #             nodeDiv.appendChild(codeContent);
 
-            // Tooltip setup
-            const tooltip = document.createElement('div');
-            tooltip.className = 'ast-tooltip';
-            tooltip.style.position = 'absolute';
-            tooltip.style.visibility = 'hidden';
-            tooltip.style.backgroundColor = 'black';
-            tooltip.style.color = 'white';
-            tooltip.style.padding = '5px';
-            tooltip.style.borderRadius = '3px';
-            tooltip.style.zIndex = '1000';
-            tooltip.style.fontSize = '0.8em';
-            document.body.appendChild(tooltip); // Append to body to avoid clipping issues
+        #             // Tooltip setup
+        #             const tooltip = document.createElement('div');
+        #             tooltip.className = 'ast-tooltip';
+        #             tooltip.style.position = 'absolute';
+        #             tooltip.style.visibility = 'hidden';
+        #             tooltip.style.backgroundColor = 'black';
+        #             tooltip.style.color = 'white';
+        #             tooltip.style.padding = '5px';
+        #             tooltip.style.borderRadius = '3px';
+        #             tooltip.style.zIndex = '1000';
+        #             tooltip.style.fontSize = '0.8em';
+        #             document.body.appendChild(tooltip); // Append to body to avoid clipping issues
 
-            nodeDiv.addEventListener('mouseover', (e) => {{
-                nodeDiv.style.backgroundColor = '#f0f0f0';
-                tooltip.innerHTML = `Type: ${{nodeDiv.dataset.nodeType}}<br>Name: ${{nodeDiv.dataset.nodeName}}<br>Lines: ${{nodeDiv.dataset.startLine}}-${{nodeDiv.dataset.endLine}}`;
-                tooltip.style.visibility = 'visible';
-            }});
-            nodeDiv.addEventListener('mousemove', (e) => {{
-                tooltip.style.left = (e.pageX + 10) + 'px';
-                tooltip.style.top = (e.pageY + 10) + 'px';
-            }});
-            nodeDiv.addEventListener('mouseout', () => {{
-                nodeDiv.style.backgroundColor = '';
-                tooltip.style.visibility = 'hidden';
-            }});
+        #             nodeDiv.addEventListener('mouseover', (e) => {{
+        #                 nodeDiv.style.backgroundColor = '#f0f0f0';
+        #                 tooltip.innerHTML = `Type: ${{nodeDiv.dataset.nodeType}}<br>Name: ${{nodeDiv.dataset.nodeName}}<br>Lines: ${{nodeDiv.dataset.startLine}}-${{nodeDiv.dataset.endLine}}`;
+        #                 tooltip.style.visibility = 'visible';
+        #             }});
+        #             nodeDiv.addEventListener('mousemove', (e) => {{
+        #                 tooltip.style.left = (e.pageX + 10) + 'px';
+        #                 tooltip.style.top = (e.pageY + 10) + 'px';
+        #             }});
+        #             nodeDiv.addEventListener('mouseout', () => {{
+        #                 nodeDiv.style.backgroundColor = '';
+        #                 tooltip.style.visibility = 'hidden';
+        #             }});
 
-            parentElement.appendChild(nodeDiv);
+        #             parentElement.appendChild(nodeDiv);
 
-            if (node.children && node.children.length > 0) {{
-                renderAST(node.children, nodeDiv); // Recursive call for children, append to current nodeDiv
-            }}
-        }});
-    }}
-}})();
-</script>
-        """
-        # The actual repoId and branchName will be injected by the calling Python function (handle_file_explorer_select)
-        # This is a placeholder structure for the script.
-        # The key is that `handle_file_explorer_select` must format this string.
-        # logging.info(f"[_generate_embedding_html] Returning HTML with script for AST visualization for {file_path_for_display}.")
-        return script_content # This will be further processed by handle_file_explorer_select
+        #             if (node.children && node.children.length > 0) {{
+        #                 renderAST(node.children, nodeDiv); // Recursive call for children, append to current nodeDiv
+        #             }}
+        #         }});
+        #     }}
+        # }})();
+        # </script>
+        # """
+        # # The actual repoId and branchName will be injected by the calling Python function (handle_file_explorer_select)
+        # # This is a placeholder structure for the script.
+        # # The key is that `handle_file_explorer_select` must format this string.
+        # # logging.info(f"[_generate_embedding_html] Returning HTML with script for AST visualization for {file_path_for_display}.")
+        # return script_content # This will be further processed by handle_file_explorer_select
+
+        # Diagnostic step: Return extremely simple HTML without any script.
+        logging.info(f"[_generate_embedding_html] Returning diagnostic simple HTML for {file_path_for_display}.")
+        return f"<div id='ast-visualization-container' style='padding:20px; border: 2px solid green;'><h3>AST VISUALIZATION TEST for {file_path_for_display}</h3><p>If you see this, basic HTML update is working.</p></div>"
 
     def handle_populate_change_analysis_inputs(self, repo_id: int, branch: str) -> gr.update:
         # Returns update for: branch_compare_older_version_ca
