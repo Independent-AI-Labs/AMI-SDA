@@ -1176,23 +1176,37 @@ No active tasks.
         is_image = relative_file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp')) # Added webp
         embedding_html_content = ""
         if not is_image:
-            # `_generate_embedding_html` now takes only file_path_for_display.
-            # The actual content is fetched by the JS from the API.
-            # The first argument to _generate_embedding_html (file_content) is vestigial.
-            # Pass relative_file_path as the second argument, which is now effectively the first used one.
-            html_template = self._generate_embedding_html("", relative_file_path) # "" is for the old file_content arg
+            # Temporarily construct HTML directly here to bypass _generate_embedding_html issues
+            repo_id_str = str(repo_id)
+            branch_name_str = branch
+            file_path_str = relative_file_path
 
-            # Inject actual values into the template's placeholders
-            # Ensure proper escaping if file paths could contain quotes, though unlikely for data attributes.
-            # Python's str() for repo_id is fine. Branch and relative_file_path are strings.
-            embedding_html_content = html_template.replace("{{repo_id}}", str(repo_id))
-            embedding_html_content = embedding_html_content.replace("{{branch_name}}", branch)
-            embedding_html_content = embedding_html_content.replace("{{file_path}}", relative_file_path)
-            embedding_html_content = embedding_html_content.replace("{{file_path_display}}", relative_file_path)
+            logging.info(f"[handle_file_explorer_select] DIRECTLY CONSTRUCTING HTML for AST. Repo: {repo_id_str}, Branch: {branch_name_str}, File: {file_path_str}")
 
-            # More direct logging of the content that will be passed to gr.update
-            logging.info(f"[handle_file_explorer_select] PRE-UPDATE embedding_html_content (repo_id: {repo_id}, branch: {branch}, file: {relative_file_path}). Preview: {embedding_html_content[:500]}...")
-
+            embedding_html_content = f"""
+<div id="ast-visualization-container"
+     data-repo-id="{repo_id_str}"
+     data-branch-name="{branch_name_str}"
+     data-file-path="{file_path_str}"
+     style="height: 580px; overflow-y: auto; font-family: monospace; padding: 10px; border: 1px solid #ccc;">
+    Loading AST for {file_path_str}... (Directly constructed HTML)
+</div>
+<script>
+    setTimeout(() => {{
+        if (typeof window.loadAndRenderAST === 'function') {{
+            console.log('[AST Viz Initializer] Calling window.loadAndRenderAST() for file: {file_path_str}');
+            window.loadAndRenderAST();
+        }} else {{
+            console.error('[AST Viz Initializer] window.loadAndRenderAST is not defined.');
+            const container = document.getElementById('ast-visualization-container');
+            if (container) {{
+                container.innerHTML = "<p style='color:red;'>Error: AST viewer script not loaded.</p>";
+            }}
+        }}
+    }}, 100);
+</script>
+"""
+            logging.info(f"[handle_file_explorer_select] PRE-UPDATE embedding_html_content (Directly Constructed). Preview: {embedding_html_content[:700]}...")
             embedding_html_update = gr.update(value=embedding_html_content)
         else:
             embedding_html_update = gr.update(value=f"<div style='padding:10px;'>AST visualization is not available for image: {relative_file_path}</div>")
