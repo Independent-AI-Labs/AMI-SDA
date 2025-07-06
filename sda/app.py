@@ -373,13 +373,8 @@ class CodeAnalysisFramework:
     def get_repository_stats(self, repo_id: int, branch: str) -> Dict[str, Any]:
         """Aggregates and returns statistics for a repository branch across all its schemas."""
         repo = self.get_repository_by_id(repo_id)
-        if not repo: # Removed: or not repo.db_schemas (allow processing if repo exists but schemas might be empty)
-            logging.warning(f"[get_repository_stats] Repository with ID {repo_id} not found.")
+        if not repo or not repo.db_schemas:
             return {}
-
-        if not repo.db_schemas:
-            logging.warning(f"[get_repository_stats] No db_schemas listed for repo_id={repo_id}, branch='{branch}'. Returning empty stats.")
-            return {"file_count": 0, "total_lines": 0, "total_tokens": 0, "language_breakdown": {}, "schema_count": 0}
 
         def _get_file_stats_from_schema(schema_name: str) -> Dict[str, Any]:
             # Fetches file counts, line counts, and language breakdown from a specific partition schema
@@ -403,41 +398,29 @@ class CodeAnalysisFramework:
         total_stats = {"file_count": 0, "total_lines": 0, "total_tokens": 0, "language_breakdown": defaultdict(int)}
 
         # Aggregate file-level stats from partition schemas
-        if repo.db_schemas: # This check is somewhat redundant due to early exit, but harmless
-            logging.info(f"[get_repository_stats] Processing schemas for repo_id={repo_id}, branch='{branch}': {repo.db_schemas}")
+        if repo.db_schemas:
             with ThreadPoolExecutor(max_workers=len(repo.db_schemas) or 1) as executor:
                 futures = {executor.submit(_get_file_stats_from_schema, sch): sch for sch in repo.db_schemas}
                 for future in as_completed(futures):
-                    schema_name_processed = futures[future]
                     try:
                         partition_stats = future.result()
-                        logging.info(f"[get_repository_stats] Stats from schema '{schema_name_processed}': files={partition_stats['file_count']}, lines={partition_stats['total_lines']}")
                         total_stats["file_count"] += partition_stats["file_count"]
                         total_stats["total_lines"] += partition_stats["total_lines"]
                         for lang, count in partition_stats["language_breakdown"].items():
                             total_stats["language_breakdown"][lang] += count
                     except Exception as e:
-                        logging.error(f"Failed to get file stats from schema {schema_name_processed}: {e}", exc_info=True)
-        else: # This case should have been caught by the early exit if repo.db_schemas was main criteria
-            logging.warning(f"[get_repository_stats] No db_schemas found for repo_id={repo_id}, branch='{branch}' (unexpectedly reached this point).")
+                        logging.error(f"Failed to get file stats from schema {futures[future]}: {e}", exc_info=True)
 
-        # Correctly sum total_tokens from DBCodeChunk in partition schemas
-        aggregated_token_count = 0
-        if repo.db_schemas:
-            for schema_name in repo.db_schemas:
-                with self.db_manager.get_session(schema_name) as partition_session:
-                    token_sum_result_partition = partition_session.query(func.sum(DBCodeChunk.token_count)).filter(
-                        DBCodeChunk.repository_id == repo_id, DBCodeChunk.branch == branch
-                    ).scalar()
-                    logging.debug(f"[get_repository_stats] Tokens from schema '{schema_name}' for repo {repo_id}, branch '{branch}': {token_sum_result_partition or 0}")
-                    aggregated_token_count += token_sum_result_partition or 0
-            total_stats["total_tokens"] = aggregated_token_count
-        else:
-            total_stats["total_tokens"] = 0 # Already covered by early exit logic for logging
+        # Get total_tokens from public.DBCodeChunk table (DBCodeChunk is in public schema)
+        with self.db_manager.get_session("public") as public_session:
+            token_sum_result = public_session.query(func.sum(DBCodeChunk.token_count)).filter(
+                DBCodeChunk.repository_id == repo_id, DBCodeChunk.branch == branch
+            ).scalar()
+            total_stats["total_tokens"] = token_sum_result or 0
+            logging.debug(f"[get_repository_stats] Summed token_sum_result from public.DBCodeChunk for repo {repo_id}, branch '{branch}': {total_stats['total_tokens']}")
 
-        total_stats["schema_count"] = len(repo.db_schemas) # Already checked repo.db_schemas exists
+        total_stats["schema_count"] = len(repo.db_schemas) if repo.db_schemas else 0
         total_stats["language_breakdown"] = dict(total_stats["language_breakdown"]) # Convert defaultdict to dict for output
-        logging.info(f"[get_repository_stats] Final stats for repo_id={repo_id}, branch='{branch}': {total_stats}")
         return total_stats
 
     def get_cpg_analysis(self, repo_id: int, branch: str) -> Dict[str, Any]:
