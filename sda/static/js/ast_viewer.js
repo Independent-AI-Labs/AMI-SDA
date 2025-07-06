@@ -55,14 +55,15 @@ window.initializeASTViewer = async function(params) {
 function renderAST(nodes, parentElement) {
     nodes.forEach(node => {
         const nodeDiv = document.createElement('div');
-        nodeDiv.className = 'ast-node'; // For potential CSS styling from control_panel.css
-        nodeDiv.style.marginLeft = (node.depth * 15) + 'px'; // Indentation based on depth
+        nodeDiv.className = 'ast-node';
+        nodeDiv.style.marginLeft = (node.depth * 8) + 'px'; // Reduced indentation
         nodeDiv.style.border = '1px dashed #ddd';
         nodeDiv.style.padding = '5px';
         nodeDiv.style.marginBottom = '5px';
-        nodeDiv.style.whiteSpace = 'pre-wrap'; // Preserve whitespace and newlines in code
-        nodeDiv.style.backgroundColor = 'transparent'; // Default background
-        nodeDiv.style.color = '#333'; // Default text color for node content if not inherited
+        nodeDiv.style.whiteSpace = 'pre-wrap';
+        nodeDiv.style.backgroundColor = '#ffffff'; // Default opaque background (white)
+        nodeDiv.style.color = '#333';
+        nodeDiv.style.position = 'relative'; // For positioning pills if needed
 
         // Store metadata in data attributes for tooltip
         nodeDiv.dataset.nodeType = node.type;
@@ -72,29 +73,50 @@ function renderAST(nodes, parentElement) {
         nodeDiv.dataset.startColumn = node.start_column || 'N/A';
         nodeDiv.dataset.endColumn = node.end_column || 'N/A';
         nodeDiv.dataset.tokenCount = node.token_count || 'N/A';
-        nodeDiv.dataset.dgraphDegree = node.dgraph_degree || 'N/A'; // Will be 'N/A' for now
+        nodeDiv.dataset.dgraphDegree = node.dgraph_degree || 'N/A';
         nodeDiv.dataset.childrenCount = node.children_count;
 
-        const header = document.createElement('div');
-        header.className = 'ast-node-header'; // For potential CSS styling
-        let headerText = `[${node.type}] ${node.name || ''} (L${node.start_line}-L${node.end_line})`;
-        if (node.children_count > 0) {
-            headerText += ` (Children: ${node.children_count})`;
-        }
-        header.textContent = headerText;
-        header.style.fontSize = '0.9em';
-        header.style.color = '#666';
-        header.style.marginBottom = '3px';
-        nodeDiv.appendChild(header);
+        const pillsContainer = document.createElement('div');
+        pillsContainer.className = 'ast-node-pills-container';
+        pillsContainer.style.marginBottom = '4px'; // Space between pills and code
 
-        const codeContent = document.createElement('pre'); // Use <pre> for code
-        codeContent.className = 'ast-node-code'; // For potential CSS styling
+        function createPill(text) {
+            const pill = document.createElement('span');
+            pill.textContent = text;
+            pill.style.display = 'inline-block';
+            pill.style.padding = '2px 6px';
+            pill.style.marginRight = '4px';
+            pill.style.marginBottom = '2px'; // In case they wrap
+            pill.style.fontSize = '0.75em';
+            pill.style.backgroundColor = '#e9e9e9';
+            pill.style.borderRadius = '8px'; // More rounded pills
+            pill.style.color = '#555';
+            return pill;
+        }
+
+        pillsContainer.appendChild(createPill(`Type: ${node.type}`));
+        pillsContainer.appendChild(createPill(`Lines: L${node.start_line}-L${node.end_line}`));
+        if (node.token_count !== 'N/A') {
+            pillsContainer.appendChild(createPill(`Tokens: ${node.token_count}`));
+        }
+        if (node.children_count > 0) {
+            pillsContainer.appendChild(createPill(`Children: ${node.children_count}`));
+        }
+        // Optionally add node name if it exists and isn't too long, or keep it for tooltip
+        if (node.name) {
+             // pillsContainer.appendChild(createPill(`Name: ${node.name}`)); // Could make pills too wide
+        }
+        nodeDiv.appendChild(pillsContainer);
+
+        const codeContent = document.createElement('pre');
+        codeContent.className = 'ast-node-code';
         codeContent.textContent = node.code_snippet;
-        codeContent.style.margin = '0'; // Reset default pre margin
-        codeContent.style.padding = '0'; // Reset default pre padding
+        codeContent.style.margin = '0';
+        codeContent.style.padding = '0';
+        codeContent.style.backgroundColor = 'transparent'; // Ensure code block itself doesn't have conflicting bg
         nodeDiv.appendChild(codeContent);
 
-        // Tooltip setup
+        // Tooltip setup - remains the same, but default node background is now white
         const tooltip = document.createElement('div');
         tooltip.className = 'ast-tooltip'; // For potential CSS styling
         tooltip.style.position = 'absolute';
