@@ -399,24 +399,31 @@ class CodeAnalysisFramework:
 
         # Aggregate file-level stats from partition schemas
         if repo.db_schemas:
+            logging.info(f"[STATS] Aggregating file stats for repo_id: {repo_id}, branch: '{branch}' from schemas: {repo.db_schemas}") # Added logging
             with ThreadPoolExecutor(max_workers=len(repo.db_schemas) or 1) as executor:
                 futures = {executor.submit(_get_file_stats_from_schema, sch): sch for sch in repo.db_schemas}
                 for future in as_completed(futures):
+                    schema_name_for_log = futures[future] # Get schema name for logging
                     try:
                         partition_stats = future.result()
+                        logging.info(f"[STATS] Received file stats from schema '{schema_name_for_log}': file_count={partition_stats['file_count']}, total_lines={partition_stats['total_lines']}") # Added logging
                         total_stats["file_count"] += partition_stats["file_count"]
                         total_stats["total_lines"] += partition_stats["total_lines"]
                         for lang, count in partition_stats["language_breakdown"].items():
                             total_stats["language_breakdown"][lang] += count
                     except Exception as e:
-                        logging.error(f"Failed to get file stats from schema {futures[future]}: {e}", exc_info=True)
+                        logging.error(f"Failed to get file stats from schema {schema_name_for_log}: {e}", exc_info=True)
+        else: # Added else for logging
+            logging.info(f"[STATS] No db_schemas found for repo_id: {repo_id} to aggregate file stats.")
 
         # Get total_tokens from public.DBCodeChunk table
         with self.db_manager.get_session("public") as public_session:
+            logging.info(f"[STATS] Calculating total_tokens for repo_id: {repo_id}, branch: '{branch}'") # Added logging
             token_sum_result = public_session.query(func.sum(func.coalesce(DBCodeChunk.token_count, 0))).filter(
                 DBCodeChunk.repository_id == repo_id, DBCodeChunk.branch == branch
             ).scalar()
             total_stats["total_tokens"] = token_sum_result or 0 # Coalesce in sum handles NULLs, direct result should be numeric or None if no rows
+            logging.info(f"[STATS] Calculated total_tokens: {total_stats['total_tokens']} for repo_id: {repo_id}, branch: '{branch}'") # Added logging
 
         total_stats["schema_count"] = len(repo.db_schemas) if repo.db_schemas else 0
         total_stats["language_breakdown"] = dict(total_stats["language_breakdown"]) # Convert defaultdict to dict for output

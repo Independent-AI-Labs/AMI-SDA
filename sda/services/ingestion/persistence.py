@@ -328,10 +328,24 @@ def _persist_chunks_for_schema(db_manager: DatabaseManager, schema_name: str, pa
             # Re-use the 'public' session from above if possible, or get a new one.
             # The session used for querying 'persisted_chunks_with_db_id' is still in scope.
             session.bulk_update_mappings(DBCodeChunk, updates_for_token_counts)
+            logging.info(f"[public] Called bulk_update_mappings for token_count for {len(updates_for_token_counts)} DBCodeChunks for repo_id: {repo_id}, branch: '{branch}'.")
+
+            # Diagnostic: Query back a sample of updated chunks to verify token_count in this transaction
+            if updates_for_token_counts:
+                sample_chunk_db_ids = [upd['id'] for upd in updates_for_token_counts[:5]]
+                if sample_chunk_db_ids:
+                    try:
+                        # Flush to ensure updates are sent to DB before querying, but stay in transaction
+                        session.flush()
+                        verified_chunks = session.query(DBCodeChunk.id, DBCodeChunk.token_count).filter(DBCodeChunk.id.in_(sample_chunk_db_ids)).all()
+                        logging.info(f"[public] Verification query for token_counts (sample of {len(sample_chunk_db_ids)}): {verified_chunks} for repo_id: {repo_id}, branch: '{branch}'")
+                    except Exception as e_verify:
+                        logging.error(f"[public] Error verifying token_count updates in transaction for repo_id: {repo_id}, branch: '{branch}': {e_verify}", exc_info=True)
+
             # session.commit() # The session is managed by a context manager, commit happens on successful exit.
-            logging.info(f"[public] Successfully updated token_count for {len(updates_for_token_counts)} DBCodeChunks for repo_id: {repo_id}, branch: {branch}")
+            logging.info(f"[public] Successfully updated token_count for {len(updates_for_token_counts)} DBCodeChunks for repo_id: {repo_id}, branch: '{branch}'") # Added quotes to branch
         except Exception as e_token_update:
-            logging.error(f"[public] Error bulk updating token_counts for DBCodeChunks for repo_id: {repo_id}, branch: {branch}: {e_token_update}", exc_info=True)
+            logging.error(f"[public] Error bulk updating token_counts for DBCodeChunks for repo_id: {repo_id}, branch: '{branch}': {e_token_update}", exc_info=True) # Added quotes to branch
             # Decide if this is a critical error to halt ingestion or just log. For stats, it's important.
             # For now, we log and continue creating the jsonl file.
     else:
