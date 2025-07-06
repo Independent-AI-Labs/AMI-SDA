@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Visualization</title>
+    <style>
+        body { font-family: sans-serif; margin: 0; background-color: #f0f0f0; }
+        #pdf-visualization-container {
+            padding: 10px;
+            height: calc(100vh - 20px); /* Full viewport height minus padding */
+            overflow-y: auto;
+            background-color: #fff; /* White background for pages container */
+        }
+        .pdf-page {
+            border: 1px solid #ccc;
+            margin-bottom: 20px;
+            padding: 15px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            background-color: #fff; /* Ensure page background is white */
+        }
+        .pdf-element {
+            margin-bottom: 10px;
+            padding: 5px;
+            border: 1px solid transparent; /* For highlighting */
+        }
+        .pdf-element.highlighted {
+            background-color: #e0e0ff; /* Highlighting color */
+            border-color: #a0a0ff;
+        }
+        .pdf-element img { max-width: 100%; height: auto; display: block; margin-bottom: 5px; }
+        .pdf-element table { border-collapse: collapse; width: 100%; margin-bottom:10px; }
+        .pdf-element th, .pdf-element td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        .pdf-element th { background-color: #f2f2f2; }
+        .image-caption, .table-caption-display {
+            font-style: italic;
+            font-size: 0.9em;
+            color: #555;
+            margin-top: 0;
+            margin-bottom: 5px;
+        }
+
+        .loading-message, .error-message {
+            text-align: center;
+            padding: 20px;
+            font-size: 1.1em;
+        }
+        .error-message { color: red; }
+
+        /* Basic styling for headings if not provided by direct Hx tags from content */
+        .pdf-heading-1 { font-size: 1.8em; font-weight: bold; margin-top: 0.8em; margin-bottom: 0.4em; }
+        .pdf-heading-2 { font-size: 1.5em; font-weight: bold; margin-top: 0.7em; margin-bottom: 0.35em; }
+        .pdf-heading-3 { font-size: 1.3em; font-weight: bold; margin-top: 0.6em; margin-bottom: 0.3em; }
+        .pdf-paragraph { margin-bottom: 0.5em; line-height: 1.6; }
+        .pdf-formula {
+            padding: 10px;
+            border: 1px solid #eee;
+            background-color: #f9f9f9;
+            overflow-x: auto;
+            font-family: 'Courier New', Courier, monospace;
+            margin-bottom: 10px;
+        }
+    </style>
+    <!-- KaTeX for LaTeX rendering -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" integrity="sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUbGuHTGc" crossorigin="anonymous"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" integrity="sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05" crossorigin="anonymous"
+        onload="console.log('KaTeX auto-render loaded.')"></script>
+</head>
+<body>
+    <div id="pdf-visualization-container">
+        <div class="loading-message">Loading PDF data...</div>
+    </div>
+    <script src="/static/js/pdf_viewer.js"></script>
+</body>
+</html>

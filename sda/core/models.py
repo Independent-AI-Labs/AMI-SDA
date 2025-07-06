@@ -17,7 +17,7 @@ from typing import List, Optional, Any, Dict
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Float,
-    ForeignKey, JSON, UniqueConstraint, Index
+    ForeignKey, JSON, UniqueConstraint, Index, LargeBinary
 )
 from sqlalchemy.orm import declarative_base, relationship, Mapped
 
@@ -225,3 +225,48 @@ class BillingUsage(Base):
 
     def __repr__(self):
         return f"<BillingUsage(id={self.id}, model='{self.model_name}', cost={self.cost:.6f})>"
+
+
+class PDFDocument(Base):
+    """Represents a processed PDF document."""
+    __tablename__ = 'pdf_documents'
+    __table_args__ = {'schema': 'public'}
+
+    id: Mapped[int] = Column(Integer, primary_key=True)
+    uuid: Mapped[str] = Column(String, default=lambda: str(uuid.uuid4()), unique=True, nullable=False, index=True)
+
+    # Hash of the original PDF file content
+    pdf_file_hash: Mapped[str] = Column(String(64), nullable=False, unique=True, index=True) # Assuming SHA256
+
+    # Optional link to a repository if the PDF is part of it
+    repository_id: Mapped[Optional[int]] = Column(Integer, ForeignKey('public.repositories.id', ondelete="SET NULL"), nullable=True, index=True)
+    # Optional path if it's from a repository
+    relative_path: Mapped[Optional[str]] = Column(String, nullable=True)
+    # Optional branch if it's from a repository
+    branch_name: Mapped[Optional[str]] = Column(String, nullable=True, index=True)
+
+    parsed_data: Mapped[Dict[str, Any]] = Column(JSON, nullable=False) # Stores the ParsedPDFDocument model as JSON
+    total_pages: Mapped[int] = Column(Integer, nullable=False)
+
+    created_at: Mapped[datetime] = Column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<PDFDocument(id={self.id}, pdf_file_hash='{self.pdf_file_hash[:10]}...', pages={self.total_pages})>"
+
+
+class PDFImageBlobStore(Base):
+    """Stores unique image blobs extracted from PDFs."""
+    __tablename__ = 'pdf_image_blobs'
+    __table_args__ = {'schema': 'public'}
+
+    # Using SHA256 hash of image data as primary key for deduplication
+    blob_id: Mapped[str] = Column(String(64), primary_key=True) # SHA256 hash
+    content_type: Mapped[str] = Column(String, nullable=False) # e.g., "image/png", "image/jpeg"
+    data: Mapped[bytes] = Column(LargeBinary, nullable=False) # Actual image data
+
+    created_at: Mapped[datetime] = Column(DateTime, default=datetime.utcnow)
+    size_bytes: Mapped[int] = Column(Integer, nullable=False)
+
+    def __repr__(self):
+        return f"<PDFImageBlobStore(blob_id='{self.blob_id[:10]}...', content_type='{self.content_type}', size={self.size_bytes})>"

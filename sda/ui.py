@@ -1982,6 +1982,43 @@ if __name__ == "__main__":
         return hierarchical_ast
     # --- End API Endpoint for AST Data ---
 
+    # --- API Endpoint for PDF Document AST-like structure ---
+    from sda.services.pdf_parser import ParsedPDFDocument as PydanticParsedPDFDocument
+    # We might not need PydanticPDFNode directly in the response model if ParsedPDFDocument is sufficient
+    # from sda.services.pdf_parser import PDFNode as PydanticPDFNode
+    from fastapi import Response # For image blob response
+
+    @app.get("/api/pdf/{pdf_doc_uuid}/document-ast", response_model=PydanticParsedPDFDocument)
+    async def get_pdf_document_ast(pdf_doc_uuid: str):
+        """
+        Retrieves the parsed document structure for a given PDF UUID.
+        """
+        # framework_instance is globally available in this file
+        db_manager = framework_instance.db_manager
+
+        parsed_doc_data = db_manager.get_pdf_document_by_uuid(doc_uuid=pdf_doc_uuid)
+
+        if not parsed_doc_data:
+            raise HTTPException(status_code=404, detail="PDF document not found or not processed.")
+
+        return parsed_doc_data
+
+    # --- API Endpoint for PDF Image Blobs ---
+    @app.get("/api/pdf/image/{image_blob_id}")
+    async def get_pdf_image_blob_api(image_blob_id: str): # Renamed to avoid conflict with any other get_pdf_image_blob
+        """
+        Retrieves an image blob by its ID.
+        """
+        db_manager = framework_instance.db_manager
+
+        image_blob = db_manager.get_pdf_image_blob(blob_id=image_blob_id)
+
+        if not image_blob:
+            raise HTTPException(status_code=404, detail="Image blob not found.")
+
+        return Response(content=image_blob.data, media_type=image_blob.content_type)
+    # --- End PDF API Endpoints ---
+
     # Mount static files
     static_files_path = Path(__file__).parent / "static"
     app.mount("/static", StaticFiles(directory=static_files_path), name="static")

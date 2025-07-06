@@ -31,7 +31,10 @@ from sda.config import (
     DGRAPH_PORT,
     IngestionConfig,
 )
-from sda.core.models import Base
+from sda.core.models import Base, PDFDocument, PDFImageBlobStore # SQLAlchemy models
+from sda.services.pdf_parser import ParsedPDFDocument as PydanticParsedPDFDocument
+from sda.services.pdf_parser import PDFImageBlob as PydanticPDFImageBlob
+from datetime import datetime # For updated_at timestamp
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -355,4 +358,122 @@ class DatabaseManager:
                 return result
         except Exception as e:
             logging.error(f"Failed to get database size: {e}", exc_info=True)
+            return None
+
+    def save_pdf_document(
+        self,
+        parsed_document_data: PydanticParsedPDFDocument,
+        image_blobs_data: List[PydanticPDFImageBlob],
+        repository_id: Optional[int] = None, # If PDF is associated with a repo
+        branch_name: Optional[str] = None,   # If PDF is associated with a repo branch
+        relative_path: Optional[str] = None  # If PDF is from a repo
+    ) -> Optional[str]:
+        """
+        Saves a parsed PDF document and its associated image blobs to the database.
+        Uses the public schema for these tables. Returns the UUID of the PDFDocument.
+        """
+        db_pdf_doc_for_return_uuid: Optional[PDFDocument] = None
+        with self.get_session(schema_name="public") as session:
+            try:
+                # 1. Save or update PDFImageBlobs
+                for pydantic_blob in image_blobs_data:
+                    existing_blob = session.get(PDFImageBlobStore, pydantic_blob.blob_id)
+                    if not existing_blob:
+                        db_image_blob = PDFImageBlobStore(
+                            blob_id=pydantic_blob.blob_id,
+                            content_type=pydantic_blob.content_type,
+                            data=pydantic_blob.data,
+                            size_bytes=len(pydantic_blob.data)
+                        )
+                        session.add(db_image_blob)
+
+                # Commit image blobs separately to handle potential race if PDF doc save fails
+                # or if we need blob IDs before PDF doc is fully committed.
+                # However, for atomicity of the operation, usually commit at the very end.
+                # Let's try committing at the end first. If there are issues with FKs or
+                # unique constraints being violated by concurrent processes, we might reconsider.
+
+                # 2. Save or update PDFDocument
+                db_pdf_doc = session.query(PDFDocument).filter_by(pdf_file_hash=parsed_document_data.pdf_file_hash).first()
+
+                if db_pdf_doc:
+                    db_pdf_doc.parsed_data = parsed_document_data.model_dump(mode="json")
+                    db_pdf_doc.total_pages = parsed_document_data.total_pages
+                    db_pdf_doc.repository_id = repository_id
+                    db_pdf_doc.branch_name = branch_name
+                    db_pdf_doc.relative_path = relative_path
+                    db_pdf_doc.updated_at = datetime.utcnow()
+                    logging.info(f"Updating existing PDFDocument with hash {parsed_document_data.pdf_file_hash}")
+                    db_pdf_doc_for_return_uuid = db_pdf_doc
+                else:
+                    new_db_pdf_doc = PDFDocument(
+                        pdf_file_hash=parsed_document_data.pdf_file_hash,
+                        parsed_data=parsed_document_data.model_dump(mode="json"),
+                        total_pages=parsed_document_data.total_pages,
+                        repository_id=repository_id,
+                        branch_name=branch_name,
+                        relative_path=relative_path
+                    )
+                    session.add(new_db_pdf_doc)
+                    logging.info(f"Creating new PDFDocument with hash {parsed_document_data.pdf_file_hash}")
+                    # We need to get the UUID after adding but before commit for it to be populated if it's server-generated
+                    # or ensure it's generated client-side. Our PDFDocument model has a default_factory for uuid.
+                    # To get the UUID, we might need to flush or rely on the instance after commit.
+                    # For now, let's assign it to the variable that will be used for return.
+                    db_pdf_doc_for_return_uuid = new_db_pdf_doc
+
+                session.commit() # Commit all changes (images and document)
+
+                # If db_pdf_doc_for_return_uuid was a new object, its UUID should be populated after commit.
+                # If it was an existing one, its UUID is already there.
+                if db_pdf_doc_for_return_uuid:
+                    logging.info(f"Successfully saved/updated PDF document {parsed_document_data.pdf_file_hash} (UUID: {db_pdf_doc_for_return_uuid.uuid}) and {len(image_blobs_data)} image blobs.")
+                    return db_pdf_doc_for_return_uuid.uuid
+                return None # Should not happen if commit was successful
+
+            except IntegrityError as e:
+                session.rollback()
+                logging.error(f"Integrity error while saving PDF document or blobs: {e}", exc_info=True)
+                if "pdf_documents_pdf_file_hash_key" in str(e).lower():
+                     raise ValueError(f"A PDF document with hash {parsed_document_data.pdf_file_hash} might already exist due to a race condition or was inserted by another process.")
+                if "pdf_image_blobs_pkey" in str(e).lower():
+                    raise ValueError(f"An image blob with one of the provided blob_ids might already exist due to a race condition.")
+                raise
+            except Exception as e:
+                session.rollback()
+                logging.error(f"Error saving PDF document or blobs: {e}", exc_info=True)
+                raise
+        return None # Should not be reached if logic is correct
+
+    def get_pdf_document_by_hash(self, pdf_file_hash: str) -> Optional[PydanticParsedPDFDocument]:
+        """Retrieves a parsed PDF document by its file hash."""
+        with self.get_session(schema_name="public") as session:
+            db_pdf_doc = session.query(PDFDocument).filter_by(pdf_file_hash=pdf_file_hash).first()
+            if db_pdf_doc:
+                return PydanticParsedPDFDocument(**db_pdf_doc.parsed_data)
+            return None
+
+    def get_pdf_document_by_uuid(self, doc_uuid: str) -> Optional[PydanticParsedPDFDocument]:
+        """Retrieves a parsed PDF document by its UUID."""
+        with self.get_session(schema_name="public") as session:
+            db_pdf_doc = session.query(PDFDocument).filter_by(uuid=doc_uuid).first()
+            if db_pdf_doc:
+                # Ensure parsed_data is not None and is a dict
+                if db_pdf_doc.parsed_data and isinstance(db_pdf_doc.parsed_data, dict):
+                    return PydanticParsedPDFDocument(**db_pdf_doc.parsed_data)
+                else:
+                    logging.error(f"PDFDocument with UUID {doc_uuid} has invalid parsed_data: {db_pdf_doc.parsed_data}")
+                    return None
+            return None
+
+    def get_pdf_image_blob(self, blob_id: str) -> Optional[PydanticPDFImageBlob]:
+        """Retrieves an image blob by its ID."""
+        with self.get_session(schema_name="public") as session:
+            db_image_blob = session.get(PDFImageBlobStore, blob_id)
+            if db_image_blob:
+                return PydanticPDFImageBlob(
+                    blob_id=db_image_blob.blob_id,
+                    content_type=db_image_blob.content_type,
+                    data=db_image_blob.data
+                )
             return None
