@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Generator, Callable
 
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import func # ADDED IMPORT
 import tiktoken # For _persist_chunks_for_schema tokenizer
 
 # Imports from original ingestion.py / project structure
