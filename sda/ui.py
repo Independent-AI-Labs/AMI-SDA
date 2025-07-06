@@ -503,6 +503,7 @@ No active tasks.
             # last_sub_task_ids_state = gr.State([])
             # last_main_task_has_details_state = gr.State(False)
             # last_main_task_has_error_state = gr.State(False)
+            ast_trigger_textbox = gr.Textbox(visible=False, label="ASTViewerTrigger", elem_id="ast_viewer_trigger_textbox")
 
 
             with gr.Column(elem_id="addRepoModal", elem_classes="modal-background"):
@@ -718,7 +719,8 @@ No active tasks.
                 inputs=[repo_id_state, branch_state, file_explorer], # Pass file_explorer itself as input for its value
                 outputs=[
                     embedding_html_viewer, code_viewer, image_viewer, selected_file_state,
-                    no_changes_message_html # Added the new output component
+                    no_changes_message_html, # Added the new output component
+                    ast_trigger_textbox # Added trigger for JS
                     # current_modified_files_dropdown_ca, file_to_compare_dropdown_ca REMOVED
                 ]
             )
@@ -1174,42 +1176,33 @@ No active tasks.
         # The `raw_content_for_embedding` is no longer directly passed to _generate_embedding_html for display.
 
         is_image = relative_file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp')) # Added webp
-        embedding_html_content = ""
+        ast_trigger_update = gr.skip() # Default to skip
+
         if not is_image:
-            # Temporarily construct HTML directly here to bypass _generate_embedding_html issues
             repo_id_str = str(repo_id)
             branch_name_str = branch
-            file_path_str = relative_file_path
+            file_path_str = relative_file_path # This is already the relative path
 
-            logging.info(f"[handle_file_explorer_select] DIRECTLY CONSTRUCTING HTML for AST. Repo: {repo_id_str}, Branch: {branch_name_str}, File: {file_path_str}")
-
-            embedding_html_content = f"""
+            # HTML for the container div, to be populated by ast_viewer.js
+            embedding_html_div = f"""
 <div id="ast-visualization-container"
      data-repo-id="{repo_id_str}"
      data-branch-name="{branch_name_str}"
      data-file-path="{file_path_str}"
      style="height: 580px; overflow-y: auto; font-family: monospace; padding: 10px; border: 1px solid #ccc;">
-    Loading AST for {file_path_str}... (Directly constructed HTML)
-</div>
-<script>
-    setTimeout(() => {{
-        if (typeof window.loadAndRenderAST === 'function') {{
-            console.log('[AST Viz Initializer] Calling window.loadAndRenderAST() for file: {file_path_str}');
-            window.loadAndRenderAST();
-        }} else {{
-            console.error('[AST Viz Initializer] window.loadAndRenderAST is not defined.');
-            const container = document.getElementById('ast-visualization-container');
-            if (container) {{
-                container.innerHTML = "<p style='color:red;'>Error: AST viewer script not loaded.</p>";
-            }}
-        }}
-    }}, 100);
-</script>
-"""
-            logging.info(f"[handle_file_explorer_select] PRE-UPDATE embedding_html_content (Directly Constructed). Preview: {embedding_html_content[:700]}...")
-            embedding_html_update = gr.update(value=embedding_html_content)
+    Loading AST for {file_path_str}... (Triggered by hidden textbox)
+</div>"""
+            embedding_html_update = gr.update(value=embedding_html_div)
+
+            # Update the trigger textbox to signal JavaScript
+            trigger_value = f"{repo_id_str}|{branch_name_str}|{file_path_str}|{datetime.now().timestamp()}"
+            ast_trigger_update = gr.update(value=trigger_value)
+            logging.info(f"[handle_file_explorer_select] Preparing DIV for AST. Repo: {repo_id_str}, Branch: {branch_name_str}, File: {file_path_str}. Trigger: {trigger_value}")
+
         else:
             embedding_html_update = gr.update(value=f"<div style='padding:10px;'>AST visualization is not available for image: {relative_file_path}</div>")
+            # No need to update trigger for images, but ensure it's part of the return tuple.
+            ast_trigger_update = gr.skip()
             logging.info(f"[handle_file_explorer_select] AST visualization skipped for image: {relative_file_path}")
         # --- End Embedding Tab Update ---
 

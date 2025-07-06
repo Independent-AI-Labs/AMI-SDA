@@ -127,8 +127,48 @@ console.log('[AST Viewer] ast_viewer.js loaded.');
 // or ensure the Python side calls this function explicitly after updating the HTML.
 // The current plan is for Python to include a small script to call loadAndRenderAST().
 // So, no auto-execution here unless specifically desired.
-// document.addEventListener('DOMContentLoaded', () => {
-//     if (document.getElementById('ast-visualization-container')) {
-//         // loadAndRenderAST(); // Don't auto-call if Python will trigger it.
-//     }
-// });
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('[AST Viewer] DOMContentLoaded, attempting to set up observer.');
+    // Gradio textboxes are often an input within a label, or a more complex structure.
+    // The elem_id 'ast_viewer_trigger_textbox' is on a wrapper. We need to find the actual input.
+    // A common structure might be a div with elem_id, containing a label, containing an input.
+    // Or, if Gradio directly assigns the elem_id to the input's wrapper, querySelector might work differently.
+    // Let's try to find it via the label first, as Gradio usually uses the label for querySelector targets.
+    // The label for the Textbox is "ASTViewerTrigger".
+    const triggerElement = document.querySelector('input[aria-label="ASTViewerTrigger"]');
+
+    if (triggerElement) {
+        console.log('[AST Viewer] AST Trigger Textbox input element found:', triggerElement);
+
+        const observer = new MutationObserver((mutationsList, observer) => {
+            // We are interested in changes to the 'value' attribute of the input
+            // or if Gradio updates it by changing child nodes of a wrapper.
+            // For an input, 'value' attribute change is key.
+            for(const mutation of mutationsList) {
+                // Check if the 'value' attribute of the input itself changed.
+                if (mutation.type === 'attributes' && mutation.attributeName === 'value') {
+                    console.log('[AST Viewer] AST Trigger Textbox value attribute changed. New value:', triggerElement.value);
+                    if (typeof window.loadAndRenderAST === 'function') {
+                        window.loadAndRenderAST();
+                    } else {
+                        console.error("[AST Viewer] loadAndRenderAST function not defined at time of trigger.");
+                    }
+                    return; // Process once per trigger
+                }
+            }
+        });
+
+        observer.observe(triggerElement, { attributes: true, attributeFilter: ['value'] });
+        console.log('[AST Viewer] MutationObserver set up on AST Trigger Textbox input for "value" attribute.');
+
+    } else {
+        console.error('[AST Viewer] AST Trigger Textbox input element NOT found using querySelector(\'input[aria-label="ASTViewerTrigger"]\'). Visualization trigger will not work.');
+        // As a fallback, try to find by elem_id if the structure is different
+        const wrapperElement = document.getElementById('ast_viewer_trigger_textbox');
+        if(wrapperElement) {
+            console.log('[AST Viewer] Found wrapper #ast_viewer_trigger_textbox. If input not found, observer might need to target this and check childList/subtree.');
+        } else {
+            console.error('[AST Viewer] Wrapper #ast_viewer_trigger_textbox also not found.');
+        }
+    }
+});
