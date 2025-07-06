@@ -162,7 +162,15 @@
     overflow-y: auto;
     border: 1px solid var(--border-color-primary);
 }
-#addRepoModal .modal-content-wrapper { max-width: 500px; width: 100%; }
+#addRepoModal .modal-content-wrapper {
+    max-width: 500px;
+    width: 100%;
+    height: auto; /* Allow height to fit content */
+    max-height: 90vh; /* Prevent it from being too tall */
+    display: flex; /* Arrange children (header, input, buttons) vertically */
+    flex-direction: column;
+    overflow-y: auto; /* Add scroll if content exceeds max-height */
+}
 #codeViewerModal .modal-content-wrapper {
     max-width: 80vw; width: 100%; max-height: 80vh; overflow-y: auto;
 }
@@ -501,32 +509,34 @@ html.dark .stat-icon {
     border: none !important;
     background: transparent !important; /* Make wrapper transparent */
     box-shadow: none !important;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden; /* Prevent wrapper from showing scrollbars */
-    flex-grow: 1; /* Allow iframe wrappers to grow */
-    min-height: 300px; /* Minimum height for iframes, adjust as needed */
+    display: flex; /* Establishes a flex formatting context. */
+    flex-direction: column; /* Stack children vertically. */
+    overflow: hidden; /* Prevent this wrapper from showing scrollbars. */
+    flex-grow: 1; /* Allow this wrapper to take up available space in its flex parent. */
+    /* min-height: 300px; /* REMOVED: Let's rely on parent's height or content. */
+    height: 100%; /* Make it try to fill parent, works if parent has defined height or is flex item. */
 }
 
 /* Make the direct child (often Gradio's own content div) also flexible */
 /* This targets the div that Gradio wraps around the gr.HTML output (our iframe) */
 #ast_iframe_container_wrapper > div:first-child,
 #control_panel_iframe_container_wrapper > div:first-child {
-    flex-grow: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden; /* Prevent this div from scrolling if its child (iframe) will scroll */
+    flex-grow: 1; /* This child should grow to fill the #control_panel_iframe_container_wrapper. */
+    display: flex; /* It's also a flex container for the iframe. */
+    flex-direction: column; /* Stack its children (the iframe) vertically. */
+    overflow: hidden; /* Prevent this div itself from scrolling. */
     border: none !important;
     padding: 0 !important;
-    min-height: 0; /* Essential for flex children */
+    /* min-height: 0; /* Already good for flex children. */
+    height: 100%; /* Ensure it fills its parent. */
 }
 
 /* Ensure the iframe itself takes full height and width of its allocated space */
 #ast_iframe_container_wrapper iframe,
 #control_panel_iframe_container_wrapper iframe {
-    flex-grow: 1; /* Take all available space in the flex container */
+    flex-grow: 1; /* The iframe should grow to fill its parent div. */
     width: 100%;
-    height: 100%; /* Take full height of the parent that now has flex-grow */
+    height: 100%; /* This should make the iframe fill the `> div:first-child`. */
     border: none;
 }
 
