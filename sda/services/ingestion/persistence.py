@@ -337,13 +337,13 @@ def _persist_chunks_for_schema(db_manager: DatabaseManager, schema_name: str, pa
         try:
             # The session used for querying 'persisted_chunks_with_db_id' is still in scope.
             # This session is for the 'public' schema.
-        logging.debug(f"[_persist_chunks_for_schema] Preparing to bulk update token_count for {len(updates_for_token_counts)} DBCodeChunks in 'public' schema. Repo_id: {repo_id}, branch: {branch}. Sample updates (first 2): {updates_for_token_counts[:2]}")
+            logging.debug(f"[_persist_chunks_for_schema] Preparing to bulk update token_count for {len(updates_for_token_counts)} DBCodeChunks in 'public' schema. Repo_id: {repo_id}, branch: {branch}. Sample updates (first 2): {updates_for_token_counts[:2]}")
             session.bulk_update_mappings(DBCodeChunk, updates_for_token_counts)
             logging.info(f"[public] DBCodeChunk.token_count bulk_update_mappings call executed for {len(updates_for_token_counts)} items for repo_id: {repo_id}, branch: {branch}. Session will commit on block exit.")
             # Note: Actual commit happens when the `with db_manager.get_session("public") as session:` block exits successfully.
         except Exception as e_token_update:
             logging.error(f"[public] CRITICAL: Error during bulk_update_mappings for DBCodeChunk.token_count. Repo_id: {repo_id}, branch: {branch}. Error: {e_token_update}", exc_info=True)
-        overall_success = False # Mark failure due to token update error
+            overall_success = False # Mark failure due to token update error
             # This error could lead to token_counts not being persisted.
     else:
         logging.info(f"[public] No token count updates to perform for DBCodeChunks for repo_id: {repo_id}, branch: {branch}.")
