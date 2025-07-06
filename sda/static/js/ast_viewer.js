@@ -113,13 +113,29 @@ async function initializeASTViewer() {
     }
 }
 
-function renderAST(nodes, parentElement) {
+function renderAST(nodes, parentElement, parentNodeObject = null) {
+    const filePath = window.astViewerGlobalState.currentFilePath;
+    const extension = filePath ? filePath.split('.').pop().toLowerCase() : '';
+    const langMap = {
+        'py': 'python', 'js': 'javascript', 'ts': 'typescript', 'java': 'java',
+        'c': 'c', 'cpp': 'cpp', 'cs': 'csharp', 'go': 'go', 'rb': 'ruby',
+        'php': 'php', 'swift': 'swift', 'kt': 'kotlin', 'rs': 'rust',
+        'html': 'markup', 'xml': 'markup', 'svg': 'markup', 'css': 'css',
+        'scss': 'scss', 'less': 'less', 'json': 'json', 'yaml': 'yaml',
+        'yml': 'yaml', 'md': 'markdown', 'sh': 'bash', 'sql': 'sql',
+        'dockerfile': 'docker', 'jsx': 'jsx', 'tsx': 'tsx'
+    };
+    const languageClass = langMap[extension] || 'clike';
+
     nodes.forEach(node => {
         const nodeDiv = document.createElement('div');
         nodeDiv.className = 'ast-node';
-        nodeDiv.style.marginLeft = (node.depth * 15) + 'px'; // Adjusted indentation
+        // Apply margin if it's a top-level node or if its parent is not directly its container
+        // This logic might need refinement based on where renderAST is called from.
+        // For true nesting, child nodes are appended to parent's code container,
+        // so their depth-based margin should still work relative to the overall structure.
+        nodeDiv.style.marginLeft = (node.depth * 15) + 'px';
 
-        // Store metadata in data attributes for tooltip
         nodeDiv.dataset.nodeType = node.type;
         nodeDiv.dataset.nodeName = node.name || 'N/A';
         nodeDiv.dataset.startLine = node.start_line;
@@ -127,10 +143,9 @@ function renderAST(nodes, parentElement) {
         nodeDiv.dataset.startColumn = node.start_column || 'N/A';
         nodeDiv.dataset.endColumn = node.end_column || 'N/A';
         nodeDiv.dataset.tokenCount = node.token_count || 'N/A';
-        nodeDiv.dataset.dgraphDegree = node.dgraph_degree || 'N/A'; // Assuming this comes from API
-        nodeDiv.dataset.childrenCount = node.children_count || 0;
+        nodeDiv.dataset.dgraphDegree = node.dgraph_degree || 'N/A';
+        nodeDiv.dataset.childrenCount = node.children ? node.children.length : 0;
 
-        // Header
         const header = document.createElement('div');
         header.className = 'ast-node-header';
         header.innerHTML = `
@@ -139,45 +154,74 @@ function renderAST(nodes, parentElement) {
             <span class="node-lines">(L${node.start_line}-${node.end_line})</span>`;
         nodeDiv.appendChild(header);
 
-        // Code Snippet with Prism.js structure
+        const codeContainer = document.createElement('div');
+        codeContainer.className = 'ast-node-code-container';
+
         if (node.code_snippet) {
-            const codeContainer = document.createElement('div');
-            codeContainer.className = 'ast-node-code-container'; // Styled in HTML
+            if (!node.children || node.children.length === 0) {
+                // Node has no children, render its code snippet directly
+                const pre = document.createElement('pre');
+                pre.className = `language-${languageClass}`;
+                const code = document.createElement('code');
+                code.className = `language-${languageClass}`;
+                code.textContent = node.code_snippet;
+                pre.appendChild(code);
+                codeContainer.appendChild(pre);
+            } else {
+                // Node has children, process snippet line by line
+                const lines = node.code_snippet.split('\\n');
+                let currentLineInSnippet = 0;
+                let childIndex = 0;
+                let buffer = "";
 
-            const pre = document.createElement('pre');
-            const code = document.createElement('code');
+                const flushBuffer = () => {
+                    if (buffer.length > 0) {
+                        const pre = document.createElement('pre');
+                        pre.className = `language-${languageClass}`;
+                        const code = document.createElement('code');
+                        code.className = `language-${languageClass}`;
+                        code.textContent = buffer;
+                        pre.appendChild(code);
+                        codeContainer.appendChild(pre);
+                        buffer = "";
+                    }
+                };
 
-            // Determine language for Prism.js
-            const filePath = window.astViewerGlobalState.currentFilePath;
-            const extension = filePath ? filePath.split('.').pop().toLowerCase() : '';
-            const langMap = {
-                'py': 'python', 'js': 'javascript', 'ts': 'typescript', 'java': 'java',
-                'c': 'c', 'cpp': 'cpp', 'cs': 'csharp', 'go': 'go', 'rb': 'ruby',
-                'php': 'php', 'swift': 'swift', 'kt': 'kotlin', 'rs': 'rust',
-                'html': 'markup', 'xml': 'markup', 'svg': 'markup', 'css': 'css',
-                'scss': 'scss', 'less': 'less', 'json': 'json', 'yaml': 'yaml',
-                'yml': 'yaml', 'md': 'markdown', 'sh': 'bash', 'sql': 'sql',
-                'dockerfile': 'docker', 'jsx': 'jsx', 'tsx': 'tsx'
-                // Add more or use Prism Autoloader if robust language detection is needed
-            };
-            const languageClass = langMap[extension] || 'clike'; // Default to C-like
+                while (currentLineInSnippet < lines.length) {
+                    const currentAbsoluteLineNo = node.start_line + currentLineInSnippet;
+                    let childToRender = null;
 
-            // Prism.js expects class on <code> or <pre>
-            // Using autoloader, so just `language-xxxx` is fine.
-            // If not using autoloader, ensure specific language JS files are loaded.
-            pre.className = `language-${languageClass}`; // For styling consistency if pre has padding/margin
-            code.className = `language-${languageClass}`;
-            code.textContent = node.code_snippet;
+                    if (childIndex < node.children.length) {
+                        const child = node.children[childIndex];
+                        if (child.start_line === currentAbsoluteLineNo) {
+                            childToRender = child;
+                        }
+                    }
 
-            pre.appendChild(code);
-            codeContainer.appendChild(pre);
-            nodeDiv.appendChild(codeContainer);
+                    if (childToRender) {
+                        flushBuffer(); // Render any preceding lines of the parent
+                        // Recursively render the child node into the current codeContainer
+                        renderAST([childToRender], codeContainer, node); // Pass node as parentNodeObject
+                        // Advance snippet lines past this child's content
+                        currentLineInSnippet += (childToRender.end_line - childToRender.start_line + 1);
+                        childIndex++;
+                    } else {
+                        // This line is part of the parent node, not a child.
+                        buffer += (lines[currentLineInSnippet] + '\\n');
+                        currentLineInSnippet++;
+                    }
+                }
+                flushBuffer(); // Render any remaining lines in the buffer
+            }
         }
+
+        nodeDiv.appendChild(codeContainer);
         parentElement.appendChild(nodeDiv);
 
-        if (node.children && node.children.length > 0) {
-            renderAST(node.children, nodeDiv); // Recursive call
-        }
+        // The recursive call for children is now handled inside the parent's code rendering logic
+        // if (node.children && node.children.length > 0) {
+        //    renderAST(node.children, nodeDiv); // OLD RECURSIVE CALL
+        // }
     });
 }
 

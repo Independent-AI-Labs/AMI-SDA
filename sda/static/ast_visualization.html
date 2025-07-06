@@ -13,12 +13,31 @@
         .ast-node {
             border: 1px solid #ccc;
             padding: 8px;
-            margin: 4px 0 4px 20px; /* Default left margin for indentation */
+            /* margin: 4px 0 4px 20px; /* Default left margin for indentation - controlled by JS */
             background-color: #fff;
             border-radius: 4px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
             font-size: 0.9em;
+            margin-top: 4px;
+            margin-bottom: 4px;
+            /* margin-left is set by JS based on depth */
         }
+
+        /* Specific styles for nested AST nodes */
+        .ast-node-code-container > .ast-node {
+            /* Child node directly inside a code container */
+            margin-left: 0 !important; /* Override JS depth margin for this specific case, let parent's margin work */
+            border-top: 1px dashed #bbb; /* Distinguish from parent's border */
+            border-bottom: 1px dashed #bbb;
+            border-left: 1px dashed #bbb;
+            border-right: 1px dashed #bbb;
+            box-shadow: none; /* Remove shadow for nested nodes to reduce clutter */
+            margin-top: 8px; /* Add some space before a nested block */
+            margin-bottom: 8px; /* Add some space after a nested block */
+            padding: 6px;
+            background-color: #f9f9f9; /* Slightly different background for nested */
+        }
+
         .ast-node-header {
             font-weight: bold;
             color: #333;
@@ -31,11 +50,24 @@
 
         .ast-node-code-container {
             margin-top: 5px;
-            background-color: #272822; /* okaidia theme background */
+            background-color: #272822; /* okaidia theme background for <pre> blocks */
             border-radius: 4px;
-            padding: 10px;
+            padding: 0; /* Remove padding here, apply to pre/code or specific content */
             overflow-x: auto;
         }
+
+        .ast-node-code-container > pre[class*="language-"] {
+             /* Direct <pre> child of code container (actual code lines) */
+            padding: 10px; /* Add padding to the <pre> tags that contain actual code */
+            margin: 0; /* Reset margin for <pre> if it's directly showing code */
+        }
+
+        .ast-node-code-container > .ast-node > .ast-node-code-container {
+            /* If a nested node itself has a code container */
+             background-color: #272822; /* Keep the dark theme for nested code snippets too */
+        }
+
+
         /* Styling for <pre> and <code> tags that Prism.js will use */
         pre[class*="language-"] {
             margin: 0;
