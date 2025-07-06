@@ -104,6 +104,8 @@ def _pass1_parse_files_worker(
     chunker = _chunker_instance
     assert chunker is not None
 
+    logging.info(f"[_pass1_parse_files_worker, PID:{os.getpid()}] Processing for schema: '{schema_name}'. Received batch of {len(file_batch)} files. Sample: {file_batch[:3]}")
+
     # This payload is for partition-specific File and ASTNode tables, and DBCodeChunk definitions
     postgres_payload = _create_postgres_payload_format()
 
@@ -199,6 +201,9 @@ def _pass1_parse_files_worker(
             logging.error(f"Error processing file {file_path_str} in worker {os.getpid()}: {e}", exc_info=True)
 
     pid = os.getpid()
+    pg_file_keys = list(postgres_payload['files'].keys())
+    logging.info(f"[_pass1_parse_files_worker, PID:{pid}] For schema: '{schema_name}', postgres_payload files sample: {pg_file_keys[:3]} (Total: {len(pg_file_keys)})")
+
     pg_file = cache_path / f"pg_{schema_name}_{pid}.json"
     with pg_file.open("w", encoding='utf-8') as f:
         json.dump(postgres_payload, f)
