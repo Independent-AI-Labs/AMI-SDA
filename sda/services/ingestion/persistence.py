@@ -128,14 +128,10 @@ def _persist_chunks_for_schema(db_manager: DatabaseManager, schema_name: str, pa
                 'importance_score': c.get('importance_score', 0.5)})
     if not chunk_mappings: return None
     with db_manager.get_session(schema_name) as session:
-        # Clear old chunks for this repository and branch within this schema before inserting new ones
-        logging.info(f"[{schema_name}] Clearing old DBCodeChunk data for repo_id: {repo_id}, branch: {branch}")
-        session.query(DBCodeChunk).filter(
-            DBCodeChunk.repository_id == repo_id, # repository_id is on DBCodeChunk
-            DBCodeChunk.branch == branch
-        ).delete(synchronize_session=False)
+        # Old chunks for this repo_id and branch are now cleared once at the beginning of ingestion.
+        # This function now only inserts.
         session.bulk_insert_mappings(DBCodeChunk, chunk_mappings)
-        logging.info(f"[{schema_name}] Persisted {len(chunk_mappings)} DBCodeChunks for repo_id: {repo_id}, branch: {branch}")
+        logging.info(f"[{schema_name}] Persisted {len(chunk_mappings)} DBCodeChunks for repo_id: {repo_id}, branch: {branch} (within schema {schema_name} context, but table is public)")
 
         all_persisted_chunks = session.query(DBCodeChunk.id, DBCodeChunk.content, DBCodeChunk.token_count).filter(
             DBCodeChunk.repository_id == repo_id, DBCodeChunk.branch == branch).all()

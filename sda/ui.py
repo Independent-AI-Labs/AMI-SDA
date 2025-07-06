@@ -590,12 +590,10 @@ No active tasks.
                             )
                         with gr.Column(scale=3): # Content Column
                             with gr.Tabs() as content_tabs:
-                                with gr.TabItem("Embedding", id="embedding_tab"):
-                                    gr.Markdown("### Embedding View (Interactive HTML Node Breakdown)")
+                                with gr.TabItem("<i class='fas fa-atom mr-1'></i> Embedding", id="embedding_tab"):
                                     embedding_html_viewer = gr.HTML(label="Node Embedding Visualization")
                                     # Placeholder for actual content
-                                with gr.TabItem("Change Analysis", id="change_analysis_tab"):
-                                    gr.Markdown("### Change Analysis (LLM Generated)")
+                                with gr.TabItem("<i class='fas fa-exchange-alt mr-1'></i> Change Analysis", id="change_analysis_tab"):
                                     with gr.Accordion("Analyze Current Changes for Selected File", open=True): # Title updated
                                         gr.Markdown("Analyzes uncommitted changes for the file selected in the File Explorer (vs. current branch HEAD).")
                                         # current_modified_files_dropdown_ca REMOVED from here
@@ -613,8 +611,7 @@ No active tasks.
 
                                     change_analysis_output = gr.Markdown("LLM analysis of changes will appear here.")
 
-                                with gr.TabItem("Raw Diff", id="raw_diff_tab"):
-                                    gr.Markdown("### Raw File Diff")
+                                with gr.TabItem("<i class='fas fa-code-compare mr-1'></i> Raw Diff", id="raw_diff_tab"):
                                     no_changes_message_html = gr.HTML(
                                         "<div style='font-size: 1.5em; text-align: center; padding: 40px; color: #888;'>NO CHANGES</div>",
                                         visible=False,
@@ -718,7 +715,8 @@ No active tasks.
                 self.handle_file_explorer_select,
                 inputs=[repo_id_state, branch_state, file_explorer], # Pass file_explorer itself as input for its value
                 outputs=[
-                    embedding_html_viewer, code_viewer, image_viewer, selected_file_state
+                    embedding_html_viewer, code_viewer, image_viewer, selected_file_state,
+                    no_changes_message_html # Added the new output component
                     # current_modified_files_dropdown_ca, file_to_compare_dropdown_ca REMOVED
                 ]
             )
@@ -1513,8 +1511,7 @@ No active tasks.
             lang_df_for_plot = lang_df_for_plot.sort_values(by="Files", ascending=False)
 
             lang_fig = px.pie(lang_df_for_plot, names="Language", values="Files",
-                              title="Language Breakdown (by File Count)",
-                              hole=0.3) # Optional: for a donut chart effect
+                              hole=0.3) # Optional: for a donut chart effect, title removed
             # Removed in-pie labels for better readability with many languages
             lang_fig.update_traces(textinfo='none') # Removes text from slices
             lang_fig.update_layout(showlegend=True) # Ensure legend is visible
