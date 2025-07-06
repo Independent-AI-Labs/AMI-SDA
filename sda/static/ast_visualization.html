@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AST Visualization</title>
     <style>
-        body { margin: 0; font-family: sans-serif; }
+        body { margin: 0; font-family: sans-serif; background-color: #f9f9f9; color: #333; }
         #ast-display-area {
             height: 100vh; /* Make it take full viewport height of iframe */
             overflow-y: auto;
@@ -13,6 +13,7 @@
             padding: 10px;
             border: 1px solid #ccc;
             box-sizing: border-box;
+            background-color: #ffffff; /* Explicit white background for the display area */
         }
         .ast-node {
             /* Styles will be applied by ast_viewer.js or can be defined here/in a separate CSS */

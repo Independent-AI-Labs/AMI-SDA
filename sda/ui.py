@@ -1828,9 +1828,12 @@ if __name__ == "__main__":
         name: Optional[str] = None
         start_line: int
         end_line: int
+        start_column: Optional[int] = None
+        end_column: Optional[int] = None
         depth: int
-        # For simplicity, metadata like degree, connectivity, token_counts are omitted for now
-        # but can be added later.
+        token_count: Optional[int] = None
+        dgraph_degree: Optional[str] = 'N/A' # Placeholder
+        children_count: int = 0
         code_snippet: str
         children: List['ASTVisualizationNode'] = [] # Recursive definition
 
@@ -1851,6 +1854,9 @@ if __name__ == "__main__":
                 snippet_lines = source_lines[node_dict['start_line'] - 1 : node_dict['end_line']]
                 code_snippet = "".join(snippet_lines)
 
+                # Calculate token count (simple space-based split for now)
+                token_count = len(code_snippet.split())
+
                 children = build_ast_hierarchy(nodes_data, source_lines, node_dict['node_id'])
 
                 vis_node = ASTVisualizationNode(
@@ -1859,7 +1865,12 @@ if __name__ == "__main__":
                     name=node_dict['name'],
                     start_line=node_dict['start_line'],
                     end_line=node_dict['end_line'],
+                    start_column=node_dict.get('start_column'), # Use .get for safety
+                    end_column=node_dict.get('end_column'),   # Use .get for safety
                     depth=node_dict['depth'],
+                    token_count=token_count,
+                    dgraph_degree='N/A', # Placeholder
+                    children_count=len(children),
                     code_snippet=code_snippet,
                     children=children
                 )
@@ -1932,9 +1943,10 @@ if __name__ == "__main__":
                 "name": node_sqla.name,
                 "start_line": node_sqla.start_line,
                 "end_line": node_sqla.end_line,
+                "start_column": node_sqla.start_column,
+                "end_column": node_sqla.end_column,
                 "parent_id": node_sqla.parent_id, # Crucial for hierarchy building
                 "depth": node_sqla.depth,
-                # Add other relevant fields here if needed by ASTVisualizationNode
             })
 
         # Build hierarchical structure

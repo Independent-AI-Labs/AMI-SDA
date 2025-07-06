@@ -61,16 +61,27 @@ function renderAST(nodes, parentElement) {
         nodeDiv.style.padding = '5px';
         nodeDiv.style.marginBottom = '5px';
         nodeDiv.style.whiteSpace = 'pre-wrap'; // Preserve whitespace and newlines in code
+        nodeDiv.style.backgroundColor = 'transparent'; // Default background
+        nodeDiv.style.color = '#333'; // Default text color for node content if not inherited
 
         // Store metadata in data attributes for tooltip
         nodeDiv.dataset.nodeType = node.type;
         nodeDiv.dataset.nodeName = node.name || 'N/A';
         nodeDiv.dataset.startLine = node.start_line;
         nodeDiv.dataset.endLine = node.end_line;
+        nodeDiv.dataset.startColumn = node.start_column || 'N/A';
+        nodeDiv.dataset.endColumn = node.end_column || 'N/A';
+        nodeDiv.dataset.tokenCount = node.token_count || 'N/A';
+        nodeDiv.dataset.dgraphDegree = node.dgraph_degree || 'N/A'; // Will be 'N/A' for now
+        nodeDiv.dataset.childrenCount = node.children_count;
 
         const header = document.createElement('div');
         header.className = 'ast-node-header'; // For potential CSS styling
-        header.textContent = `[${node.type}] ${node.name || ''} (L${node.start_line}-L${node.end_line})`;
+        let headerText = `[${node.type}] ${node.name || ''} (L${node.start_line}-L${node.end_line})`;
+        if (node.children_count > 0) {
+            headerText += ` (Children: ${node.children_count})`;
+        }
+        header.textContent = headerText;
         header.style.fontSize = '0.9em';
         header.style.color = '#666';
         header.style.marginBottom = '3px';
@@ -99,7 +110,8 @@ function renderAST(nodes, parentElement) {
 
         nodeDiv.addEventListener('mouseover', (e) => {
             nodeDiv.style.backgroundColor = '#f0f0f0';
-            tooltip.innerHTML = `Type: ${nodeDiv.dataset.nodeType}<br>Name: ${nodeDiv.dataset.nodeName}<br>Lines: ${nodeDiv.dataset.startLine}-${nodeDiv.dataset.endLine}`;
+                let tooltipContent = `Type: ${nodeDiv.dataset.nodeType}<br>Name: ${nodeDiv.dataset.nodeName}<br>Lines: L${nodeDiv.dataset.startLine}${nodeDiv.dataset.startColumn !== 'N/A' ? ':' + nodeDiv.dataset.startColumn : ''} - L${nodeDiv.dataset.endLine}${nodeDiv.dataset.endColumn !== 'N/A' ? ':' + nodeDiv.dataset.endColumn : ''}<br>Tokens: ${nodeDiv.dataset.tokenCount}<br>Children: ${nodeDiv.dataset.childrenCount}<br>Degree: ${nodeDiv.dataset.dgraphDegree}`;
+                tooltip.innerHTML = tooltipContent;
             tooltip.style.visibility = 'visible';
         });
         nodeDiv.addEventListener('mousemove', (e) => {
