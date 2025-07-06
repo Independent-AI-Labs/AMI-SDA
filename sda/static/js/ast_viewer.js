@@ -24,6 +24,89 @@ window.initializeASTViewer = async function(params) {
     displayArea.innerHTML = `Loading AST for ${filePath}...`;
     console.log(`[AST Viewer] Params - Repo ID: ${repoId}, Branch: ${branchName}, File: ${filePath}`);
 
+    // Clear previous listeners if any, and reset state
+    if (window.astViewerGlobalState && window.astViewerGlobalState.displayArea) {
+        const oldArea = window.astViewerGlobalState.displayArea;
+        oldArea.removeEventListener('mouseover', window.astViewerGlobalState.mouseoverHandler);
+        oldArea.removeEventListener('mouseout', window.astViewerGlobalState.mouseoutHandler);
+        oldArea.removeEventListener('mousemove', window.astViewerGlobalState.mousemoveHandler);
+    }
+    window.astViewerGlobalState = {
+        currentlyHighlightedNode: null,
+        tooltipElement: null,
+        displayArea: displayArea // Store reference for cleanup
+    };
+
+    // Create or get tooltip
+    let tooltip = document.querySelector('.ast-tooltip');
+    if (!tooltip) {
+        tooltip = document.createElement('div');
+        tooltip.className = 'ast-tooltip';
+        // Styles are in ast_visualization.html or a shared CSS, keep JS for dynamic properties
+        tooltip.style.position = 'absolute'; // JS needs to control this for positioning
+        tooltip.style.visibility = 'hidden';
+        tooltip.style.zIndex = '1000'; // Ensure it's on top
+        tooltip.style.pointerEvents = 'none';
+        document.body.appendChild(tooltip);
+    }
+    window.astViewerGlobalState.tooltipElement = tooltip;
+
+
+    // Event Handlers for delegation
+    window.astViewerGlobalState.mouseoverHandler = function(event) {
+        const targetNode = event.target.closest('.ast-node');
+        let state = window.astViewerGlobalState;
+
+        if (state.currentlyHighlightedNode && state.currentlyHighlightedNode !== targetNode) {
+            state.currentlyHighlightedNode.classList.remove('ast-node-highlighted');
+            // state.currentlyHighlightedNode.style.backgroundColor = '#ffffff'; // Revert to default if not using class for default
+        }
+
+        if (targetNode) {
+            targetNode.classList.add('ast-node-highlighted');
+            // targetNode.style.backgroundColor = '#f0f0f0'; // If not using class for highlight
+            state.currentlyHighlightedNode = targetNode;
+
+            // Update and show tooltip
+            let tooltipContent = `Type: ${targetNode.dataset.nodeType}<br>Name: ${targetNode.dataset.nodeName}<br>Lines: L${targetNode.dataset.startLine}${targetNode.dataset.startColumn !== 'N/A' ? ':' + targetNode.dataset.startColumn : ''} - L${targetNode.dataset.endLine}${targetNode.dataset.endColumn !== 'N/A' ? ':' + targetNode.dataset.endColumn : ''}<br>Tokens: ${targetNode.dataset.tokenCount}<br>Children: ${targetNode.dataset.childrenCount}<br>Degree: ${targetNode.dataset.dgraphDegree}`;
+            state.tooltipElement.innerHTML = tooltipContent;
+            state.tooltipElement.style.visibility = 'visible';
+        }
+    };
+
+    window.astViewerGlobalState.mouseoutHandler = function(event) {
+        const targetNode = event.target.closest('.ast-node');
+        let state = window.astViewerGlobalState;
+
+        // If the mouse is leaving a node AND not entering another .ast-node that is a child of it
+        if (targetNode && (!event.relatedTarget || !targetNode.contains(event.relatedTarget.closest && event.relatedTarget.closest('.ast-node')))) {
+             if (state.currentlyHighlightedNode === targetNode) { // Ensure we are de-highlighting the correct one
+                targetNode.classList.remove('ast-node-highlighted');
+                // targetNode.style.backgroundColor = '#ffffff'; // Revert to default if not using class for default
+                state.currentlyHighlightedNode = null;
+                state.tooltipElement.style.visibility = 'hidden';
+            }
+        } else if (!targetNode && state.currentlyHighlightedNode) {
+            // This case handles moving out of the displayArea entirely or to a non-node element within it
+             state.currentlyHighlightedNode.classList.remove('ast-node-highlighted');
+             state.currentlyHighlightedNode = null;
+             state.tooltipElement.style.visibility = 'hidden';
+        }
+    };
+
+    window.astViewerGlobalState.mousemoveHandler = function(event) {
+        let state = window.astViewerGlobalState;
+        if (state.tooltipElement && state.tooltipElement.style.visibility === 'visible') {
+            state.tooltipElement.style.left = (event.clientX + 15) + 'px';
+            state.tooltipElement.style.top = (event.clientY + 15) + 'px';
+        }
+    };
+
+    displayArea.addEventListener('mouseover', window.astViewerGlobalState.mouseoverHandler);
+    displayArea.addEventListener('mouseout', window.astViewerGlobalState.mouseoutHandler);
+    document.body.addEventListener('mousemove', window.astViewerGlobalState.mousemoveHandler); // Tooltip position relative to body/viewport
+
+
     const apiUrl = `/api/repo/${repoId}/branch/${encodeURIComponent(branchName)}/file-ast?path=${encodeURIComponent(filePath)}`;
     console.log("[AST Viewer] Fetching AST data from:", apiUrl);
 

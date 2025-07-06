@@ -16,10 +16,17 @@
             background-color: #ffffff; /* Explicit white background for the display area */
         }
         .ast-node {
-            /* Styles will be applied by ast_viewer.js or can be defined here/in a separate CSS */
-            /* border: 1px dashed #ddd; from JS */
-            /* padding: 5px; from JS */
-            /* margin-bottom: 5px; from JS */
+            /* Base styles, some might be overridden by JS if needed for dynamic parts like margin */
+            border: 1px dashed #ddd;
+            padding: 5px;
+            margin-bottom: 5px;
+            background-color: #ffffff; /* Default opaque background */
+            color: #333;
+            position: relative; /* For potential absolute positioning of children/pills */
+            white-space: pre-wrap;
+        }
+        .ast-node-highlighted {
+            background-color: #f0f0f0 !important; /* Ensure this overrides default */
         }
         .ast-node-header {
             /* font-size: 0.9em; from JS */

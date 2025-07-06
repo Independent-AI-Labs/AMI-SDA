@@ -473,3 +473,85 @@ html.dark .stat-icon {
 }
 /* If FileExplorer uses a specific class for its scrollable area, that would be better to target. */
 /* Example: #sda_file_explorer .file-explorer-list-area { height: 100% !important; } */
+
+/* === Appended styles for iframe and FileExplorer containers === */
+
+/* Common reset for Gradio component wrappers we want to control */
+#ast_iframe_container_wrapper,
+#control_panel_iframe_container_wrapper,
+#sda_file_explorer { /* sda_file_explorer is already set in create_ui */
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important; /* Make wrapper transparent */
+    box-shadow: none !important;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; /* Prevent wrapper from showing scrollbars */
+}
+
+/* Make the direct child (often Gradio's own content div) also flexible */
+/* This targets the div that Gradio wraps around the gr.HTML output (our iframe) or gr.FileExplorer */
+#ast_iframe_container_wrapper > div:first-child,
+#control_panel_iframe_container_wrapper > div:first-child,
+#sda_file_explorer > div:first-child {
+    flex-grow: 1;
+    /* height: 100%; Gradio might set this, or it might inherit. Flex grow should handle it. */
+    display: flex; /* If the child also needs to be a flex container for the iframe/component */
+    flex-direction: column; /* Make child a flex column */
+    overflow: hidden; /* Prevent this div from scrolling if its child (iframe/file list) will scroll */
+    border: none !important; /* Remove any border Gradio might add here */
+    padding: 0 !important; /* Remove any padding Gradio might add here */
+}
+
+/* Ensure the iframe itself takes full height and width of its allocated space */
+#ast_iframe_container_wrapper iframe,
+#control_panel_iframe_container_wrapper iframe {
+    flex-grow: 1; /* Take all available space in the flex container */
+    width: 100%;
+    height: 100%; /* Take full height of the parent that now has flex-grow */
+    border: none;
+}
+
+/* Specific for FileExplorer if its internal list needs to scroll */
+/* The #sda_file_explorer > div:first-child above should make the Gradio wrapper for FileExplorer flexible.
+   The FileExplorer component itself should handle its own internal scrolling.
+   If double scrollbars appear, it means #sda_file_explorer > div:first-child might need overflow:hidden.
+   The gr.FileExplorer component has a `height` parameter. We should rely on that for its internal height
+   and ensure its container just provides the space without adding its own scrollbars.
+*/
+#sda_file_explorer {
+    height: 100%; /* Make the main component wrapper take full height of its allocated space in the tab */
+    min-height: 0; /* Important for flex context */
+}
+
+
+/* Ensure Gradio Tabs and TabItems allow their content to take full height.
+   This might need to target specific classes Gradio uses for tab content areas.
+   The goal is to make the area where `embedding_html_viewer` and `file_explorer`
+   are placed capable of having 100% height children.
+*/
+/* This selector is a guess for the content area of a selected tab. Inspect in browser. */
+.gradio-tabs > div[role="tabpanel"] > div {
+    display: flex;
+    flex-direction: column;
+    height: 100%; /* Make tab content area also full height */
+    overflow: hidden; /* Its children will manage scrolling */
+}
+
+/* Ensure rows/columns within tabs also allow children to expand */
+.gradio-tabs > div[role="tabpanel"] > div > .gradio-row,
+.gradio-tabs > div[role="tabpanel"] > div > .gradio-column {
+    flex-grow: 1;
+    display: flex; /* Use flex for children to expand */
+    /* If it's a column, it's already flex-direction: column. If row, it's row. */
+    min-height: 0; /* Allow shrinking if necessary */
+}
+
+/* If FileExplorer or AST viewer are in a column that is in a row */
+.gradio-row > .gradio-column {
+    height: 100%; /* Make columns fill the row height */
+    display: flex;
+    flex-direction: column; /* Prepare for children to grow */
+}
+
+/* === End of appended styles === */

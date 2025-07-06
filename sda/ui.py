@@ -531,7 +531,8 @@ No active tasks.
                         gr.HTML('<button title="Close" class="modal-close-x" onclick="hideModal(\'statusModal\')"><i class="fas fa-times"></i></button>', elem_classes="modal-close-x-wrapper")
                     # Control Panel is now an iframe loading the standalone HTML page
                     status_details_html = gr.HTML(
-                        value='<iframe src="/static/control_panel.html" style="width: 100%; height: 70vh; border: none;"></iframe>'
+                        value='<iframe src="/static/control_panel.html" style="width: 100%; height: 70vh; border: none;"></iframe>',
+                        elem_id="control_panel_iframe_container_wrapper"
                     )
                     status_modal_close_btn = gr.Button("Close")
 
@@ -594,7 +595,7 @@ No active tasks.
                         with gr.Column(scale=3): # Content Column
                             with gr.Tabs() as content_tabs:
                                 with gr.TabItem(label="🔗 Embedding", id="embedding_tab"):
-                                    embedding_html_viewer = gr.HTML(label="Node Embedding Visualization")
+                                    embedding_html_viewer = gr.HTML(label="Node Embedding Visualization", elem_id="ast_iframe_container_wrapper")
                                     # Placeholder for actual content
                                 with gr.TabItem(label="⇆ Change Analysis", id="change_analysis_tab"):
                                     with gr.Accordion("Analyze Current Changes for Selected File", open=True): # Title updated
