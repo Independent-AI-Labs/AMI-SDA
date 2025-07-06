@@ -163,7 +163,21 @@ function renderAST(nodes, parentElement) {
         pillsContainer.className = 'ast-node-pills-container';
         pillsContainer.style.marginBottom = '4px'; // Space between pills and code
 
-        function createPill(text) {
+        const nodeTypeColors = {
+            'function_definition': '#D6EAF8', // Light Blue
+            'class_definition': '#FCF3CF',    // Light Yellow
+            'method_declaration': '#D5F5E3', // Light Green
+            'call_expression': '#FDEDEC',     // Light Pink/Red
+            'identifier': '#F2F3F4',         // Very Light Grey
+            'import_statement': '#E8DAEF',   // Light Purple
+            'if_statement': '#FEF9E7',       // Light Beige
+            'for_statement': '#FEF9E7',
+            'while_statement': '#FEF9E7',
+            'return_statement': '#EBF5FB',   // Another Light Blue shade
+            'default': '#E9E9E9'             // Default pill color
+        };
+
+        function createPill(text, type = null) {
             const pill = document.createElement('span');
             pill.textContent = text;
             pill.style.display = 'inline-block';
@@ -171,13 +185,26 @@ function renderAST(nodes, parentElement) {
             pill.style.marginRight = '4px';
             pill.style.marginBottom = '2px'; // In case they wrap
             pill.style.fontSize = '0.75em';
-            pill.style.backgroundColor = '#e9e9e9';
             pill.style.borderRadius = '8px'; // More rounded pills
-            pill.style.color = '#555';
+
+            if (type === 'nodeType') {
+                pill.style.backgroundColor = nodeTypeColors[node.type.toLowerCase()] || nodeTypeColors['default'];
+                // Basic contrast check - if background is very light, use dark text.
+                // This is a simplistic check. A proper luminance calculation would be better.
+                const bgColor = pill.style.backgroundColor;
+                if (bgColor && (bgColor.includes('F8') || bgColor.includes('CF') || bgColor.includes('E3') || bgColor.includes('EC') || bgColor.includes('F4') || bgColor.includes('E7'))) {
+                    pill.style.color = '#333';
+                } else {
+                    pill.style.color = '#555'; // Default for #E9E9E9 or darker custom colors
+                }
+            } else {
+                pill.style.backgroundColor = '#e9e9e9'; // Default for other pills
+                pill.style.color = '#555';
+            }
             return pill;
         }
 
-        pillsContainer.appendChild(createPill(`Type: ${node.type}`));
+        pillsContainer.appendChild(createPill(`Type: ${node.type}`, 'nodeType'));
         pillsContainer.appendChild(createPill(`Lines: L${node.start_line}-L${node.end_line}`));
         if (node.token_count !== 'N/A') {
             pillsContainer.appendChild(createPill(`Tokens: ${node.token_count}`));
