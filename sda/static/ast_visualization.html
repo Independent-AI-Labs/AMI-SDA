@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AST Visualization</title>
+    <style>
+        body { margin: 0; font-family: sans-serif; background-color: #f9f9f9; color: #333; }
+        #ast-display-area {
+            height: 100vh; /* Make it take full viewport height of iframe */
+            overflow-y: auto;
+            font-family: monospace;
+            padding: 10px;
+            border: 1px solid #ccc;
+            box-sizing: border-box;
+            background-color: #ffffff; /* Explicit white background for the display area */
+        }
+        .ast-node {
+            /* Base styles, some might be overridden by JS if needed for dynamic parts like margin */
+            border: 1px dashed #ddd;
+            padding: 5px;
+            margin-bottom: 5px;
+            background-color: #ffffff; /* Default opaque background */
+            color: #333;
+            position: relative; /* For potential absolute positioning of children/pills */
+            white-space: pre-wrap;
+        }
+        .ast-node-highlighted {
+            background-color: #f0f0f0 !important; /* Ensure this overrides default */
+        }
+        .ast-node-header {
+            /* font-size: 0.9em; from JS */
+            /* color: #666; from JS */
+            /* margin-bottom: 3px; from JS */
+        }
+        .ast-node-code {
+            /* white-space: pre-wrap; from JS on nodeDiv, pre tag handles this */
+        }
+        .ast-tooltip {
+            /* Styles are in ast_viewer.js, could be moved to a shared CSS */
+            position: absolute;
+            visibility: hidden;
+            background-color: black;
+            color: white;
+            padding: 5px;
+            border-radius: 3px;
+            z-index: 1000;
+            font-size: 0.8em;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="ast-display-area">
+        Initializing AST Viewer...
+    </div>
+
+    <script src="/static/js/ast_viewer.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('[AST HTML] DOMContentLoaded. Initializing viewer.');
+            const params = new URLSearchParams(window.location.search);
+            const repoId = params.get('repo_id');
+            const branchName = params.get('branch_name');
+            const filePath = params.get('file_path');
+
+            console.log(`[AST HTML] URL Params - Repo ID: ${repoId}, Branch: ${branchName}, File: ${filePath}`);
+
+            if (repoId && branchName && filePath) {
+                if (typeof window.initializeASTViewer === 'function') {
+                    window.initializeASTViewer({ repoId, branchName, filePath });
+                } else {
+                    console.error('[AST HTML] initializeASTViewer function not found. Ensure ast_viewer.js is loaded and function is global.');
+                    const displayArea = document.getElementById('ast-display-area');
+                    if (displayArea) {
+                        displayArea.innerHTML = "<p style='color:red;'>Error: AST viewer script (ast_viewer.js) or key function not loaded.</p>";
+                    }
+                }
+            } else {
+                console.warn('[AST HTML] Missing necessary URL parameters (repo_id, branch_name, file_path) to load AST.');
+                const displayArea = document.getElementById('ast-display-area');
+                if (displayArea) {
+                    displayArea.innerHTML = "<p style='color:orange;'>Warning: Missing parameters in URL to load AST data. This page should be loaded via an iframe with correct src URL.</p>";
+                }
+            }
+        });
+    </script>
+</body>
+</html>
