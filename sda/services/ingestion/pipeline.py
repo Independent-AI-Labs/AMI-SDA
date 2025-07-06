@@ -15,11 +15,11 @@ from pathlib import Path
 from typing import List, Callable, Optional, Tuple, Dict, Any, Generator
 
 import tiktoken
-from sqlalchemy.dialects.postgresql import insert
+# Removed: from sqlalchemy.dialects.postgresql import insert # Not used directly here anymore
 
 from sda.config import IngestionConfig, AIConfig, DATA_DIR, INGESTION_CACHE_DIR
 from sda.core.db_management import DatabaseManager
-from sda.core.models import Repository, File, ASTNode, DBCodeChunk, BillingUsage, Task
+from sda.core.models import Repository, File, ASTNode, DBCodeChunk, BillingUsage, Task, CodeBlob # Added CodeBlob
 from sda.services.analysis import resolve_embedding_devices
 # from sda.services.chunking import TokenAwareChunker # No longer directly needed here
 from sda.services.git_integration import GitService
@@ -27,7 +27,6 @@ from sda.services.partitioning import SmartPartitioningService
 from sda.utils.task_executor import TaskExecutor
 
 # Imports from the new ingestion submodules
-# Assuming this file will be sda/services/ingestion/pipeline.py, use relative imports
 from .workers import _initialize_parsing_worker, _persistent_embedding_worker, _pass1_parse_files_worker
 # _chunker_instance is defined and used within workers.py
 
@@ -35,14 +34,14 @@ from .persistence import (
     _aggregate_postgres_payloads, _persist_files_for_schema, _persist_nodes_for_schema,
     _persist_chunks_for_schema, _persist_dgraph_nodes, _persist_vector_batch,
     _process_graph_edges_streaming, _load_and_merge_json_files,
-    _create_postgres_payload, _create_batches # Also moved to persistence
+    _create_postgres_payload, _create_batches,
+    _persist_code_blobs # NEW IMPORT
 )
 from .utils import _stream_chunks_from_files, _stream_batcher
 
 
 StatusUpdater = Callable[[int, str, float, Optional[str], Optional[Dict[str, Any]]], None]
 
-# Commented out stubs for moved functions are now removed by this change
 
 class IntelligentIngestionService:
     def __init__(self, db_manager: DatabaseManager, git_service: GitService,
@@ -55,86 +54,109 @@ class IntelligentIngestionService:
         self.embedding_config = AIConfig.get_active_embedding_config()
         logging.info("IntelligentIngestionService initialized with TaskExecutor and SmartPartitioningService.")
 
-    # Persistence methods that were previously here are now in sda.services.ingestion.persistence.py
-    # and will be called as functions, passing self.db_manager and other necessary params.
-
-    # _process_graph_edges_from_data was here but seems unused, _process_graph_edges_streaming is used and moved.
-
     def _setup_embedding_workers(self) -> Tuple[List[mp.Process], List[mp.Queue], mp.Queue, mp.Event]:
         devices = resolve_embedding_devices()
         num_workers = min(len(devices), AIConfig.MAX_EMBEDDING_WORKERS)
-        devices_to_use = devices[:num_workers] or ["cpu"]
+        devices_to_use = devices[:num_workers] or ["cpu"] # Default to CPU if no GPUs
         work_queues, workers = [], []
         result_queue = mp.Queue()
         shutdown_event = mp.Event()
         for i, device in enumerate(devices_to_use):
             work_queue = mp.Queue()
+            # Corrected arguments for _persistent_embedding_worker based on its definition
             worker = mp.Process(target=_persistent_embedding_worker,
-                                args=(device, self.embedding_config.model_name, str(DATA_DIR / "embedding_models"), work_queue, result_queue, shutdown_event),
+                                args=(device, self.embedding_config.model_name, str(DATA_DIR / "embedding_models"),
+                                      work_queue, result_queue, shutdown_event),
                                 name=f"EmbeddingWorker-{i}-{device}")
-            workers.append(worker);
-            work_queues.append(work_queue);
+            workers.append(worker)
+            work_queues.append(work_queue)
             worker.start()
+
         ready_count = 0
-        while ready_count < len(workers):
+        # Wait for all workers to signal readiness or error
+        for _ in range(len(workers)): # Expect one message per worker
             try:
-                msg_type, _ = result_queue.get(timeout=60.0)
+                msg_type, data = result_queue.get(timeout=120.0) # Increased timeout
                 if msg_type == "ready":
                     ready_count += 1
+                    logging.info(f"Embedding worker {data} is ready.")
                 elif msg_type == "error":
-                    raise RuntimeError("Embedding worker failed to initialize.")
+                    # If one worker fails, it might be better to raise immediately
+                    raise RuntimeError(f"Embedding worker failed to initialize: {data}")
             except queue.Empty:
                 raise TimeoutError("Timed out waiting for embedding workers to initialize.")
+
+        if ready_count != len(workers):
+             raise RuntimeError(f"Not all embedding workers initialized successfully. Expected {len(workers)}, got {ready_count}")
+        logging.info(f"All {len(workers)} embedding workers are ready.")
         return workers, work_queues, result_queue, shutdown_event
 
     def _shutdown_embedding_workers(self, workers, work_queues, shutdown_event):
+        logging.info("Signaling embedding workers to shut down...")
         shutdown_event.set()
-        for wq in work_queues: wq.put(None)
-        for w in workers: w.join(timeout=10)
+        for wq in work_queues:
+            try:
+                wq.put(None, block=False) # Non-blocking put
+            except queue.Full:
+                logging.warning("Work queue full during shutdown signal, worker might miss None.")
 
-    # _persist_vector_batch and _process_graph_edges_streaming have been moved to sda.services.ingestion.persistence.py
+        for i, w in enumerate(workers):
+            w.join(timeout=15) # Increased join timeout
+            if w.is_alive():
+                logging.warning(f"Embedding worker {i} did not shut down cleanly, terminating.")
+                w.terminate()
+        logging.info("Embedding workers shut down process complete.")
+
 
     def ingest_repository(self, repo_path_str: str, repo_uuid: str, branch: str, repo_id: int, parent_task_id: int, _framework_start_task: Callable,
                           _framework_update_task: StatusUpdater, _framework_complete_task: Callable):
         cache_path = Path(INGESTION_CACHE_DIR) / f"{repo_uuid}_{branch.replace('/', '_')}"
         if cache_path.exists(): shutil.rmtree(cache_path)
         cache_path.mkdir(parents=True, exist_ok=True)
+
         workers, work_queues, result_queue, shutdown_event = None, None, None, None
+        all_code_blob_data_from_workers: List[Dict[str, Any]] = [] # Define here for finally block
+
         try:
             # --- PREP ---
             _framework_update_task(parent_task_id, "Preparing environment...", 2.0, None, None)
             if not self.git_service.checkout(repo_path_str, branch): raise RuntimeError(f"Could not checkout branch '{branch}'.")
-            _framework_update_task(parent_task_id, "Clearing old data...", 4.0, None, None)
-            self.db_manager.clear_dgraph_data_for_branch(repo_id, branch) # Dgraph data for branch
 
-            # Clear DBCodeChunks for this repo and branch from the public schema once
+            _framework_update_task(parent_task_id, "Clearing old data...", 3.0, None, None)
             with self.db_manager.get_session("public") as public_session:
+                logging.info(f"Clearing old CodeBlob data from public schema for repo_id: {repo_id}, branch: {branch}")
+                public_session.query(CodeBlob).filter(
+                    CodeBlob.repository_id == repo_id, # Assuming CodeBlob has these fields
+                    CodeBlob.branch == branch
+                ).delete(synchronize_session=False)
+
                 logging.info(f"Clearing old DBCodeChunk data from public schema for repo_id: {repo_id}, branch: {branch}")
                 public_session.query(DBCodeChunk).filter(
                     DBCodeChunk.repository_id == repo_id,
                     DBCodeChunk.branch == branch
                 ).delete(synchronize_session=False)
-                public_session.commit() # Commit this deletion
+                public_session.commit()
 
-            # Wipe individual repo schemas (containing File, ASTNode tables for partitions)
-            with self.db_manager.get_session("public") as s: # New session for safety, though commit above helps
+            self.db_manager.clear_dgraph_data_for_branch(repo_id, branch)
+
+            with self.db_manager.get_session("public") as s:
                 repo = s.get(Repository, repo_id)
-                if repo and repo.uuid:
+                if repo and repo.uuid: # repo.uuid should be same as repo_uuid argument
                     logging.info(f"Wiping individual partition schemas for repo_uuid: {repo.uuid}")
                     self.db_manager._wipe_repo_schemas(repo.uuid) # This drops 'repo_xyz_%' schemas
 
+            _framework_update_task(parent_task_id, "Scanning files...", 4.0, None, None)
             files_on_disk = [p for p in Path(repo_path_str).rglob('*') if not any(
                 d in p.parts for d in IngestionConfig.DEFAULT_IGNORE_DIRS) and p.is_file() and p.suffix in IngestionConfig.LANGUAGE_MAPPING]
             if not files_on_disk:
-                _framework_complete_task(parent_task_id, result={"message": "No files to ingest."});
-                return
+                _framework_complete_task(parent_task_id, result={"message": "No files to ingest."}); return
 
-            # --- PARTITIONING ---
             _framework_update_task(parent_task_id, "Analyzing repository structure...", 8.0, None, {'Files Found': len(files_on_disk)})
             file_to_schema_map = self.partitioning_service.generate_schema_map(repo_path_str, files_on_disk, repo_uuid)
             schema_to_files_map = defaultdict(list)
-            for file_path, schema_name in file_to_schema_map.items():
-                schema_to_files_map[schema_name].append(str(file_path))
+            for file_path_obj, schema_name_val in file_to_schema_map.items(): # file_path_obj is Path
+                schema_to_files_map[schema_name_val].append(str(file_path_obj))
+
             _framework_update_task(parent_task_id, "Initializing workers...", 10.0, None, {'Partitions Created': len(schema_to_files_map)})
             workers, work_queues, result_queue, shutdown_event = self._setup_embedding_workers()
 
@@ -146,295 +168,274 @@ class IntelligentIngestionService:
                 sorted_schemas = sorted(schema_to_files_map.items(), key=lambda item: len(item[1]), reverse=True)
 
                 for schema_name, files_in_schema in sorted_schemas:
-                    files_in_schema.sort(key=lambda f: Path(f).stat().st_size, reverse=True)
+                    files_in_schema.sort(key=lambda f_path: Path(f_path).stat().st_size, reverse=True) # f_path is str
                     for batch in _create_batches(files_in_schema, IngestionConfig.FILE_PROCESSING_BATCH_SIZE):
-                        pass1_futures.append(cpu_executor.submit(_pass1_parse_files_worker, batch, repo_path_str, schema_name, cache_path))
+                        pass1_futures.append(cpu_executor.submit(_pass1_parse_files_worker, batch, repo_path_str, schema_name, cache_path, repo_id, branch))
 
-                # Collect cache files by category
-                schema_cache_files = defaultdict(list)
+                schema_cache_files = defaultdict(list) # Maps schema_name to list of its postgres_file cache paths
                 dgraph_files, definitions_files, calls_files = [], [], []
+                # all_code_blob_data_from_workers defined outside try for finally block access
 
-                for i, f in enumerate(concurrent.futures.as_completed(pass1_futures)):
+                for i, future_obj in enumerate(concurrent.futures.as_completed(pass1_futures)): # Renamed f to future_obj
                     try:
-                        res = f.result()
-                        schema_name = res['schema_name']
-                        schema_cache_files[schema_name].append(res['postgres_file'])
+                        res = future_obj.result()
+                        s_name = res['schema_name']
+                        schema_cache_files[s_name].append(res['postgres_file'])
                         dgraph_files.append(res['dgraph_nodes_file'])
                         definitions_files.append(res['definitions_file'])
                         calls_files.append(res['calls_file'])
+                        if 'code_blob_data_list' in res:
+                            all_code_blob_data_from_workers.extend(res['code_blob_data_list'])
                     except Exception as e:
-                        logging.error(f"Failed to get result from parsing future: {e}")
-                    progress = 12.0 + (i / len(pass1_futures) * 28.0)  # Parsing is 12-40%
+                        logging.error(f"Failed to get result from parsing future: {e}", exc_info=True)
+                    progress = 12.0 + (i / len(pass1_futures) * 23.0)
                     _framework_update_task(parent_task_id, f"Parsing file batches...", progress, None, {'Parsed Batches': f"{i + 1}/{len(pass1_futures)}"})
 
+            # --- NEW STAGE: PERSIST CODE BLOBS ---
+            _framework_update_task(parent_task_id, "Persisting unique file contents (CodeBlobs)...", 35.0, None, {'Blobs Found': len(all_code_blob_data_from_workers)})
+            if all_code_blob_data_from_workers:
+                _persist_code_blobs(self.db_manager, all_code_blob_data_from_workers, repo_id, branch) # Pass repo_id, branch for context
+            _framework_update_task(parent_task_id, "CodeBlobs persistence complete.", 40.0, None, None)
+
+
             # --- STAGES 1-4: PARALLEL PERSISTENCE OF METADATA ---
-            _framework_update_task(parent_task_id, "Persisting metadata...", 40.0, "Creating database schemas and aggregating data.", None)
+            _framework_update_task(parent_task_id, "Aggregating & Persisting metadata...", 40.0, "Creating database schemas and aggregating data.", None)
+            all_schema_payloads = {} # schema_name -> aggregated_payload_dict
+            for schema_name_key, pg_cache_files in schema_cache_files.items():
+                all_schema_payloads[schema_name_key] = _aggregate_postgres_payloads(pg_cache_files)
 
-            # Aggregate payloads per schema from cache files
-            all_schema_payloads = {}
-            for schema_name, cache_files in schema_cache_files.items():
-                # Call imported function
-                all_schema_payloads[schema_name] = _aggregate_postgres_payloads(cache_files)
-
-            schema_creation_futures = [self.task_executor.submit('postgres', self.db_manager.create_schema_and_tables, schema_name) for schema_name in
+            schema_creation_futures = [self.task_executor.submit('postgres', self.db_manager.create_schema_and_tables, s_name) for s_name in
                                        all_schema_payloads.keys()]
             concurrent.futures.wait(schema_creation_futures)
 
-            _framework_update_task(parent_task_id, "Persisting file records...", 45.0, f"Submitting {len(all_schema_payloads)} schemas for file persistence.",
-                                   None)
-            file_id_maps, file_futures = {}, {
-                self.task_executor.submit('postgres', _persist_files_for_schema, self.db_manager, schema, payload, repo_id, branch, repo_path_str): schema for # Call imported function
-                schema, payload in all_schema_payloads.items()}
-            for i, f in enumerate(concurrent.futures.as_completed(file_futures)):
-                schema_name = file_futures[f];
-                file_id_maps[schema_name] = f.result()
-                _framework_update_task(parent_task_id, f"Persisting file records...", 45.0 + (i / len(file_futures) * 5.0), None, None)
+            _framework_update_task(parent_task_id, "Persisting file records...", 45.0, f"Submitting {len(all_schema_payloads)} schemas for file persistence.", None)
+            file_id_maps: Dict[str, Dict[str, int]] = {} # schema_name -> {relative_path: file_id}
+            file_futures_map = { # future -> schema_name
+                self.task_executor.submit('postgres', _persist_files_for_schema, self.db_manager, sch, payld, repo_id, branch, repo_path_str): sch
+                for sch, payld in all_schema_payloads.items()}
+            for i, f_comp in enumerate(concurrent.futures.as_completed(file_futures_map)):
+                s_name_done = file_futures_map[f_comp]
+                file_id_maps[s_name_done] = f_comp.result() # result is {relative_path: file_id}
+                _framework_update_task(parent_task_id, f"Persisting file records for schema {s_name_done}...", 45.0 + (i / len(file_futures_map) * 5.0), None, None)
 
             _framework_update_task(parent_task_id, "Persisting AST nodes and code chunks...", 50.0, "Submitting node and chunk persistence tasks.", None)
-            node_futures = [self.task_executor.submit('postgres', _persist_nodes_for_schema, self.db_manager, schema, payload, file_id_maps.get(schema, {}), branch) for # Call imported function
-                            schema, payload in all_schema_payloads.items()]
-            chunk_futures = {
-                self.task_executor.submit('postgres', _persist_chunks_for_schema, self.db_manager, schema, payload, file_id_maps.get(schema, {}), repo_id, branch, # Call imported function
-                                          cache_path, self.tokenizer): schema for schema, payload in all_schema_payloads.items()}
+            node_persistence_futures = [self.task_executor.submit('postgres', _persist_nodes_for_schema, self.db_manager, sch, payld, file_id_maps.get(sch, {}), branch)
+                                        for sch, payld in all_schema_payloads.items()]
 
-            embed_files, total_chunks = [], 0
-            for i, f in enumerate(concurrent.futures.as_completed(chunk_futures)):
-                if res := f.result(): path, count = res; embed_files.append(path); total_chunks += count
-            concurrent.futures.wait(node_futures)
+            chunk_persistence_futures_map = { # future -> schema_name
+                self.task_executor.submit('postgres', _persist_chunks_for_schema, self.db_manager, sch, payld, file_id_maps.get(sch, {}), repo_id, branch,
+                                          cache_path, self.tokenizer): sch for sch, payld in all_schema_payloads.items()}
+
+            embed_files_to_process, total_db_chunks = [], 0
+            for i, f_comp_chunk in enumerate(concurrent.futures.as_completed(chunk_persistence_futures_map)):
+                s_name_done_chunk = chunk_persistence_futures_map[f_comp_chunk]
+                if res_chunk := f_comp_chunk.result(): # result is (path_to_embed_file, count_of_chunks)
+                    path_val, count_val = res_chunk
+                    embed_files_to_process.append(path_val)
+                    total_db_chunks += count_val
+                _framework_update_task(parent_task_id, f"Persisting chunks for schema {s_name_done_chunk}...", 50.0 + (i / len(chunk_persistence_futures_map) * 10.0), None, None)
+
+            concurrent.futures.wait(node_persistence_futures)
+
             _framework_update_task(parent_task_id, "Metadata persistence complete.", 60.0, "AST, Chunks, and File records saved.",
-                                   {'Chunks for Embedding': total_chunks})
+                                   {'Chunks for Embedding': total_db_chunks})
 
             # --- STAGES 5 & 6: PARALLEL GRAPH AND VECTOR PROCESSING ---
             _framework_update_task(parent_task_id, "Processing graph and vector embeddings...", 60.0, "Starting parallel data processing.", None)
             graph_task = _framework_start_task(repo_id, "Graph Processing", "system", parent_task_id)
             vector_task = _framework_start_task(repo_id, "Vector Embedding", "system", parent_task_id)
 
-            def _run_graph_processing_task(task: Task):
+            # _run_graph_processing_task and _run_vector_embedding_task definitions (largely unchanged from original, ensure parameters passed are correct)
+            # ... (definitions for _run_graph_processing_task and _run_vector_embedding_task) ...
+            # Ensure they use the correct variables like dgraph_files, definitions_files, calls_files, embed_files_to_process, total_db_chunks
+
+            def _run_graph_processing_task_local(current_task: Task): # Renamed to avoid outer scope issues if any
                 try:
-                    _framework_update_task(task.id, "Loading graph data from cache...", 5.0, None, None)
+                    _framework_update_task(current_task.id, "Loading graph data from cache...", 5.0, None, None)
+                    dgraph_nodes_data_local = _load_and_merge_json_files(dgraph_files)
+                    logging.info(f"Loaded {len(dgraph_nodes_data_local)} dgraph nodes from {len(dgraph_files)} cache files for task {current_task.id}")
 
-                    # Load and merge dgraph data from cache files
-                    dgraph_nodes_data = _load_and_merge_json_files(dgraph_files) # Call imported function
-                    logging.info(f"Loaded {len(dgraph_nodes_data)} dgraph nodes from {len(dgraph_files)} cache files")
-
-                    if dgraph_nodes_data:
-                        dgraph_nodes_data.sort(key=lambda x: x['node_id'])
-                        # Call imported function, pass self.db_manager
-                        nodes_persisted = _persist_dgraph_nodes(self.db_manager, repo_id, branch, dgraph_nodes_data, task.id, _framework_update_task)
-
-                        # Free memory immediately after persisting nodes
-                        del dgraph_nodes_data
-                        import gc;
-                        gc.collect()
+                    if dgraph_nodes_data_local:
+                        dgraph_nodes_data_local.sort(key=lambda x: x.get('node_id', '')) # Robust sort
+                        nodes_persisted_val = _persist_dgraph_nodes(self.db_manager, repo_id, branch, dgraph_nodes_data_local, current_task.id, _framework_update_task)
+                        del dgraph_nodes_data_local; import gc; gc.collect()
                     else:
-                        nodes_persisted = 0
-                        _framework_update_task(task.id, "No graph nodes found to persist.", 50.0, None, {'Nodes Persisted': '0'})
+                        nodes_persisted_val = 0
+                        _framework_update_task(current_task.id, "No graph nodes found to persist.", 50.0, None, {'Nodes Persisted': '0'})
 
-                    _framework_update_task(task.id, "Processing graph edges...", 50.0, f"Persisted {nodes_persisted} graph nodes.",
-                                           {'Nodes Persisted': nodes_persisted})
+                    _framework_update_task(current_task.id, "Processing graph edges...", 50.0, f"Persisted {nodes_persisted_val} graph nodes.", {'Nodes Persisted': nodes_persisted_val})
+                    edges_persisted_val = _process_graph_edges_streaming(self.db_manager, definitions_files, calls_files, current_task.id, _framework_update_task)
 
-                    # Process definitions and calls in streaming fashion to avoid memory buildup
-                    # Call imported function, pass self.db_manager
-                    edges_persisted = _process_graph_edges_streaming(self.db_manager, definitions_files, calls_files, task.id, _framework_update_task)
+                    final_msg = "Graph processing complete."
+                    _framework_update_task(current_task.id, final_msg, 100.0, final_msg, {'Nodes Persisted': nodes_persisted_val, 'Edges Persisted': edges_persisted_val})
+                    _framework_complete_task(current_task.id, result={'nodes_persisted': nodes_persisted_val, 'edges_persisted': edges_persisted_val})
+                except Exception as e_graph:
+                    logging.error(f"Graph processing task {current_task.id} failed: {e_graph}", exc_info=True)
+                    _framework_complete_task(current_task.id, error=traceback.format_exc())
 
-                    final_message = "Graph processing complete."
-                    _framework_update_task(task.id, final_message, 100.0, final_message,
-                                           {'Nodes Persisted': nodes_persisted, 'Edges Persisted': edges_persisted})
-                    _framework_complete_task(task.id, result={'nodes_persisted': nodes_persisted, 'edges_persisted': edges_persisted})
-                except Exception as e:
-                    logging.error(f"Graph processing task failed: {e}", exc_info=True)
-                    _framework_complete_task(task.id, error=traceback.format_exc())
-
-            def _run_vector_embedding_task(task: Task):
+            def _run_vector_embedding_task_local(current_task: Task): # Renamed
                 try:
-                    if not embed_files or total_chunks == 0:
-                        _framework_update_task(task.id, "No content to embed.", 100.0, None, {'Total Chunks': 0})
-                        _framework_complete_task(task.id, result={"message": "No content to embed."})
-                        return
+                    if not embed_files_to_process or total_db_chunks == 0:
+                        _framework_update_task(current_task.id, "No content to embed.", 100.0, None, {'Total Chunks': 0})
+                        _framework_complete_task(current_task.id, result={"message": "No content to embed."}); return
 
-                    _framework_update_task(task.id, f"Preparing to process {total_chunks} chunks...", 5.0, None,
-                                           {'Total Chunks': total_chunks, 'Embed Files': len(embed_files)})
+                    _framework_update_task(current_task.id, f"Preparing to process {total_db_chunks} chunks...", 5.0, None,
+                                           {'Total Chunks': total_db_chunks, 'Embed Files': len(embed_files_to_process)})
 
-                    # Don't load all chunks at once - process them in streaming fashion
-                    processed_chunks, total_tokens = 0, 0
-                    persistence_futures = []
+                    processed_db_chunks, total_calc_tokens = 0, 0
+                    vector_persistence_futures = []
+                    MAX_PENDING_FUTURES_VEC = AIConfig.MAX_EMBEDDING_WORKERS * 2 # Limit pending persistence
+                    batches_sent_to_embed_workers = 0
 
-                    # Much smaller limit to prevent memory buildup
-                    MAX_PENDING_FUTURES = 25
-                    batches_sent = 0
+                    _framework_update_task(current_task.id, "Starting streaming embedding process...", 10.0, None, {'Max Pending Persistence': MAX_PENDING_FUTURES_VEC})
 
-                    _framework_update_task(task.id, "Starting streaming embedding process...", 10.0, None, {'Max Pending': MAX_PENDING_FUTURES})
+                    # Corrected: _stream_chunks_from_files yields dicts, _stream_batcher batches them
+                    # _persistent_embedding_worker expects list of (schema, id, content, token_count)
+                    # The .jsonl files from _persist_chunks_for_schema contain this format.
 
-                    # Process chunks in streaming fashion
-                    chunk_stream = _stream_chunks_from_files(embed_files)
+                    chunk_data_stream = _stream_chunks_from_files(embed_files_to_process) # This yields dicts from jsonl
 
-                    for batch in _stream_batcher(chunk_stream, 256):
-                        # Distribute batch to workers
-                        work_queues[batches_sent % len(work_queues)].put(batch)
-                        batches_sent += 1
+                    for chunk_batch_for_embedding_worker in _stream_batcher(chunk_data_stream, IngestionConfig.EMBEDDING_BATCH_SIZE):
+                        # Convert dicts to tuples for worker
+                        worker_input_batch = [(item['schema'], item['id'], item['content'], item['token_count']) for item in chunk_batch_for_embedding_worker]
+                        if not worker_input_batch: continue
 
-                        # Check for completed embeddings
+                        work_queues[batches_sent_to_embed_workers % len(work_queues)].put(worker_input_batch)
+                        batches_sent_to_embed_workers += 1
+
                         try:
-                            msg_type, msg_data = result_queue.get(timeout=0.1)  # Non-blocking check
+                            while True: # Process all available results before sending more work or if queue is filling
+                                msg_type, msg_data = result_queue.get(block=False) # Non-blocking check
+                                if msg_type == "result":
+                                    _, batch_embedding_results = msg_data # batch_embedding_results is list of (schema, id, embedding, token_count)
+                                    # batch_embedding_results.sort(key=lambda x: x[1]) # Sort by chunk_id (db id)
+
+                                    if len(vector_persistence_futures) >= MAX_PENDING_FUTURES_VEC:
+                                        num_to_complete = len(vector_persistence_futures) - MAX_PENDING_FUTURES_VEC + 1
+                                        for f_done in concurrent.futures.as_completed(vector_persistence_futures, timeout=300): # Wait for some to complete
+                                            try: total_calc_tokens += f_done.result()
+                                            except Exception as e_pers: logging.error(f"Vector persistence task failed: {e_pers}")
+                                            num_to_complete -=1
+                                            if num_to_complete <= 0: break
+                                        vector_persistence_futures = [f_p for f_p in vector_persistence_futures if not f_p.done()]
+
+                                    future_p = self.task_executor.submit('postgres', _persist_vector_batch, self.db_manager, batch_embedding_results)
+                                    vector_persistence_futures.append(future_p)
+                                    processed_db_chunks += len(batch_embedding_results)
+
+                                    prog_pct = 15.0 + ((processed_db_chunks / total_db_chunks) * 70.0) if total_db_chunks > 0 else 85.0
+                                    _framework_update_task(current_task.id, "Streaming embedding process...", prog_pct, None,
+                                                           {'Chunks Processed': f"{processed_db_chunks}/{total_db_chunks}", 'Batches Sent': batches_sent_to_embed_workers,
+                                                            'Pending Persistence': len(vector_persistence_futures), 'Tokens Processed (est)': total_calc_tokens })
+                                elif msg_type == "error":
+                                    logging.error(f"Embedding worker error: {msg_data}")
+                                    # Decide if to continue or halt
+                                    break # from inner while true
+                                if result_queue.empty(): break # No more results for now
+                        except queue.Empty: pass # No results ready yet
+
+                        if batches_sent_to_embed_workers % 100 == 0: # Less frequent update
+                             _framework_update_task(current_task.id, f"Embedding batches sent: {batches_sent_to_embed_workers}", 15.0, None, {'Batches Sent': batches_sent_to_embed_workers})
+
+                    logging.info(f"Finished sending {batches_sent_to_embed_workers} batches to embedding workers for task {current_task.id}")
+                    _framework_update_task(current_task.id, "Processing remaining embeddings...", 85.0, None, {'Final Batches': batches_sent_to_embed_workers})
+
+                    # Signal workers to finish processing their current queues then stop by sending None after loop
+                    # This is handled by _shutdown_embedding_workers
+
+                    # Collect remaining results
+                    while processed_db_chunks < total_db_chunks or any(not wq.empty() for wq in work_queues) or not result_queue.empty():
+                        try:
+                            msg_type, msg_data = result_queue.get(timeout=30.0) # Longer timeout for final results
                             if msg_type == "result":
-                                _, batch_results = msg_data
-                                batch_results.sort(key=lambda x: x[1])  # Sort by chunk_id
-
-                                # Manage pending futures with sliding window
-                                if len(persistence_futures) >= MAX_PENDING_FUTURES:
-                                    # Wait for oldest futures to complete
-                                    completed_count = 0
-                                    target_completions = MAX_PENDING_FUTURES // 2
-
-                                    for completed_future in concurrent.futures.as_completed(persistence_futures):
-                                        try:
-                                            total_tokens += completed_future.result()
-                                            completed_count += 1
-                                            if completed_count >= target_completions:
-                                                break
-                                        except Exception as e:
-                                            logging.error(f"Persistence task failed: {e}")
-                                            completed_count += 1
-
-                                    # Remove completed futures
-                                    persistence_futures = [f for f in persistence_futures if not f.done()]
-
-                                # Call imported function, pass self.db_manager
-                                future = self.task_executor.submit('postgres', _persist_vector_batch, self.db_manager, batch_results)
-                                persistence_futures.append(future)
-                                processed_chunks += len(batch_results)
-
-                                progress_pct = 15.0 + ((processed_chunks / total_chunks) * 70.0) if total_chunks > 0 else 85.0
-                                _framework_update_task(task.id, "Streaming embedding process...", progress_pct, None, {
-                                    'Chunks Processed': f"{processed_chunks}/{total_chunks}",
-                                    'Batches Sent': batches_sent,
-                                    'Pending Persistence': len(persistence_futures),
-                                    'Tokens Processed': total_tokens
-                                })
-
+                                _, batch_embedding_results = msg_data
+                                if not batch_embedding_results: continue
+                                # batch_embedding_results.sort(key=lambda x: x[1])
+                                future_p_final = self.task_executor.submit('postgres', _persist_vector_batch, self.db_manager, batch_embedding_results)
+                                vector_persistence_futures.append(future_p_final)
+                                processed_db_chunks += len(batch_embedding_results)
+                                prog_pct_final = 85.0 + ((processed_db_chunks / total_db_chunks) * 10.0) if total_db_chunks > 0 else 95.0
+                                _framework_update_task(current_task.id, "Finalizing embeddings...", prog_pct_final, None,
+                                                       {'Chunks Processed': f"{processed_db_chunks}/{total_db_chunks}", 'Pending Persistence': len(vector_persistence_futures)})
                             elif msg_type == "error":
-                                logging.error(f"Embedding worker error: {msg_data}")
+                                logging.error(f"Embedding worker error during final collection: {msg_data}")
+                                # Potentially break or log and continue to try to get other results
                         except queue.Empty:
-                            pass  # No results ready yet, continue
+                            logging.warning(f"Timeout waiting for final embedding results for task {current_task.id}. Processed {processed_db_chunks}/{total_db_chunks}.")
+                            # Check if all workers are done if queues are empty
+                            if all(wq.empty() for wq in work_queues) and result_queue.empty():
+                                break # Exit if everything seems processed or stuck
 
-                        # Periodic progress update for batches sent
-                        if batches_sent % 1000 == 0:
-                            _framework_update_task(task.id, f"Sent {batches_sent} batches...", 15.0, None, {
-                                'Batches Sent': batches_sent,
-                                'Pending Persistence': len(persistence_futures)
-                            })
+                    _framework_update_task(current_task.id, "Waiting for final persistence completion...", 95.0, None, {'Remaining Tasks': len(vector_persistence_futures)})
+                    for f_done_final in concurrent.futures.as_completed(vector_persistence_futures):
+                        try: total_calc_tokens += f_done_final.result()
+                        except Exception as e_pers_final: logging.error(f"Final vector persistence task failed: {e_pers_final}")
 
-                    logging.info(f"Finished sending {batches_sent} batches to workers")
+                    cost_val = (total_calc_tokens / 1_000_000) * self.embedding_config.price_per_million_tokens
+                    usage = BillingUsage(model_name=self.embedding_config.model_name, provider=self.embedding_config.provider,
+                                         api_key_used_hash=hashlib.sha256(self.embedding_config.api_key.encode() if self.embedding_config.api_key else "".encode()).hexdigest(), # Handle None api_key
+                                         total_tokens=total_calc_tokens, cost=cost_val)
+                    with self.db_manager.get_session("public") as s: s.add(usage)
 
-                    # Continue processing remaining results
-                    _framework_update_task(task.id, "Processing remaining embeddings...", 85.0, None, {'Final Batches': batches_sent})
+                    final_dets = {'Total Cost': f"${cost_val:.4f}", 'Tokens Processed': total_calc_tokens, 'Chunks Processed': f"{processed_db_chunks}/{total_db_chunks}"}
+                    _framework_update_task(current_task.id, "Vector embedding complete.", 100.0, None, final_dets)
+                    _framework_complete_task(current_task.id, result={"message": f"Embedding complete. Total cost: ${cost_val:.4f}", 'tokens': total_calc_tokens, 'cost': cost_val})
+                except Exception as e_vec:
+                    logging.error(f"Vector embedding task {current_task.id} failed: {e_vec}", exc_info=True)
+                    _framework_complete_task(current_task.id, error=traceback.format_exc())
 
-                    while processed_chunks < total_chunks:
-                        try:
-                            msg_type, msg_data = result_queue.get(timeout=60.0)
-                            if msg_type == "result":
-                                _, batch_results = msg_data
-                                batch_results.sort(key=lambda x: x[1])
 
-                                # Call imported function, pass self.db_manager
-                                future = self.task_executor.submit('postgres', _persist_vector_batch, self.db_manager, batch_results)
-                                persistence_futures.append(future)
-                                processed_chunks += len(batch_results)
+            logging.info(f"Submitting graph processing task {graph_task.id} and vector embedding task {vector_task.id} to TaskExecutor")
+            graph_future = self.task_executor.submit('dgraph', _run_graph_processing_task_local, graph_task)
+            vector_future = self.task_executor.submit('postgres', _run_vector_embedding_task_local, vector_task)
 
-                                progress_pct = 85.0 + ((processed_chunks / total_chunks) * 10.0) if total_chunks > 0 else 95.0
-                                _framework_update_task(task.id, "Finalizing embeddings...", progress_pct, None, {
-                                    'Chunks Processed': f"{processed_chunks}/{total_chunks}",
-                                    'Pending Persistence': len(persistence_futures)
-                                })
-                            elif msg_type == "error":
-                                logging.error(f"Embedding worker error: {msg_data}")
-                                break
-                        except queue.Empty:
-                            logging.warning("Timeout waiting for final embedding results")
-                            break
+            logging.info("Waiting for graph and vector processing tasks to complete...")
+            # Wait for both tasks with timeout and better error handling
+            all_sub_tasks = [graph_future, vector_future]
+            done_tasks, not_done_tasks = concurrent.futures.wait(all_sub_tasks, timeout=IngestionConfig.SUB_TASK_TIMEOUT, return_when=concurrent.futures.ALL_COMPLETED)
 
-                    # Wait for all persistence to complete
-                    _framework_update_task(task.id, "Waiting for persistence completion...", 95.0, None, {'Remaining Tasks': len(persistence_futures)})
+            for future_item in done_tasks: # Check for exceptions in completed tasks
+                try: future_item.result()
+                except Exception as e_sub: logging.error(f"Sub-task completed with error: {e_sub}", exc_info=True) # Error already logged by task itself
 
-                    for f in concurrent.futures.as_completed(persistence_futures):
-                        try:
-                            total_tokens += f.result()
-                        except Exception as e:
-                            logging.error(f"Persistence task failed: {e}")
-
-                    cost = (total_tokens / 1_000_000) * self.embedding_config.price_per_million_tokens
-                    usage_record = BillingUsage(
-                        model_name=self.embedding_config.model_name,
-                        provider=self.embedding_config.provider,
-                        api_key_used_hash=hashlib.sha256(self.embedding_config.provider.encode()).hexdigest(),
-                        total_tokens=total_tokens,
-                        cost=cost
-                    )
-                    with self.db_manager.get_session("public") as s:
-                        s.add(usage_record)
-
-                    final_details = {
-                        'Total Cost': f"${cost:.4f}",
-                        'Tokens Processed': total_tokens, # Add final token count here
-                        'Chunks Processed': f"{processed_chunks}/{total_chunks}" # Add final chunk count
-                    }
-                    _framework_update_task(task.id, "Vector embedding complete.", 100.0, None, final_details)
-                    _framework_complete_task(task.id, result={"message": f"Embedding complete. Total cost: ${cost:.4f}", 'tokens': total_tokens, 'cost': cost})
-                except Exception as e:
-                    logging.error(f"Vector embedding task failed: {e}", exc_info=True)
-                    _framework_complete_task(task.id, error=traceback.format_exc())
-
-            # Submit both tasks and wait for completion
-            logging.info(f"Submitting graph processing task {graph_task.id} to TaskExecutor")
-            logging.info(f"Submitting vector embedding task {vector_task.id} to TaskExecutor")
-
-            try:
-                graph_future = self.task_executor.submit('dgraph', _run_graph_processing_task, graph_task)
-                vector_future = self.task_executor.submit('postgres', _run_vector_embedding_task, vector_task)
-
-                logging.info("Waiting for graph and vector processing tasks to complete...")
-
-                # Wait for both tasks with timeout and better error handling
-                done, not_done = concurrent.futures.wait([graph_future, vector_future], timeout=3600)  # 1 hour timeout
-
-                if not_done:
-                    logging.warning(f"Tasks did not complete within timeout: {len(not_done)} tasks still running")
-                    for future in not_done:
-                        future.cancel()
-
-                # Check for exceptions
-                for future in done:
-                    try:
-                        result = future.result()
-                        logging.info(f"Task completed with result: {result}")
-                    except Exception as e:
-                        logging.error(f"Task failed with exception: {e}", exc_info=True)
-
-            except Exception as e:
-                logging.error(f"Error submitting or waiting for tasks: {e}", exc_info=True)
-                raise
+            if not_done_tasks:
+                for future_item in not_done_tasks:
+                    logging.warning(f"Sub-task did not complete within timeout: {future_item}. Attempting to cancel.")
+                    future_item.cancel()
+                    # Potentially mark associated DB Task as timed out / error
 
             # --- FINALIZE ---
             _framework_update_task(parent_task_id, "Finalizing...", 95.0, None, None)
             with self.db_manager.get_session("public") as session:
-                repo = session.get(Repository, repo_id)
-                if repo:
-                    repo.db_schemas = list(all_schema_payloads.keys())
-                    repo.active_branch = branch
-                    repo.last_scanned = datetime.utcnow()
-                    session.commit()
+                repo_obj = session.get(Repository, repo_id) # Renamed repo to repo_obj
+                if repo_obj:
+                    repo_obj.db_schemas = list(all_schema_payloads.keys()) # Schemas used for this repo
+                    repo_obj.active_branch = branch
+                    repo_obj.last_scanned = datetime.utcnow()
+                    # session.commit() # Done by context manager
                 else:
-                    logging.error(f"Finalize Ingestion: Repository with ID {repo_id} not found in public schema. Cannot update db_schemas.")
+                    logging.error(f"Finalize Ingestion: Repository with ID {repo_id} not found. Cannot update.")
             _framework_complete_task(parent_task_id, result={"status": "completed"})
-            logging.info("Repository ingestion completed successfully")
+            logging.info(f"Repository ingestion completed successfully for repo_id {repo_id}, branch {branch}")
 
         except Exception as e:
-            logging.error(f"Ingestion failed: {e}", exc_info=True)
+            logging.error(f"Ingestion failed for repo_id {repo_id}, branch {branch}: {e}", exc_info=True)
             _framework_complete_task(parent_task_id, error=traceback.format_exc())
         finally:
-            if workers:
-                logging.info("Shutting down embedding workers...")
+            if workers: # Ensure workers are shut down
+                logging.info("Ensuring embedding workers are shut down...")
                 self._shutdown_embedding_workers(workers, work_queues, shutdown_event)
+
+            # Clean up worker outputs from memory
+            if 'all_code_blob_data_from_workers' in locals() and all_code_blob_data_from_workers:
+                del all_code_blob_data_from_workers
+            if 'dgraph_files' in locals(): del dgraph_files
+            if 'definitions_files' in locals(): del definitions_files
+            if 'calls_files' in locals(): del calls_files
+            if 'schema_cache_files' in locals(): del schema_cache_files
+            if 'all_schema_payloads' in locals(): del all_schema_payloads
+            import gc; gc.collect()
+
             if cache_path.exists():
                 logging.info(f"Cleaning up cache directory: {cache_path}")
                 shutil.rmtree(cache_path)

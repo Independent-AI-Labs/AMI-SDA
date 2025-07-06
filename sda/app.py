@@ -27,7 +27,7 @@ from sqlalchemy.orm import joinedload
 
 from sda.config import DB_URL, WORKSPACE_DIR, AIConfig, GOOGLE_API_KEY, DGRAPH_HOST # Added DGRAPH_HOST
 from sda.core.db_management import DatabaseManager
-from sda.core.models import Repository, File as DBFile, DBCodeChunk, Task, BillingUsage
+from sda.core.models import Repository, File as DBFile, DBCodeChunk, Task, BillingUsage, CodeBlob # Ensure CodeBlob is imported
 from sda.services.agent import AgentManager
 from sda.services.analysis import EnhancedAnalysisEngine
 from sda.services.chunking import TokenAwareChunker
@@ -773,3 +773,85 @@ class CodeAnalysisFramework:
 
             session.expunge_all() # Expunge after all data needed for serialization is loaded.
             return tasks
+
+    # --- NEW METHOD FOR CONTENT RETRIEVAL ---
+    def get_ast_node_content_by_uid(self, dgraph_node_uid: str) -> Optional[str]:
+        """
+        Retrieves the specific code content for a given Dgraph AST node UID.
+        Fetches file path and offsets from Dgraph, then retrieves the content
+        slice from the CodeBlobs table in PostgreSQL.
+        """
+        if not dgraph_node_uid:
+            logging.warning("get_ast_node_content_by_uid: dgraph_node_uid is required.")
+            return None
+
+        # 1. Query Dgraph for the AST node's metadata
+        # The Dgraph schema for ASTNode was defined with these:
+        # file_path: string, startCharOffset: int, endCharOffset: int, repo_id: string, branch: string
+
+        query = """
+        query getNodeContentInfo($uid: string) {
+          node(func: uid($uid)) {
+            uid
+            file_path
+            startCharOffset
+            endCharOffset
+            repo_id
+            branch
+          }
+        }
+        """
+        variables = {"$uid": dgraph_node_uid}
+        dgraph_response = self.db_manager.query_dgraph(query, variables)
+
+        if not dgraph_response or not dgraph_response.get('node'):
+            logging.warning(f"No node found in Dgraph for UID: {dgraph_node_uid}")
+            return None
+
+        node_data_list = dgraph_response['node']
+        if not node_data_list: # Should not happen if 'node' key exists and is not empty list
+            logging.warning(f"Node list empty in Dgraph response for UID: {dgraph_node_uid}")
+            return None
+
+        node_data = node_data_list[0]
+
+        file_path = node_data.get('file_path')
+        start_offset_str = node_data.get('startCharOffset')
+        end_offset_str = node_data.get('endCharOffset')
+        dgraph_repo_id_str = node_data.get('repo_id')
+        dgraph_branch = node_data.get('branch')
+
+        if file_path is None or start_offset_str is None or end_offset_str is None or \
+           dgraph_repo_id_str is None or dgraph_branch is None:
+            logging.error(f"Dgraph node {dgraph_node_uid} is missing required fields (file_path, offsets, repo_id, or branch). Data: {node_data}")
+            return None
+
+        try:
+            start_offset = int(start_offset_str)
+            end_offset = int(end_offset_str)
+            dgraph_repo_id_int = int(dgraph_repo_id_str)
+        except (ValueError, TypeError) as e:
+            logging.error(f"Error converting Dgraph offset/repo_id data for node {dgraph_node_uid}: {e}. Data: {node_data}")
+            return None
+
+        # 2. Query PostgreSQL's CodeBlobs table
+        with self.db_manager.get_session("public") as session:
+            code_blob_entry = session.query(CodeBlob).filter_by(
+                repository_id=dgraph_repo_id_int,
+                branch=dgraph_branch,
+                file_path=file_path
+            ).first()
+
+            if not code_blob_entry:
+                logging.warning(f"No CodeBlob found for repo_id={dgraph_repo_id_int}, branch='{dgraph_branch}', file_path='{file_path}' (from Dgraph node {dgraph_node_uid})")
+                return None
+
+            full_content = code_blob_entry.content
+
+            # 3. Perform slicing
+            if not (0 <= start_offset <= end_offset <= len(full_content)):
+                logging.error(f"Invalid offsets for Dgraph node {dgraph_node_uid}: start={start_offset}, end={end_offset}, content_len={len(full_content)}")
+                return None
+
+            sliced_content = full_content[start_offset:end_offset]
+            return sliced_content
