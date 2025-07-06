@@ -1887,75 +1887,97 @@ if __name__ == "__main__":
         branch_name: str, # FastAPI will receive the decoded path here
         path: str = Query(..., description="Relative path to the file, POSIX style (e.g., 'src/main.py')")
     ):
+        logging.info(f"[API get_file_ast_visualization] Called with repo_id={repo_id}, branch_name='{branch_name}', path='{path}'")
         framework: CodeAnalysisFramework = framework_instance # Access the global framework instance
 
         repo = framework.get_repository_by_id(repo_id)
         if not repo:
+            logging.warning(f"[API get_file_ast_visualization] Repository not found for repo_id={repo_id}")
             raise HTTPException(status_code=404, detail="Repository not found")
         if not repo.db_schemas:
+            logging.warning(f"[API get_file_ast_visualization] Repository has no data schemas for repo_id={repo_id}")
             raise HTTPException(status_code=404, detail="Repository has not been analyzed or has no data schemas.")
+
+        logging.debug(f"[API get_file_ast_visualization] Repo '{repo.name}' found with schemas: {repo.db_schemas}")
 
         # Normalize the input path to ensure it's POSIX style (though Query description already suggests it)
         normalized_relative_path = Path(path).as_posix()
+        logging.debug(f"[API get_file_ast_visualization] Normalized path: '{normalized_relative_path}'")
 
         file_record: Optional[SQLA_File] = None
         ast_nodes_sqla: List[SQLA_ASTNode] = []
 
         for schema_name in repo.db_schemas:
-            with framework.db_manager.get_session(schema_name) as session:
-                # Query for the file
-                current_file_record = session.query(SQLA_File).filter(
-                    SQLA_File.repository_id == repo_id,
-                    SQLA_File.branch == branch_name,
-                    SQLA_File.relative_path == normalized_relative_path
-                ).options(joinedload(SQLA_File.ast_nodes)).first() # Eager load ast_nodes
+            logging.debug(f"[API get_file_ast_visualization] Checking schema: {schema_name}")
+            try:
+                with framework.db_manager.get_session(schema_name) as session:
+                    # Query for the file
+                    current_file_record = session.query(SQLA_File).filter(
+                        SQLA_File.repository_id == repo_id,
+                        SQLA_File.branch == branch_name,
+                        SQLA_File.relative_path == normalized_relative_path
+                    ).options(joinedload(SQLA_File.ast_nodes)).first() # Eager load ast_nodes
 
-                if current_file_record:
-                    file_record = current_file_record
-                    # ASTNodes are already loaded due to joinedload
-                    ast_nodes_sqla = sorted(file_record.ast_nodes, key=lambda n: (n.start_line, n.start_column or 0))
-                    break # Found the file and its nodes
+                    if current_file_record:
+                        file_record = current_file_record
+                        ast_nodes_sqla = sorted(file_record.ast_nodes, key=lambda n: (n.start_line, n.start_column or 0))
+                        logging.info(f"[API get_file_ast_visualization] File record found in schema '{schema_name}' with {len(ast_nodes_sqla)} AST nodes. Path: {file_record.file_path}")
+                        break # Found the file and its nodes
+            except Exception as e:
+                logging.error(f"[API get_file_ast_visualization] Error accessing schema {schema_name} or querying: {e}", exc_info=True)
+                # Potentially raise HTTPException here or continue if other schemas might contain the data
+                # For now, let it try other schemas. If no schemas work, the file_record check below will handle it.
 
         if not file_record:
+            logging.warning(f"[API get_file_ast_visualization] File '{normalized_relative_path}' not found in branch '{branch_name}' for repo_id={repo_id} after checking all schemas.")
             raise HTTPException(status_code=404, detail=f"File '{normalized_relative_path}' not found in branch '{branch_name}' for this repository.")
 
         if not ast_nodes_sqla:
-            # File exists but no AST nodes, return empty list for visualization (could be non-code file or parsing issue)
+            logging.info(f"[API get_file_ast_visualization] File '{normalized_relative_path}' found, but it has no AST nodes. Returning empty list.")
             return []
 
         # Read file content
         try:
             full_file_path = Path(file_record.file_path)
+            logging.debug(f"[API get_file_ast_visualization] Attempting to read content from: {full_file_path}")
             if not full_file_path.is_file():
+                logging.error(f"[API get_file_ast_visualization] File path from DB does not exist or is not a file on disk: {full_file_path}")
                 raise HTTPException(status_code=500, detail=f"File path '{file_record.file_path}' from database does not exist on disk.")
             source_code = full_file_path.read_text(encoding='utf-8')
             source_lines = source_code.splitlines(keepends=True)
+            logging.debug(f"[API get_file_ast_visualization] Successfully read file content. Total lines: {len(source_lines)}")
         except Exception as e:
-            logging.error(f"Error reading file content for AST viz: {file_record.file_path}, Error: {e}", exc_info=True)
+            logging.error(f"[API get_file_ast_visualization] Error reading file content for AST viz: {file_record.file_path}, Error: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Could not read file content: {e}")
 
         # Convert SQLAlchemy ASTNode objects to dictionaries for easier processing
-        # This is important because SQLAlchemy objects might have session state issues
-        # when passed around, especially if the session closes.
         ast_nodes_data = []
-        for node_sqla in ast_nodes_sqla:
-            ast_nodes_data.append({
-                "node_id": node_sqla.node_id,
-                "node_type": node_sqla.node_type,
-                "name": node_sqla.name,
-                "start_line": node_sqla.start_line,
-                "end_line": node_sqla.end_line,
-                "start_column": node_sqla.start_column,
-                "end_column": node_sqla.end_column,
-                "parent_id": node_sqla.parent_id, # Crucial for hierarchy building
-                "depth": node_sqla.depth,
-            })
+        try:
+            for node_sqla in ast_nodes_sqla:
+                ast_nodes_data.append({
+                    "node_id": node_sqla.node_id,
+                    "node_type": node_sqla.node_type,
+                    "name": node_sqla.name,
+                    "start_line": node_sqla.start_line,
+                    "end_line": node_sqla.end_line,
+                    "start_column": node_sqla.start_column,
+                    "end_column": node_sqla.end_column,
+                    "parent_id": node_sqla.parent_id,
+                    "depth": node_sqla.depth,
+                })
+            logging.debug(f"[API get_file_ast_visualization] Converted {len(ast_nodes_data)} AST nodes to dictionaries.")
+        except Exception as e:
+            logging.error(f"[API get_file_ast_visualization] Error converting AST nodes to dicts: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Error processing AST node data.")
 
         # Build hierarchical structure
-        # The parent_id for top-level nodes in the file should be None or a file-level sentinel.
-        # Assuming top-level nodes have parent_id = None or a specific file-level ID not matching any node_id.
-        # The ASTNode model stores parent_id which can be None for root nodes of the file.
-        hierarchical_ast = build_ast_hierarchy(ast_nodes_data, source_lines, parent_id=None)
+        try:
+            logging.debug(f"[API get_file_ast_visualization] Building AST hierarchy...")
+            hierarchical_ast = build_ast_hierarchy(ast_nodes_data, source_lines, parent_id=None)
+            logging.info(f"[API get_file_ast_visualization] Successfully built AST hierarchy. Root nodes: {len(hierarchical_ast)}. Returning data for '{path}'.")
+        except Exception as e:
+            logging.error(f"[API get_file_ast_visualization] Error building AST hierarchy: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Error building AST hierarchy.")
 
         return hierarchical_ast
     # --- End API Endpoint for AST Data ---

@@ -63,30 +63,53 @@ async function initializeASTViewer() {
 
     try {
         const response = await fetch(apiUrl);
+        console.log(`[AST Viewer] API response status: ${response.status}`);
+
         if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ detail: response.statusText }));
-            throw new Error(`API Error (${response.status}): ${errorData.detail || 'Unknown error'}`);
+            let errorDetail = `API request failed with status ${response.status}: ${response.statusText}`;
+            try {
+                const errorText = await response.text(); // Try to get text first, might not be JSON
+                console.error(`[AST Viewer] API error response text: ${errorText}`);
+                // Attempt to parse as JSON, but gracefully handle if it's not
+                try {
+                    const errorData = JSON.parse(errorText);
+                    errorDetail = errorData.detail || errorDetail;
+                } catch (parseError) {
+                    // If JSON parsing fails, use the raw text if it's not too long, or a generic message
+                    errorDetail = errorText.substring(0, 200) || errorDetail;
+                }
+            } catch (e) {
+                console.error('[AST Viewer] Could not get error response text/JSON.', e);
+            }
+            throw new Error(errorDetail);
         }
+
         const astData = await response.json();
+        console.log("[AST Viewer] Successfully fetched and parsed AST data from API.");
 
         displayArea.innerHTML = ''; // Clear loading message
-        if (astData.length === 0) {
+        if (!astData || astData.length === 0) {
+            console.log("[AST Viewer] AST data is empty. Displaying 'No AST data found' message.");
             displayArea.innerHTML = `<div class="loading-message">No AST data found for this file (it might be empty, a non-code file, or not parsed).</div>`;
             return;
         }
+
+        console.log(`[AST Viewer] Rendering ${astData.length} root AST nodes.`);
         renderAST(astData, displayArea);
 
         // After all nodes are rendered, tell Prism to highlight everything
         if (window.Prism) {
             console.log('[AST Viewer] Calling Prism.highlightAll()');
             Prism.highlightAll();
+            console.log('[AST Viewer] Prism.highlightAll() completed.');
         } else {
             console.warn('[AST Viewer] Prism.js not found. Syntax highlighting will not be applied.');
         }
+        console.log("[AST Viewer] AST rendering and highlighting complete.");
 
     } catch (error) {
         console.error(`[AST Viewer] Failed to load or render AST for ${filePath}:`, error);
-        displayArea.innerHTML = `<p class='error-message'>Failed to load AST data for ${filePath}:<br>${error.message}</p>`;
+        displayArea.innerHTML = `<p class='error-message'>Failed to load AST data for ${filePath}:<br>${error.message || 'Unknown error'}</p>`;
     }
 }
 
