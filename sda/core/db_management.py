@@ -304,7 +304,7 @@ class DatabaseManager:
                 logging.error(f"Dgraph batch delete mutation failed (repo {repo_id}, branch {branch}): {e}", exc_info=True)
                 return # Stop if mutation fails
             finally:
-                if txn_rw and not txn_rw.finished:
+                if txn_rw and not txn_rw._finished: # Changed .finished to ._finished
                     txn_rw.discard()
 
         logging.info(f"Successfully cleared a total of {total_deleted_count} Dgraph nodes for repo {repo_id}, branch {branch}.")

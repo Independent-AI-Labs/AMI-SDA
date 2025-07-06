@@ -533,7 +533,7 @@ No active tasks.
                     status_modal_close_btn = gr.Button("Close")
 
             with gr.Tabs() as tabs:
-                with gr.TabItem("Repository & Agent", id=0):
+                with gr.TabItem(label="🗂️ Repository & Agent", id=0):
                     with gr.Row():
                         with gr.Column(scale=1):
                             repo_dropdown = gr.Dropdown(label="Select Repository", interactive=True)
@@ -554,7 +554,7 @@ No active tasks.
                         additional_inputs=[repo_id_state, branch_state]
                     )
 
-                with gr.TabItem("Insights Dashboard", id=1):
+                with gr.TabItem(label="📊 Insights Dashboard", id=1):
                     with gr.Row():
                         with gr.Column(scale=1): # This column will now hold the HTML stat cards
                             gr.Markdown('### <i class="fas fa-chart-bar mr-1.5"></i> Key Statistics') # Icons in Markdown are OK
@@ -575,7 +575,7 @@ No active tasks.
                             duplicate_code_df = gr.DataFrame(headers=["File A", "Lines A", "File B", "Lines B", "Similarity"], interactive=False,
                                                              max_height=400)
 
-                with gr.TabItem("Document Comprehension", id=2):
+                with gr.TabItem(label="📄 Document Comprehension", id=2):
                     with gr.Row():
                         with gr.Column(scale=1): # File Explorer Column
                             gr.Markdown("#### File Explorer")
@@ -590,12 +590,10 @@ No active tasks.
                             )
                         with gr.Column(scale=3): # Content Column
                             with gr.Tabs() as content_tabs:
-                                with gr.TabItem("Embedding", id="embedding_tab"):
-                                    gr.Markdown("### Embedding View (Interactive HTML Node Breakdown)")
+                                with gr.TabItem(label="🔗 Embedding", id="embedding_tab"):
                                     embedding_html_viewer = gr.HTML(label="Node Embedding Visualization")
                                     # Placeholder for actual content
-                                with gr.TabItem("Change Analysis", id="change_analysis_tab"):
-                                    gr.Markdown("### Change Analysis (LLM Generated)")
+                                with gr.TabItem(label="⇆ Change Analysis", id="change_analysis_tab"):
                                     with gr.Accordion("Analyze Current Changes for Selected File", open=True): # Title updated
                                         gr.Markdown("Analyzes uncommitted changes for the file selected in the File Explorer (vs. current branch HEAD).")
                                         # current_modified_files_dropdown_ca REMOVED from here
@@ -613,8 +611,12 @@ No active tasks.
 
                                     change_analysis_output = gr.Markdown("LLM analysis of changes will appear here.")
 
-                                with gr.TabItem("Raw Diff", id="raw_diff_tab"):
-                                    gr.Markdown("### Raw File Diff")
+                                with gr.TabItem(label="↔️ Raw Diff", id="raw_diff_tab"):
+                                    no_changes_message_html = gr.HTML(
+                                        "<div style='font-size: 1.5em; text-align: center; padding: 40px; color: #888;'>NO CHANGES</div>",
+                                        visible=False,
+                                        elem_id="raw_diff_no_changes_message"
+                                    )
                                     code_viewer = gr.Code(label="Raw Diff Output", language=None, interactive=False, visible=True)
                                     image_viewer = gr.Image(label="Image Content", interactive=False, visible=False)
 
@@ -623,7 +625,7 @@ No active tasks.
             timer = gr.Timer(2)
 
             all_insight_outputs = [stats_cards_html, lang_plot]
-            doc_comp_outputs = [ # Updated to 7 items
+            doc_comp_outputs = [ # Updated to 8 items
                 file_explorer,
                 embedding_html_viewer,
                 change_analysis_output,
@@ -631,6 +633,7 @@ No active tasks.
                 image_viewer,
                 selected_file_state,
                 branch_compare_older_version_ca,
+                no_changes_message_html # Added new HTML component
             ]
 
 
@@ -712,7 +715,8 @@ No active tasks.
                 self.handle_file_explorer_select,
                 inputs=[repo_id_state, branch_state, file_explorer], # Pass file_explorer itself as input for its value
                 outputs=[
-                    embedding_html_viewer, code_viewer, image_viewer, selected_file_state
+                    embedding_html_viewer, code_viewer, image_viewer, selected_file_state,
+                    no_changes_message_html # Added the new output component
                     # current_modified_files_dropdown_ca, file_to_compare_dropdown_ca REMOVED
                 ]
             )
@@ -874,8 +878,8 @@ No active tasks.
                 # status_details_html output removed
                 gr.update(), # dead_code_df
                 gr.update(), # duplicate_code_df
-                gr.update(value=None), # stats_plot
-                gr.update(value=None), # lang_plot
+                gr.skip(), # stats_plot (stats_cards_html)
+                gr.skip(), # lang_plot
                 last_status_text, # last_status_text_state (pass-through)
                 # Progress bar updates REMOVED
                 branch_dropdown_update,
@@ -897,8 +901,8 @@ No active tasks.
             return (
                 "No tasks found for this repository.", # status_output
                 gr.update(), gr.update(), # dead_code_df, duplicate_code_df
-                gr.update(value=None), # stats_plot
-                gr.update(value=None), # lang_plot
+                gr.skip(), # stats_plot (stats_cards_html)
+                gr.skip(), # lang_plot
                 last_status_text, # last_status_text_state
                 # Progress bar updates REMOVED
                 branch_dropdown_update,
@@ -1107,8 +1111,8 @@ No active tasks.
     # handle_populate_file_browser_radio, handle_file_browser_go_up, handle_file_browser_radio_select are removed.
     # New handlers for gr.FileExplorer will be simpler.
 
-    def handle_file_explorer_select(self, repo_id: int, branch: str, selection_event_data: Any) -> Tuple[gr.update, gr.update, gr.update, str]: # Removed 2 gr.update from return type
-        # Returns updates for: embedding_html_viewer, code_viewer, image_viewer, selected_file_state
+    def handle_file_explorer_select(self, repo_id: int, branch: str, selection_event_data: Any) -> Tuple[gr.update, gr.update, gr.update, str, gr.update]:
+        # Returns updates for: embedding_html_viewer, code_viewer, image_viewer, selected_file_state, no_changes_message_html
         # selection_event_data is the value from FileExplorer's .change() event.
         # If file_count="single", this should be a single path string when a user selects a file.
         # If it's a list, it might be the initial population or a multi-select scenario we want to ignore for single-file processing.
@@ -1128,8 +1132,8 @@ No active tasks.
             embedding_html_update = gr.update(value="<div>Select a file for embedding visualization.</div>")
             code_viewer_update = gr.update(value="// Select a file to view content/diff.", language=None, label="File Content / Diff", visible=True)
             image_viewer_update = gr.update(value=None, visible=False)
-            # Removed updates for current_modified_files_ca_upd and file_to_compare_ca_upd
-            return embedding_html_update, code_viewer_update, image_viewer_update, "" # Removed 2 gr.update values
+            no_changes_html_update = gr.update(visible=False)
+            return embedding_html_update, code_viewer_update, image_viewer_update, "", no_changes_html_update
 
         print(f"UI: FileExplorer selection changed to: '{file_path}' for repo {repo_id}, branch {branch}")
 
@@ -1141,7 +1145,8 @@ No active tasks.
             embedding_html_update = gr.update(value=self._generate_embedding_html(error_msg, file_path))
             code_viewer_update = gr.update(value=error_msg, language=None, label="Error", visible=True)
             image_viewer_update = gr.update(value=None, visible=False)
-            return embedding_html_update, code_viewer_update, image_viewer_update, file_path # Keep selected_file_state as the problematic path
+            no_changes_html_update = gr.update(visible=False)
+            return embedding_html_update, code_viewer_update, image_viewer_update, file_path, no_changes_html_update
 
         try:
             repo_root = Path(repo.path).resolve()
@@ -1156,41 +1161,90 @@ No active tasks.
             embedding_html_update = gr.update(value=self._generate_embedding_html(error_msg, file_path))
             code_viewer_update = gr.update(value=error_msg, language=None, label="Error", visible=True)
             image_viewer_update = gr.update(value=None, visible=False)
-            return embedding_html_update, code_viewer_update, image_viewer_update, file_path
+            no_changes_html_update = gr.update(visible=False)
+            return embedding_html_update, code_viewer_update, image_viewer_update, file_path, no_changes_html_update
 
         new_selected_file_for_viewers = relative_file_path # This state should hold the relative path
 
+        # --- Embedding Tab Update ---
         # Get text content primarily for embedding view
-        raw_content = self.framework.get_file_content_by_path(repo_id, branch, relative_file_path)
-        if raw_content is None:
-            raw_content = f"// Error: Could not load content for {relative_file_path}"
+        raw_content_for_embedding = self.framework.get_file_content_by_path(repo_id, branch, relative_file_path)
+        if raw_content_for_embedding is None: # Should use the error string from the framework if that's the case
+            raw_content_for_embedding = f"// Error: Could not load content for {relative_file_path} for embedding tab."
 
-        is_image_for_embedding = relative_file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp'))
-        if not is_image_for_embedding:
-            generated_html_for_embedding = self._generate_embedding_html(raw_content, relative_file_path)
+        is_image = relative_file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp')) # Added webp
+        if not is_image:
+            generated_html_for_embedding = self._generate_embedding_html(raw_content_for_embedding, relative_file_path)
             embedding_html_update = gr.update(value=generated_html_for_embedding)
-            logging.info(f"Generated embedding HTML for {relative_file_path}, length {len(generated_html_for_embedding)}")
-            if len(generated_html_for_embedding) < 300: # Log short HTML
-                 logging.info(f"Short HTML content: {generated_html_for_embedding}")
         else:
-            generated_html_for_embedding = f"<div>Embedding visualization is not available for image: {relative_file_path}</div>"
-            embedding_html_update = gr.update(value=generated_html_for_embedding)
-            logging.info(f"Skipping embedding HTML for image {relative_file_path}")
+            embedding_html_update = gr.update(value=f"<div>Embedding visualization is not available for image: {relative_file_path}</div>")
+        # --- End Embedding Tab Update ---
 
-        # Handle Diff Tab (code_viewer and image_viewer)
-        # Use relative_file_path for framework calls
-        diff_content, image_obj = self.framework.get_file_diff_or_content(repo_id, relative_file_path, is_new_file_from_explorer=True)
-        lang = IngestionConfig.LANGUAGE_MAPPING.get(Path(relative_file_path).suffix.lower())
+        # --- Raw Diff Tab Update ---
+        code_viewer_update = gr.skip()
+        image_viewer_update = gr.skip()
+        no_changes_html_update = gr.skip()
 
-        if image_obj:
-            code_viewer_update = gr.update(visible=False)
-            image_viewer_update = gr.update(value=image_obj, visible=True)
+        if is_image:
+            # For images, try to load the image directly for the Raw Diff tab
+            # This reuses part of the logic from get_file_diff_or_content for images
+            full_abs_path_for_image = repo_root / relative_file_path
+            try:
+                img_obj = Image.open(full_abs_path_for_image)
+                img_obj.load() # Ensure image data is loaded
+                image_viewer_update = gr.update(value=img_obj, visible=True)
+                code_viewer_update = gr.update(visible=False)
+                no_changes_html_update = gr.update(visible=False)
+            except Exception as e:
+                logging.error(f"Error opening image {full_abs_path_for_image} for Raw Diff tab: {e}")
+                image_viewer_update = gr.update(value=None, visible=False)
+                code_viewer_update = gr.update(value=f"// Error opening image: {e}", language=None, label="Error", visible=True)
+                no_changes_html_update = gr.update(visible=False)
         else:
-            if diff_content is None: diff_content = f"// Could not load content/diff for {relative_file_path}"
-            code_viewer_update = gr.update(value=diff_content, language=lang, label=f"Content/Diff: {relative_file_path}", visible=True)
-            image_viewer_update = gr.update(value=None, visible=False)
+            # For non-images, determine if modified, new, or clean
+            status = self.framework.get_repository_status(repo_id)
+            file_status = "clean" # Default to clean
+            if status:
+                if relative_file_path in status.get('modified', []):
+                    file_status = "modified"
+                elif relative_file_path in status.get('new', []):
+                    file_status = "new"
+                # Add other statuses if needed (e.g., deleted, renamed)
 
-        return embedding_html_update, code_viewer_update, image_viewer_update, new_selected_file_for_viewers
+            diff_content_for_tab = None
+            lang = IngestionConfig.LANGUAGE_MAPPING.get(Path(relative_file_path).suffix.lower())
+
+            if file_status == "modified":
+                # Get actual diff
+                diff_content_for_tab, _ = self.framework.get_file_diff_or_content(repo_id, relative_file_path, is_new_file_from_explorer=False)
+                if diff_content_for_tab is None: # Should not happen if modified, but as a fallback
+                    diff_content_for_tab = f"// Error: Could not get diff for modified file {relative_file_path}"
+                code_viewer_update = gr.update(value=diff_content_for_tab, language=lang or 'diff', label=f"Diff: {relative_file_path}", visible=True)
+                image_viewer_update = gr.update(visible=False)
+                no_changes_html_update = gr.update(visible=False)
+            elif file_status == "new":
+                # Get raw content for new files
+                diff_content_for_tab = self.framework.get_file_content_by_path(repo_id, branch, relative_file_path)
+                if diff_content_for_tab is None or diff_content_for_tab.startswith("Error: File"): # Check for framework error string
+                    diff_content_for_tab = f"// Error: Could not load content for new file {relative_file_path}. DB Error: {diff_content_for_tab}"
+                code_viewer_update = gr.update(value=diff_content_for_tab, language=lang, label=f"Content (New File): {relative_file_path}", visible=True)
+                image_viewer_update = gr.update(visible=False)
+                no_changes_html_update = gr.update(visible=False)
+            elif file_status == "clean":
+                # Display "NO CHANGES"
+                code_viewer_update = gr.update(value="", visible=False) # Clear and hide code viewer
+                image_viewer_update = gr.update(visible=False)
+                no_changes_html_update = gr.update(visible=True)
+            else: # Fallback for unknown status or if status is None
+                diff_content_for_tab = self.framework.get_file_content_by_path(repo_id, branch, relative_file_path)
+                if diff_content_for_tab is None or diff_content_for_tab.startswith("Error: File"):
+                     diff_content_for_tab = f"// Error: Could not load content for file {relative_file_path} (unknown status). DB Error: {diff_content_for_tab}"
+                code_viewer_update = gr.update(value=diff_content_for_tab, language=lang, label=f"Content: {relative_file_path}", visible=True)
+                image_viewer_update = gr.update(visible=False)
+                no_changes_html_update = gr.update(visible=False)
+        # --- End Raw Diff Tab Update ---
+
+        return embedding_html_update, code_viewer_update, image_viewer_update, new_selected_file_for_viewers, no_changes_html_update
 
     def handle_content_tab_select(self, evt: gr.SelectData, repo_id: int, branch: str, selected_file: str) -> gr.update:
         # evt.value will be the ID of the selected tab_item (e.g., "change_analysis_tab")
@@ -1265,12 +1319,13 @@ No active tasks.
         final_code_view_upd = code_view_upd # Use the default from earlier in the function
         final_img_view_upd = img_view_upd   # Use the default
         final_sel_file_upd = sel_file_upd   # Use the default
+        no_changes_html_initial_upd = gr.update(visible=False) # Default for no_changes_message_html
 
         # commit_msg_diff_upd = gr.update(value="") # This component was removed
 
         # Order must match all_insight_outputs + doc_comp_outputs
         # all_insight_outputs = [stats_cards_html, lang_plot] (2)
-        # doc_comp_outputs = [ # Now 7 items
+        # doc_comp_outputs = [ # Now 8 items
         #     file_explorer,
         #     embedding_html_viewer,
         #     change_analysis_output,
@@ -1278,14 +1333,16 @@ No active tasks.
         #     image_viewer,
         #     selected_file_state,
         #     branch_compare_older_version_ca,
-        # ] Total 2 + 7 = 9 outputs.
+        #     no_changes_message_html
+        # ] Total 2 + 8 = 10 outputs.
 
         return (stats_upd, lang_upd,  # Insight outputs (2)
-                file_explorer_upd,   # Doc Comp (1/7)
-                embedding_html_upd, change_analysis_output_upd,  # Doc Comp (3/7)
-                final_code_view_upd, final_img_view_upd, final_sel_file_upd, # Doc Comp (6/7)
-                branch_compare_older_version_ca_upd) # Doc Comp (7/7)
-                # Total 2 + 7 = 9 outputs.
+                file_explorer_upd,   # Doc Comp (1/8)
+                embedding_html_upd, change_analysis_output_upd,  # Doc Comp (3/8)
+                final_code_view_upd, final_img_view_upd, final_sel_file_upd, # Doc Comp (6/8)
+                branch_compare_older_version_ca_upd, # Doc Comp (7/8)
+                no_changes_html_initial_upd) # Doc Comp (8/8)
+                # Total 2 + 8 = 10 outputs.
 
     def _generate_embedding_html(self, file_content: str, file_path_for_display: str) -> str: # Renamed arg
         logging.info(f"[_generate_embedding_html] Called for file: {file_path_for_display}. Content length: {len(file_content if file_content else '')}")
@@ -1446,19 +1503,41 @@ No active tasks.
         lang_breakdown = stats.get('language_breakdown', {}) if stats else {}
         lang_fig = None
         if lang_breakdown:
-            lang_names = list(lang_breakdown.keys())
+            # Custom capitalization for specific languages, fallback to .capitalize()
+            lang_name_map = {
+                "javascript": "JavaScript", "typescript": "TypeScript",
+                "html": "HTML", "css": "CSS", "json": "JSON", "xml": "XML",
+                "markdown": "Markdown", "python": "Python", "java": "Java",
+                "csharp": "C#", "cpp": "C++", "c": "C", "go": "Go", "rust": "Rust",
+                "ruby": "Ruby", "php": "PHP", "swift": "Swift", "kotlin": "Kotlin",
+                "scala": "Scala", "shell": "Shell", "powershell": "PowerShell"
+                # Add more as needed
+            }
+
+            capitalized_lang_names = [lang_name_map.get(lang.lower(), lang.capitalize()) for lang in lang_breakdown.keys()]
             lang_counts = list(lang_breakdown.values())
 
             # Create a DataFrame for Plotly
-            lang_df_for_plot = pd.DataFrame({"Language": lang_names, "Files": lang_counts})
+            lang_df_for_plot = pd.DataFrame({"Language": capitalized_lang_names, "Files": lang_counts})
             lang_df_for_plot = lang_df_for_plot.sort_values(by="Files", ascending=False)
 
             lang_fig = px.pie(lang_df_for_plot, names="Language", values="Files",
-                              title="Language Breakdown (by File Count)",
-                              hole=0.3) # Optional: for a donut chart effect
-            # Removed in-pie labels for better readability with many languages
-            lang_fig.update_traces(textinfo='none') # Removes text from slices
-            lang_fig.update_layout(showlegend=True) # Ensure legend is visible
+                              hole=0.3) # Optional: for a donut chart effect, title removed
+
+            # Styling hover labels
+            lang_fig.update_traces(
+                textinfo='none', # Removes text from slices
+                hoverinfo='label+percent+value', # Show Language, Percentage, and File Count on hover
+                hoverlabel=dict(
+                    bgcolor="rgba(50,50,50,0.8)", # Semi-transparent dark background for hover
+                    font_color="white",            # White font for hover text
+                    font_size=12
+                )
+            )
+            lang_fig.update_layout(
+                showlegend=True,
+                legend_title_text='Languages' # Optional: add a title to the legend
+            )
 
         return stats_html, lang_fig
 

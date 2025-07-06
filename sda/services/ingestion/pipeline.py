@@ -105,11 +105,23 @@ class IntelligentIngestionService:
             _framework_update_task(parent_task_id, "Preparing environment...", 2.0, None, None)
             if not self.git_service.checkout(repo_path_str, branch): raise RuntimeError(f"Could not checkout branch '{branch}'.")
             _framework_update_task(parent_task_id, "Clearing old data...", 4.0, None, None)
-            self.db_manager.clear_dgraph_data_for_branch(repo_id, branch)
-            with self.db_manager.get_session("public") as s:
+            self.db_manager.clear_dgraph_data_for_branch(repo_id, branch) # Dgraph data for branch
+
+            # Clear DBCodeChunks for this repo and branch from the public schema once
+            with self.db_manager.get_session("public") as public_session:
+                logging.info(f"Clearing old DBCodeChunk data from public schema for repo_id: {repo_id}, branch: {branch}")
+                public_session.query(DBCodeChunk).filter(
+                    DBCodeChunk.repository_id == repo_id,
+                    DBCodeChunk.branch == branch
+                ).delete(synchronize_session=False)
+                public_session.commit() # Commit this deletion
+
+            # Wipe individual repo schemas (containing File, ASTNode tables for partitions)
+            with self.db_manager.get_session("public") as s: # New session for safety, though commit above helps
                 repo = s.get(Repository, repo_id)
                 if repo and repo.uuid:
-                    self.db_manager._wipe_repo_schemas(repo.uuid)
+                    logging.info(f"Wiping individual partition schemas for repo_uuid: {repo.uuid}")
+                    self.db_manager._wipe_repo_schemas(repo.uuid) # This drops 'repo_xyz_%' schemas
 
             files_on_disk = [p for p in Path(repo_path_str).rglob('*') if not any(
                 d in p.parts for d in IngestionConfig.DEFAULT_IGNORE_DIRS) and p.is_file() and p.suffix in IngestionConfig.LANGUAGE_MAPPING]
@@ -361,7 +373,12 @@ class IntelligentIngestionService:
                     with self.db_manager.get_session("public") as s:
                         s.add(usage_record)
 
-                    _framework_update_task(task.id, "Vector embedding complete.", 100.0, None, {'Total Cost': f"${cost:.4f}"})
+                    final_details = {
+                        'Total Cost': f"${cost:.4f}",
+                        'Tokens Processed': total_tokens, # Add final token count here
+                        'Chunks Processed': f"{processed_chunks}/{total_chunks}" # Add final chunk count
+                    }
+                    _framework_update_task(task.id, "Vector embedding complete.", 100.0, None, final_details)
                     _framework_complete_task(task.id, result={"message": f"Embedding complete. Total cost: ${cost:.4f}", 'tokens': total_tokens, 'cost': cost})
                 except Exception as e:
                     logging.error(f"Vector embedding task failed: {e}", exc_info=True)
@@ -401,8 +418,13 @@ class IntelligentIngestionService:
             _framework_update_task(parent_task_id, "Finalizing...", 95.0, None, None)
             with self.db_manager.get_session("public") as session:
                 repo = session.get(Repository, repo_id)
-                repo.db_schemas = list(all_schema_payloads.keys())
-                repo.active_branch, repo.last_scanned = branch, datetime.utcnow()
+                if repo:
+                    repo.db_schemas = list(all_schema_payloads.keys())
+                    repo.active_branch = branch
+                    repo.last_scanned = datetime.utcnow()
+                    session.commit()
+                else:
+                    logging.error(f"Finalize Ingestion: Repository with ID {repo_id} not found in public schema. Cannot update db_schemas.")
             _framework_complete_task(parent_task_id, result={"status": "completed"})
             logging.info("Repository ingestion completed successfully")
 

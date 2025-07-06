@@ -300,16 +300,27 @@ class CodeAnalysisFramework:
     def get_file_content_by_path(self, repo_id: int, branch: str, relative_path: str) -> Optional[str]:
         """Retrieves the content of a file from disk, verifying it's tracked in the DB."""
         repo = self.get_repository_by_id(repo_id)
-        if not repo or not repo.db_schemas:
-            return f"Error: Repository {repo_id} not found or has no analyzed data."
+        if not repo:
+            logging.error(f"get_file_content_by_path: Repo ID {repo_id} not found.")
+            return f"Error: Repository {repo_id} not found."
+        if not repo.db_schemas:
+            logging.error(f"get_file_content_by_path: Repo ID {repo_id} ('{repo.name}') has no db_schemas listed.")
+            return f"Error: Repository {repo_id} ('{repo.name}') has no analyzed data (no schemas)."
+
+        logging.info(f"get_file_content_by_path: Attempting to find '{relative_path}' in repo '{repo.name}' (ID: {repo_id}), branch '{branch}'. Checking schemas: {repo.db_schemas}")
 
         file_record = None
         for schema in repo.db_schemas:
+            logging.info(f"get_file_content_by_path: Checking schema '{schema}' for file '{relative_path}'")
             with self.db_manager.get_session(schema) as session:
                 record = session.query(DBFile).filter_by(repository_id=repo_id, branch=branch, relative_path=relative_path).first()
                 if record:
+                    logging.info(f"get_file_content_by_path: Found file record in schema '{schema}'. ID: {record.id}, Path: {record.file_path}")
                     file_record = record
                     break
+                else:
+                    logging.info(f"get_file_content_by_path: File '{relative_path}' not found in schema '{schema}' with branch '{branch}'.")
+
         if file_record:
             file_path = Path(file_record.file_path)
             if file_path.exists():
