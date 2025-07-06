@@ -1284,7 +1284,14 @@ No active tasks.
 
         logging.info(f"[handle_file_explorer_select] Attempting to update embedding_html_viewer. Is Skip: {is_skip_update_val}. Final HTML (preview): {str(final_html_for_viewer)[:500]}...")
 
-        return embedding_html_update, code_viewer_update, image_viewer_update, new_selected_file_for_viewers, no_changes_html_update
+        return (
+            embedding_html_update,
+            code_viewer_update,
+            image_viewer_update,
+            new_selected_file_for_viewers,
+            no_changes_html_update,
+            ast_trigger_update  # Added missing trigger update
+        )
 
     def handle_content_tab_select(self, evt: gr.SelectData, repo_id: int, branch: str, selected_file: str) -> gr.update:
         # evt.value will be the ID of the selected tab_item (e.g., "change_analysis_tab")
