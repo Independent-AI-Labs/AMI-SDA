@@ -315,18 +315,22 @@ def _persist_chunks_for_schema(db_manager: DatabaseManager, schema_name: str, pa
         updates_for_token_counts.append({'id': item['id'], 'token_count': item['token_count']})
 
     if updates_for_token_counts:
+        logging.info(f"[public] Attempting to bulk update token_count for {len(updates_for_token_counts)} DBCodeChunks. Sample: {updates_for_token_counts[:5]}")
         try:
             # Re-use the 'public' session from above if possible, or get a new one.
             # The session used for querying 'persisted_chunks_with_db_id' is still in scope.
             session.bulk_update_mappings(DBCodeChunk, updates_for_token_counts)
-            logging.info(f"[public] Updated token_count for {len(updates_for_token_counts)} DBCodeChunks for repo_id: {repo_id}, branch: {branch}")
+            # session.commit() # The session is managed by a context manager, commit happens on successful exit.
+            logging.info(f"[public] Successfully updated token_count for {len(updates_for_token_counts)} DBCodeChunks for repo_id: {repo_id}, branch: {branch}")
         except Exception as e_token_update:
-            logging.error(f"Error bulk updating token_counts for DBCodeChunks: {e_token_update}", exc_info=True)
+            logging.error(f"[public] Error bulk updating token_counts for DBCodeChunks for repo_id: {repo_id}, branch: {branch}: {e_token_update}", exc_info=True)
             # Decide if this is a critical error to halt ingestion or just log. For stats, it's important.
             # For now, we log and continue creating the jsonl file.
+    else:
+        logging.info(f"[public] No token count updates to perform for DBCodeChunks for repo_id: {repo_id}, branch: {branch}.")
 
     if not chunks_for_embedding_jsonl:
-        logging.info(f"[{schema_name}] No chunks prepared for embedding jsonl file for repo_id: {repo_id}, branch: {branch}")
+        logging.warning(f"[{schema_name}] No chunks prepared for embedding jsonl file for repo_id: {repo_id}, branch: {branch} (this means updates_for_token_counts was also empty)")
         return None
 
     jsonl_file_path = cache_path / f"embed_{schema_name}_{repo_id}_{branch.replace('/', '_')}.jsonl" # More specific name
