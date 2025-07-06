@@ -174,6 +174,11 @@ def _persist_files_for_schema(db_manager: DatabaseManager, schema_name: str, pay
         logging.info(f"[{schema_name}] Delete operation for old File data for repo_id {repo_id}, branch: '{branch}' completed. Rows affected (if available from dialect): {deleted_count}")
 
         logging.info(f"[{schema_name}] Attempting to insert/update {len(file_mappings)} File records for repo_id {repo_id}, branch: '{branch}'.")
+        # Log the actual content of file_mappings for debugging
+        if file_mappings:
+            sample_paths_in_mappings = [fm.get('relative_path') for fm in file_mappings[:5]]
+            logging.info(f"[{schema_name}] Details of file_mappings (len={len(file_mappings)}, sample paths: {sample_paths_in_mappings}) before insert for repo_id {repo_id}, branch: '{branch}'.")
+
         stmt = insert(File).values(file_mappings)
         set_data = dict(
             content_hash=stmt.excluded.content_hash,
