@@ -462,6 +462,7 @@ No active tasks.
         fontawesome_cdn = '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">'
         tailwind_cdn = '<script src="https://cdn.tailwindcss.com"></script>'
         dynamic_updates_js_link = '<script src="/static/js/dynamic_updates.js"></script>'
+        ast_viewer_js_link = '<script src="/static/js/ast_viewer.js"></script>' # Link for the new JS file
 
 
         # Load CSS from file
@@ -473,8 +474,8 @@ No active tasks.
             control_panel_css = "/* CSS file not found. Styles will be missing. */"
             print(f"Warning: CSS file not found at {css_file_path}")
 
-
-        with gr.Blocks(theme=gr.themes.Default(primary_hue="blue", secondary_hue="sky"), title="SDA Framework", css=control_panel_css, head=tailwind_cdn + modal_js + fontawesome_cdn + dynamic_updates_js_link) as demo:
+        app_head_content = tailwind_cdn + modal_js + fontawesome_cdn + dynamic_updates_js_link + ast_viewer_js_link
+        with gr.Blocks(theme=gr.themes.Default(primary_hue="blue", secondary_hue="sky"), title="SDA Framework", css=control_panel_css, head=app_head_content) as demo:
             gr.Markdown("# Software Development Analytics")
             with gr.Row(elem_classes="control-button-row sda-status-bar-row"): # Added sda-status-bar-row for CSS targeting
                 status_output = gr.Textbox(interactive=False, placeholder="Status messages will appear here...", scale=4, lines=1, show_label=False, container=False) # Removed label, added lines=1, show_label=False, container=False
@@ -1177,16 +1178,22 @@ No active tasks.
         if not is_image:
             # `_generate_embedding_html` now takes only file_path_for_display.
             # The actual content is fetched by the JS from the API.
-            # The first argument to _generate_embedding_html (file_content) is vestigial for its new role.
-            # We can pass None or an empty string.
-            base_script_html = self._generate_embedding_html("", relative_file_path)
+            # The first argument to _generate_embedding_html (file_content) is vestigial.
+            # Pass relative_file_path as the second argument, which is now effectively the first used one.
+            html_template = self._generate_embedding_html("", relative_file_path) # "" is for the old file_content arg
 
-            # Inject repo_id and branch_name into the script placeholders
-            embedding_html_content = base_script_html.replace("{{repo_id}}", str(repo_id))
-            embedding_html_content = embedding_html_content.replace("{{branch_name}}", branch) # branch is already a string
+            # Inject actual values into the template's placeholders
+            # Ensure proper escaping if file paths could contain quotes, though unlikely for data attributes.
+            # Python's str() for repo_id is fine. Branch and relative_file_path are strings.
+            embedding_html_content = html_template.replace("{{repo_id}}", str(repo_id))
+            embedding_html_content = embedding_html_content.replace("{{branch_name}}", branch)
+            embedding_html_content = embedding_html_content.replace("{{file_path}}", relative_file_path)
+            embedding_html_content = embedding_html_content.replace("{{file_path_display}}", relative_file_path) # Used in "Loading AST for {{file_path_display}}..."
+
             embedding_html_update = gr.update(value=embedding_html_content)
+            logging.info(f"[handle_file_explorer_select] Generated HTML for AST viewer (repo_id: {repo_id}, branch: {branch}, file: {relative_file_path})")
         else:
-            embedding_html_update = gr.update(value=f"<div>AST visualization is not available for image: {relative_file_path}</div>")
+            embedding_html_update = gr.update(value=f"<div style='padding:10px;'>AST visualization is not available for image: {relative_file_path}</div>")
         # --- End Embedding Tab Update ---
 
         # --- Raw Diff Tab Update ---
@@ -1531,9 +1538,43 @@ No active tasks.
         # # logging.info(f"[_generate_embedding_html] Returning HTML with script for AST visualization for {file_path_for_display}.")
         # return script_content # This will be further processed by handle_file_explorer_select
 
-        # Diagnostic step: Return extremely simple HTML without any script.
-        logging.info(f"[_generate_embedding_html] Returning diagnostic simple HTML for {file_path_for_display}.")
-        return f"<div id='ast-visualization-container' style='padding:20px; border: 2px solid green;'><h3>AST VISUALIZATION TEST for {file_path_for_display}</h3><p>If you see this, basic HTML update is working.</p></div>"
+        # This function now returns an HTML template string.
+        # Placeholders {repo_id}, {branch_name}, {file_path} will be replaced by the caller.
+        # The file_content argument is now entirely vestigial.
+
+        logging.info(f"[_generate_embedding_html] Generating HTML structure for AST viewer for: {file_path_for_display}")
+
+        if not file_path_for_display: # Should be caught by caller, but as a safeguard
+            return "<div id='ast-visualization-container' style='padding:10px;'>Error: No file path provided to _generate_embedding_html.</div>"
+
+        html_template = f"""
+<div id="ast-visualization-container"
+     data-repo-id="{{repo_id}}"
+     data-branch-name="{{branch_name}}"
+     data-file-path="{{file_path}}"
+     style="height: 580px; overflow-y: auto; font-family: monospace; padding: 10px; border: 1px solid #ccc;">
+    Loading AST for {{file_path_display}}...
+</div>
+<script>
+    // Brief delay to ensure the div is in the DOM if Gradio updates asynchronously
+    setTimeout(() => {{
+        if (typeof window.loadAndRenderAST === 'function') {{
+            console.log('[AST Viz Initializer] Calling window.loadAndRenderAST()');
+            window.loadAndRenderAST();
+        }} else {{
+            console.error('[AST Viz Initializer] window.loadAndRenderAST is not defined. Ensure ast_viewer.js is loaded correctly.');
+            const container = document.getElementById('ast-visualization-container');
+            if (container) {{
+                container.innerHTML = "<p style='color:red;'>Error: AST viewer script (ast_viewer.js) not loaded or function not defined.</p>";
+            }}
+        }}
+    }}, 100); // 100ms delay, adjust if needed
+</script>
+"""
+        # Note: The placeholders {{repo_id}}, {{branch_name}}, {{file_path}}, {{file_path_display}}
+        # will be replaced by handle_file_explorer_select.
+        # file_path_for_display is used here just for the initial log.
+        return html_template
 
     def handle_populate_change_analysis_inputs(self, repo_id: int, branch: str) -> gr.update:
         # Returns update for: branch_compare_older_version_ca
