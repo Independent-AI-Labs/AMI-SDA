@@ -503,7 +503,7 @@ No active tasks.
             # last_sub_task_ids_state = gr.State([])
             # last_main_task_has_details_state = gr.State(False)
             # last_main_task_has_error_state = gr.State(False)
-            # ast_trigger_textbox = gr.Textbox(visible=False, label="ASTViewerTrigger", elem_id="ast_viewer_trigger_textbox") # REMOVED
+            # ast_trigger_textbox removed
 
 
             with gr.Column(elem_id="addRepoModal", elem_classes="modal-background"):
@@ -719,10 +719,10 @@ No active tasks.
                 inputs=[repo_id_state, branch_state, file_explorer], # Pass file_explorer itself as input for its value
                 outputs=[
                     embedding_html_viewer, code_viewer, image_viewer, selected_file_state,
-                    no_changes_message_html # ast_trigger_textbox removed from outputs
+                    no_changes_message_html # ast_trigger_textbox and .then() call removed
                     # current_modified_files_dropdown_ca, file_to_compare_dropdown_ca REMOVED
                 ]
-            ).then(fn=None, _js="() => { console.log('[Gradio .then()] Attempting to call window.loadAndRenderAST()'); if (typeof window.loadAndRenderAST === 'function') { window.loadAndRenderAST(); } else { console.error('[Gradio .then()] loadAndRenderAST not found.');} }")
+            ) # .then() call removed
 
             content_tabs.select(
                 self.handle_content_tab_select,
@@ -1174,20 +1174,18 @@ No active tasks.
         # We need to inject repo_id and branch_name into that script.
         # The `raw_content_for_embedding` is no longer directly passed to _generate_embedding_html for display.
 
-        is_image = relative_file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp')) # Added webp
-        # ast_trigger_update = gr.skip() # No longer needed
+        is_image = relative_file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'))
 
         if not is_image:
-            repo_id_str = str(repo_id)
-            branch_name_str = branch
-            file_path_str = relative_file_path # This is already the relative path
+            # Ensure branch_name and relative_file_path are URL-encoded for the iframe src
+            import urllib.parse
+            encoded_branch_name = urllib.parse.quote_plus(branch)
+            encoded_relative_file_path = urllib.parse.quote_plus(relative_file_path)
 
-            # Call _generate_embedding_html which now takes repo_id, branch, and file_path directly
-            embedding_html_div = self._generate_embedding_html(repo_id_str, branch_name_str, file_path_str)
-            embedding_html_update = gr.update(value=embedding_html_div)
-
-            logging.info(f"[handle_file_explorer_select] Preparing DIV for AST. Repo: {repo_id_str}, Branch: {branch_name_str}, File: {file_path_str}.")
-
+            iframe_url = f"/static/ast_visualization.html?repo_id={str(repo_id)}&branch_name={encoded_branch_name}&file_path={encoded_relative_file_path}"
+            embedding_html_content = f'<iframe src="{iframe_url}" style="width:100%; height:580px; border:none;"></iframe>'
+            embedding_html_update = gr.update(value=embedding_html_content)
+            logging.info(f"[handle_file_explorer_select] Set iframe for AST viewer: {iframe_url}")
         else:
             embedding_html_update = gr.update(value=f"<div style='padding:10px;'>AST visualization is not available for image: {relative_file_path}</div>")
             logging.info(f"[handle_file_explorer_select] AST visualization skipped for image: {relative_file_path}")

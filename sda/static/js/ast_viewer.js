@@ -1,30 +1,28 @@
-window.loadAndRenderAST = async function() {
-    console.log('[AST Viewer] loadAndRenderAST called.');
-    const container = document.getElementById('ast-visualization-container');
-    if (!container) {
-        console.error('[AST Viewer] Container #ast-visualization-container not found.');
+window.initializeASTViewer = async function(params) {
+    console.log('[AST Viewer] initializeASTViewer called with params:', params);
+    const displayArea = document.getElementById('ast-display-area'); // Target div in ast_visualization.html
+
+    if (!displayArea) {
+        console.error('[AST Viewer] Container #ast-display-area not found.');
         return;
     }
 
-    const repoId = container.dataset.repoId;
-    const branchName = container.dataset.branchName;
-    const filePath = container.dataset.filePath;
-
-    console.log(`[AST Viewer] Data attributes - Repo ID: ${repoId}, Branch: ${branchName}, File: ${filePath}`);
-
-    if (!repoId || repoId === "None" || repoId === "null" || !branchName || branchName === "None" || branchName === "null" || !filePath) {
-        let errorMsg = "<p>Error: Missing or invalid data attributes on container to load AST:<ul>";
-        if (!repoId || repoId === "None" || repoId === "null") errorMsg += "<li>Repository ID missing</li>";
-        if (!branchName || branchName === "None" || branchName === "null") errorMsg += "<li>Branch name missing</li>";
-        if (!filePath) errorMsg += "<li>File path missing</li>";
+    if (!params || !params.repoId || !params.branchName || !params.filePath) {
+        let errorMsg = "<p style='color:red;'>Error: Missing necessary parameters to load AST.<ul>";
+        if (!params.repoId) errorMsg += "<li>Repository ID missing</li>";
+        if (!params.branchName) errorMsg += "<li>Branch name missing</li>";
+        if (!params.filePath) errorMsg += "<li>File path missing</li>";
         errorMsg += "</ul></p>";
-        console.error("[AST Viewer] Validation of data attributes failed:", errorMsg);
-        container.innerHTML = errorMsg;
+        console.error("[AST Viewer] Parameter validation failed:", errorMsg);
+        displayArea.innerHTML = errorMsg;
         return;
     }
 
-    // Initial loading message in container (might be set by Python already, but good to ensure)
-    container.innerHTML = `Loading AST for ${filePath}...`;
+    const { repoId, branchName, filePath } = params;
+
+    // Set initial loading message in the display area
+    displayArea.innerHTML = `Loading AST for ${filePath}...`;
+    console.log(`[AST Viewer] Params - Repo ID: ${repoId}, Branch: ${branchName}, File: ${filePath}`);
 
     const apiUrl = `/api/repo/${repoId}/branch/${encodeURIComponent(branchName)}/file-ast?path=${encodeURIComponent(filePath)}`;
     console.log("[AST Viewer] Fetching AST data from:", apiUrl);
@@ -32,26 +30,28 @@ window.loadAndRenderAST = async function() {
     try {
         const response = await fetch(apiUrl);
         if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ detail: response.statusText })); // Try to parse JSON, fallback to statusText
+            const errorData = await response.json().catch(() => ({ detail: response.statusText }));
             console.error(`[AST Viewer] API Error (${response.status}):`, errorData);
             throw new Error(`API Error (${response.status}): ${errorData.detail || 'Unknown error'}`);
         }
         const astData = await response.json();
 
-        container.innerHTML = ''; // Clear loading message
+        displayArea.innerHTML = ''; // Clear loading message
         if (astData.length === 0) {
-            container.innerHTML = `<p>No AST data found for this file (it might be empty, a non-code file, or not parsed by the backend for AST).</p>`;
-            console.log('[AST Viewer] No AST data returned from API.');
+            displayArea.innerHTML = `<p>No AST data found for this file (it might be empty, a non-code file, or not parsed by the backend for AST).</p>`;
+            console.log('[AST Viewer] No AST data returned from API for file:', filePath);
             return;
         }
-        console.log('[AST Viewer] AST data received, rendering...');
-        renderAST(astData, container);
+        console.log('[AST Viewer] AST data received, rendering for file:', filePath);
+        renderAST(astData, displayArea); // Pass displayArea as the parentElement
     } catch (error) {
-        console.error("[AST Viewer] Failed to load or render AST:", error);
-        container.innerHTML = `<p style='color:red;'>Failed to load AST data: ${error.message}</p>`;
+        console.error("[AST Viewer] Failed to load or render AST for file " + filePath + ":", error);
+        displayArea.innerHTML = `<p style='color:red;'>Failed to load AST data for ${filePath}:<br>${error.message}</p>`;
     }
 };
 
+// renderAST function remains the same, but is now called by initializeASTViewer
+// Ensure it's defined in a scope accessible by initializeASTViewer (it is, as a global function here)
 function renderAST(nodes, parentElement) {
     nodes.forEach(node => {
         const nodeDiv = document.createElement('div');
