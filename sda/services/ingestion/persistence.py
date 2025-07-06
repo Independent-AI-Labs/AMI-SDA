@@ -358,56 +358,59 @@ def _persist_chunks_for_schema(db_manager: DatabaseManager, schema_name: str, pa
             # Collect (id, token_count) for bulk update
             # This part will be moved outside the loop for a bulk update.
             # For now, let's prepare data for a bulk update.
-            pass # Placeholder - actual update logic will be a bulk update after this loop.
+            # pass # Placeholder - actual update logic will be a bulk update after this loop. # Removed pass
 
-    # After iterating through all chunks and preparing jsonl:
-    updates_for_token_counts = []
-    for item in chunks_for_embedding_jsonl: # chunks_for_embedding_jsonl now contains schema, id, content, token_count
-        updates_for_token_counts.append({'id': item['id'], 'token_count': item['token_count']})
+            # After iterating through all chunks and preparing jsonl:
+            updates_for_token_counts = []
+            for item in chunks_for_embedding_jsonl: # chunks_for_embedding_jsonl now contains schema, id, content, token_count
+                updates_for_token_counts.append({'id': item['id'], 'token_count': item['token_count']})
 
-    if updates_for_token_counts:
-        logging.info(f"[public] Attempting to bulk update token_count for {len(updates_for_token_counts)} DBCodeChunks. Sample: {updates_for_token_counts[:5]}")
-        try:
-            # Re-use the 'public' session from above if possible, or get a new one.
-            # The session used for querying 'persisted_chunks_with_db_id' is still in scope.
-            session.bulk_update_mappings(DBCodeChunk, updates_for_token_counts)
-            logging.info(f"[public] Called bulk_update_mappings for token_count for {len(updates_for_token_counts)} DBCodeChunks for repo_id: {repo_id}, branch: '{branch}'.")
-
-            # Diagnostic: Query back a sample of updated chunks to verify token_count in this transaction
             if updates_for_token_counts:
-                sample_chunk_db_ids = [upd['id'] for upd in updates_for_token_counts[:5]]
-                if sample_chunk_db_ids:
-                    try:
-                        # Flush to ensure updates are sent to DB before querying, but stay in transaction
-                        session.flush()
-                        verified_chunks = session.query(DBCodeChunk.id, DBCodeChunk.token_count).filter(DBCodeChunk.id.in_(sample_chunk_db_ids)).all()
-                        logging.info(f"[public] Verification query for token_counts (sample of {len(sample_chunk_db_ids)}): {verified_chunks} for repo_id: {repo_id}, branch: '{branch}'")
-                    except Exception as e_verify:
-                        logging.error(f"[public] Error verifying token_count updates in transaction for repo_id: {repo_id}, branch: '{branch}': {e_verify}", exc_info=True)
+                logging.info(f"[public] Attempting to bulk update token_count for {len(updates_for_token_counts)} DBCodeChunks. Sample: {updates_for_token_counts[:5]}")
+                try:
+                    # Re-use the 'public' session from above if possible, or get a new one.
+                    # The session used for querying 'persisted_chunks_with_db_id' is still in scope.
+                    session.bulk_update_mappings(DBCodeChunk, updates_for_token_counts)
+                    logging.info(f"[public] Called bulk_update_mappings for token_count for {len(updates_for_token_counts)} DBCodeChunks for repo_id: {repo_id}, branch: '{branch}'.")
 
-            # session.commit() # The session is managed by a context manager, commit happens on successful exit.
-            logging.info(f"[public] Successfully updated token_count for {len(updates_for_token_counts)} DBCodeChunks for repo_id: {repo_id}, branch: '{branch}'") # Added quotes to branch
-        except Exception as e_token_update:
-            logging.error(f"[public] Error bulk updating token_counts for DBCodeChunks for repo_id: {repo_id}, branch: '{branch}': {e_token_update}", exc_info=True) # Added quotes to branch
-            # Decide if this is a critical error to halt ingestion or just log. For stats, it's important.
-            # For now, we log and continue creating the jsonl file.
-    else:
-        logging.info(f"[public] No token count updates to perform for DBCodeChunks for repo_id: {repo_id}, branch: {branch}.")
+                    # Diagnostic: Query back a sample of updated chunks to verify token_count in this transaction
+                    if updates_for_token_counts:
+                        sample_chunk_db_ids = [upd['id'] for upd in updates_for_token_counts[:5]]
+                        if sample_chunk_db_ids:
+                            try:
+                                # Flush to ensure updates are sent to DB before querying, but stay in transaction
+                                session.flush()
+                                verified_chunks = session.query(DBCodeChunk.id, DBCodeChunk.token_count).filter(DBCodeChunk.id.in_(sample_chunk_db_ids)).all()
+                                logging.info(f"[public] Verification query for token_counts (sample of {len(sample_chunk_db_ids)}): {verified_chunks} for repo_id: {repo_id}, branch: '{branch}'")
+                            except Exception as e_verify:
+                                logging.error(f"[public] Error verifying token_count updates in transaction for repo_id: {repo_id}, branch: '{branch}': {e_verify}", exc_info=True)
 
-    if not chunks_for_embedding_jsonl:
-        logging.warning(f"[{schema_name}] No chunks prepared for embedding jsonl file for repo_id: {repo_id}, branch: {branch} (this means updates_for_token_counts was also empty)")
-        return None
+                    # session.commit() # The session is managed by a context manager, commit happens on successful exit.
+                    logging.info(f"[public] Successfully updated token_count for {len(updates_for_token_counts)} DBCodeChunks for repo_id: {repo_id}, branch: '{branch}'") # Added quotes to branch
+                except Exception as e_token_update:
+                    logging.error(f"[public] Error bulk updating token_counts for DBCodeChunks for repo_id: {repo_id}, branch: '{branch}': {e_token_update}", exc_info=True) # Added quotes to branch
+                    # Decide if this is a critical error to halt ingestion or just log. For stats, it's important.
+                    # For now, we log and continue creating the jsonl file.
+            else:
+                logging.info(f"[public] No token count updates to perform for DBCodeChunks for repo_id: {repo_id}, branch: {branch}.")
+        # End of `with db_manager.get_session("public") as session:` block
 
-    jsonl_file_path = cache_path / f"embed_{schema_name}_{repo_id}_{branch.replace('/', '_')}.jsonl" # More specific name
-    with open(jsonl_file_path, 'w', encoding='utf-8') as f:
-        for entry in chunks_for_embedding_jsonl:
-            f.write(json.dumps(entry) + '\n')
+        # JSONL file generation, happens after session commit/rollback
+        if not chunks_for_embedding_jsonl:
+            logging.warning(f"[{schema_name}] No chunks prepared for embedding jsonl file for repo_id: {repo_id}, branch: {branch} (this means updates_for_token_counts was also empty or failed to update)")
+            return None
 
-    logging.info(f"[{schema_name}] Prepared {len(chunks_for_embedding_jsonl)} chunks for embedding in {jsonl_file_path}")
-    return str(jsonl_file_path), len(chunks_for_embedding_jsonl)
+        jsonl_file_path = cache_path / f"embed_{schema_name}_{repo_id}_{branch.replace('/', '_')}.jsonl" # More specific name
+        with open(jsonl_file_path, 'w', encoding='utf-8') as f:
+            for entry in chunks_for_embedding_jsonl:
+                f.write(json.dumps(entry) + '\n')
+
+        logging.info(f"[{schema_name}] Prepared {len(chunks_for_embedding_jsonl)} chunks for embedding in {jsonl_file_path}")
+        return str(jsonl_file_path), len(chunks_for_embedding_jsonl)
+
     except Exception as e_persist_chunks:
         logging.error(f"[public] CRITICAL ERROR in _persist_chunks_for_schema for repo_id {repo_id}, branch '{branch}', schema '{schema_name}': {e_persist_chunks}", exc_info=True)
-        # This exception will likely cause the session to rollback, losing token updates.
+        # This exception will likely cause the session to rollback, losing token updates if they were part of the transaction.
         raise # Re-raise so TaskExecutor can also see it.
 
 
