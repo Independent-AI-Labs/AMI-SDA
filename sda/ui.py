@@ -579,9 +579,9 @@ No active tasks.
                             duplicate_code_df = gr.DataFrame(headers=["File A", "Lines A", "File B", "Lines B", "Similarity"], interactive=False,
                                                              max_height=400)
 
-                with gr.TabItem(label="📄 Document Comprehension", id=2):
-                    with gr.Row():
-                        with gr.Column(scale=1): # File Explorer Column
+                with gr.TabItem(label="📄 Document Comprehension", id=2, elem_classes="doc-comp-tabitem"): # Add class for potential specific styling
+                    with gr.Row(equal_height=False, elem_classes="doc-comp-main-row"): # Allow row to manage height; equal_height might conflict with flex
+                        with gr.Column(scale=1, min_width=300, elem_classes="file-explorer-column"): # File Explorer Column
                             gr.Markdown("#### File Explorer")
                             from sda.config import WORKSPACE_DIR as SDA_WORKSPACE_DIR
                             file_explorer = gr.FileExplorer(
@@ -590,10 +590,11 @@ No active tasks.
                                 label="Repository Files",
                                 interactive=True,
                                 file_count="single",
-                                elem_id="sda_file_explorer"
+                                elem_id="sda_file_explorer",
+                                height=800  # Set explicit height for FileExplorer
                             )
-                        with gr.Column(scale=3): # Content Column
-                            with gr.Tabs() as content_tabs:
+                        with gr.Column(scale=3, elem_classes="content-viewer-column"): # Content Column
+                            with gr.Tabs(elem_id="content_tabs") as content_tabs: # Add elem_id for CSS
                                 with gr.TabItem(label="🔗 Embedding", id="embedding_tab"):
                                     embedding_html_viewer = gr.HTML(label="Node Embedding Visualization", elem_id="ast_iframe_container_wrapper")
                                     # Placeholder for actual content

@@ -4,40 +4,52 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AST Visualization</title>
+    <!-- 1. Link to Prism.js CSS (using a CDN theme for simplicity, choose one you like) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css"
+          integrity="sha512-mIs9kKbaw6JZFfSuo+EdoTJXqJZYhAgzz+HTO09JkG4SYKdB9rL7nKxP/cxjOsCq0V0T3hJMKp2vQn9aC+j/wA=="
+          crossorigin="anonymous" referrerpolicy="no-referrer" />
     <style>
-        body { margin: 0; font-family: sans-serif; background-color: #f9f9f9; color: #333; }
-        #ast-display-area {
-            height: 100vh; /* Make it take full viewport height of iframe */
-            overflow-y: auto;
-            font-family: monospace;
-            padding: 10px;
-            border: 1px solid #ccc;
-            box-sizing: border-box;
-            background-color: #ffffff; /* Explicit white background for the display area */
-        }
+        body { font-family: sans-serif; margin: 0; background-color: #f0f0f0; }
         .ast-node {
-            /* Base styles, some might be overridden by JS if needed for dynamic parts like margin */
-            border: 1px dashed #ddd;
-            padding: 5px;
-            margin-bottom: 5px;
-            background-color: #ffffff; /* Default opaque background */
-            color: #333;
-            position: relative; /* For potential absolute positioning of children/pills */
-            white-space: pre-wrap;
-        }
-        .ast-node-highlighted {
-            background-color: #f0f0f0 !important; /* Ensure this overrides default */
+            border: 1px solid #ccc;
+            padding: 8px;
+            margin: 4px 0 4px 20px; /* Default left margin for indentation */
+            background-color: #fff;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            font-size: 0.9em;
         }
         .ast-node-header {
-            /* font-size: 0.9em; from JS */
-            /* color: #666; from JS */
-            /* margin-bottom: 3px; from JS */
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 5px;
+            font-size: 0.95em;
         }
-        .ast-node-code {
-            /* white-space: pre-wrap; from JS on nodeDiv, pre tag handles this */
+        .ast-node-header .node-type { color: #007bff; }
+        .ast-node-header .node-name { color: #28a745; }
+        .ast-node-header .node-lines { color: #6c757d; font-size: 0.9em; }
+
+        .ast-node-code-container {
+            margin-top: 5px;
+            background-color: #272822; /* okaidia theme background */
+            border-radius: 4px;
+            padding: 10px;
+            overflow-x: auto;
+        }
+        /* Styling for <pre> and <code> tags that Prism.js will use */
+        pre[class*="language-"] {
+            margin: 0;
+            padding: 0 !important; /* Override default Prism padding if it conflicts */
+            background: transparent !important; /* Inherit from .ast-node-code-container */
+            font-size: 0.85em;
+            white-space: pre-wrap;   /* Wrap long lines */
+            word-break: break-all; /* Break words if they are too long */
+        }
+        code[class*="language-"] {
+            font-family: 'Courier New', Courier, monospace;
+            color: #f8f8f2; /* Default text color for okaidia */
         }
         .ast-tooltip {
-            /* Styles are in ast_viewer.js, could be moved to a shared CSS */
             position: absolute;
             visibility: hidden;
             background-color: black;
@@ -46,44 +58,34 @@
             border-radius: 3px;
             z-index: 1000;
             font-size: 0.8em;
-            pointer-events: none;
         }
+        #ast-visualization-container {
+            padding: 10px;
+            height: calc(100vh - 20px); /* Full viewport height minus padding */
+            overflow-y: auto;
+        }
+        .loading-message, .error-message {
+            text-align: center;
+            padding: 20px;
+            font-size: 1.1em;
+        }
+        .error-message { color: red; }
     </style>
 </head>
 <body>
-    <div id="ast-display-area">
-        Initializing AST Viewer...
+    <div id="ast-visualization-container">
+        <div class="loading-message">Loading AST data...</div>
     </div>
 
+    <!-- 2. Link to Prism.js Core -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"
+            integrity="sha512-9khQRAUBYEJDCDVP2yw3LRUQvjJ0Pjx0EShmaQjcHa6AXiOv6qHQu9lCAIR8O+/D8FtaCoJ2c0Tf9Xo7hYH01Q=="
+            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <!-- 3. Link to Autoloader (recommended for loading languages on demand) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"
+            integrity="sha512-SkmBfuA2hqjzEVpmnMt/LINrjvdMhQc66P29M3XHhLhP47s7R7GqRgyS+177u5s0W4rPjLrT5xM43gR/3CVSO_g=="
+            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <!-- 4. Link to our custom AST viewer script -->
     <script src="/static/js/ast_viewer.js"></script>
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            console.log('[AST HTML] DOMContentLoaded. Initializing viewer.');
-            const params = new URLSearchParams(window.location.search);
-            const repoId = params.get('repo_id');
-            const branchName = params.get('branch_name');
-            const filePath = params.get('file_path');
-
-            console.log(`[AST HTML] URL Params - Repo ID: ${repoId}, Branch: ${branchName}, File: ${filePath}`);
-
-            if (repoId && branchName && filePath) {
-                if (typeof window.initializeASTViewer === 'function') {
-                    window.initializeASTViewer({ repoId, branchName, filePath });
-                } else {
-                    console.error('[AST HTML] initializeASTViewer function not found. Ensure ast_viewer.js is loaded and function is global.');
-                    const displayArea = document.getElementById('ast-display-area');
-                    if (displayArea) {
-                        displayArea.innerHTML = "<p style='color:red;'>Error: AST viewer script (ast_viewer.js) or key function not loaded.</p>";
-                    }
-                }
-            } else {
-                console.warn('[AST HTML] Missing necessary URL parameters (repo_id, branch_name, file_path) to load AST.');
-                const displayArea = document.getElementById('ast-display-area');
-                if (displayArea) {
-                    displayArea.innerHTML = "<p style='color:orange;'>Warning: Missing parameters in URL to load AST data. This page should be loaded via an iframe with correct src URL.</p>";
-                }
-            }
-        });
-    </script>
 </body>
 </html>
