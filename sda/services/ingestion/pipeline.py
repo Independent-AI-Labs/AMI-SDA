@@ -432,9 +432,11 @@ class IntelligentIngestionService:
             try:
                 with self.db_manager.get_session("public") as direct_session:
                     from sqlalchemy import text
-                    sql_query = text("SELECT SUM(token_count) FROM public.dbcodechunk WHERE repository_id = :repo_id AND branch = :branch")
+                    # Corrected table name from "dbcodechunk" to AIConfig.VECTOR_COLLECTION_NAME (typically "code_chunks")
+                    table_name_for_direct_query = AIConfig.VECTOR_COLLECTION_NAME
+                    sql_query = text(f"SELECT SUM(token_count) FROM public.{table_name_for_direct_query} WHERE repository_id = :repo_id AND branch = :branch")
                     result = direct_session.execute(sql_query, {"repo_id": repo_id, "branch": branch}).scalar_one_or_none()
-                    logging.info(f"[DIRECT_DB_QUERY] Post-ingestion token sum for repo_id={repo_id}, branch='{branch}': {result}")
+                    logging.info(f"[DIRECT_DB_QUERY] Post-ingestion token sum from public.{table_name_for_direct_query} for repo_id={repo_id}, branch='{branch}': {result}")
             except Exception as db_query_e:
                 logging.error(f"[DIRECT_DB_QUERY] Error executing direct token sum query for repo_id={repo_id}, branch='{branch}': {db_query_e}", exc_info=True)
 

@@ -158,13 +158,21 @@ def _persist_files_for_schema(db_manager: DatabaseManager, schema_name: str, pay
 
     with db_manager.get_session(schema_name) as session:
         # Clear old File data for this specific branch in this partition schema
-        logging.info(f"[{schema_name}] Clearing old File data for repo_id {repo_id}, branch: {branch}")
-        session.query(File).filter(
+        logging.info(f"[{schema_name}] Clearing old File data for repo_id {repo_id}, branch: '{branch}'")
+        delete_op = session.query(File).filter(
             File.repository_id == repo_id,
             File.branch == branch
-        ).delete(synchronize_session=False)
-        logging.info(f"[{schema_name}] Finished clearing old File data for repo_id {repo_id}, branch: {branch}")
+        )
+        # For PostgreSQL, delete().rowcount is not directly available without an execute.
+        # Alternative: count before delete, or rely on dialect's implicit rowcount if available post-execute (less reliable)
+        # For simplicity and consistency, let's execute and then try to get rowcount if the dialect supports it.
+        # However, a more robust way is to count before and after if rowcount is not guaranteed.
+        # Given the context, we will perform the delete and then log the number of items we are about to insert.
+        # If the delete is effective, the subsequent count query (7.a.iii) will be accurate.
+        deleted_count = delete_op.delete(synchronize_session=False) # synchronize_session='fetch' could give rowcount for some backends
+        logging.info(f"[{schema_name}] Delete operation for old File data for repo_id {repo_id}, branch: '{branch}' completed. Rows affected (if available from dialect): {deleted_count}")
 
+        logging.info(f"[{schema_name}] Attempting to insert/update {len(file_mappings)} File records for repo_id {repo_id}, branch: '{branch}'.")
         stmt = insert(File).values(file_mappings)
         set_data = dict(
             content_hash=stmt.excluded.content_hash,
@@ -183,11 +191,21 @@ def _persist_files_for_schema(db_manager: DatabaseManager, schema_name: str, pay
 
         # Efficiently get IDs for the inserted/updated files
         # Assuming relative_path is unique per repo_id and branch
-        persisted_files = session.query(File.id, File.relative_path).filter(
+        persisted_files_query = session.query(File.id, File.relative_path).filter(
             File.repository_id == repo_id,
             File.branch == branch,
             File.relative_path.in_([fm["relative_path"] for fm in file_mappings])
-        ).all()
+        )
+        persisted_files = persisted_files_query.all()
+
+        # Log final count in this schema for this branch
+        session.flush() # Ensure operations are sent to DB before counting
+        final_count_in_schema = session.query(func.count(File.id)).filter(
+            File.repository_id == repo_id,
+            File.branch == branch
+        ).scalar()
+        logging.info(f"[{schema_name}] Post-persistence count for repo_id {repo_id}, branch '{branch}': {final_count_in_schema} files.")
+
         return {rel_p: fid for fid, rel_p in persisted_files}
 
 
