@@ -133,14 +133,27 @@ def _persist_chunks_for_schema(db_manager: DatabaseManager, schema_name: str, pa
         session.bulk_insert_mappings(DBCodeChunk, chunk_mappings)
         logging.info(f"[{schema_name}] Persisted {len(chunk_mappings)} DBCodeChunks for repo_id: {repo_id}, branch: {branch} (within schema {schema_name} context, but table is public)")
 
-        all_persisted_chunks = session.query(DBCodeChunk.id, DBCodeChunk.content, DBCodeChunk.token_count).filter(
-            DBCodeChunk.repository_id == repo_id, DBCodeChunk.branch == branch).all()
-        if not all_persisted_chunks: return None
+        # Query only the chunks belonging to files in the current partition
+        current_partition_file_ids = list(file_id_map.values())
+        if not current_partition_file_ids:
+            logging.warning(f"[{schema_name}] No file IDs found for this partition. Cannot create .jsonl file for embeddings.")
+            return None
+
+        all_persisted_chunks_for_this_partition = session.query(DBCodeChunk.id, DBCodeChunk.content, DBCodeChunk.token_count).filter(
+            DBCodeChunk.repository_id == repo_id,
+            DBCodeChunk.branch == branch,
+            DBCodeChunk.file_id.in_(current_partition_file_ids)
+        ).all()
+
+        if not all_persisted_chunks_for_this_partition:
+            logging.info(f"[{schema_name}] No chunks found for this partition's files (repo_id: {repo_id}, branch: {branch}) after insertion. Skipping .jsonl file.")
+            return None
+
         chunks_for_embedding_path = cache_path / f"embed_{schema_name}.jsonl"
         with open(chunks_for_embedding_path, 'w', encoding='utf-8') as f:
-            for chunk_id, content, token_count in all_persisted_chunks:
+            for chunk_id, content, token_count in all_persisted_chunks_for_this_partition:
                 f.write(json.dumps({"schema": schema_name, "id": chunk_id, "content": content, "token_count": token_count}) + '\n')
-        return str(chunks_for_embedding_path), len(all_persisted_chunks)
+        return str(chunks_for_embedding_path), len(all_persisted_chunks_for_this_partition)
 
 def _persist_dgraph_nodes(db_manager: DatabaseManager, repo_id: int, branch: str, dgraph_nodes_data: List[Dict], task_id: int, updater: StatusUpdater):
     if not dgraph_nodes_data:

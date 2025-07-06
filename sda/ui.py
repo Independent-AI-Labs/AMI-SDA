@@ -533,7 +533,7 @@ No active tasks.
                     status_modal_close_btn = gr.Button("Close")
 
             with gr.Tabs() as tabs:
-                with gr.TabItem("Repository & Agent", id=0):
+                with gr.TabItem(label="Repository & Agent", icon="🗂️", id=0):
                     with gr.Row():
                         with gr.Column(scale=1):
                             repo_dropdown = gr.Dropdown(label="Select Repository", interactive=True)
@@ -554,7 +554,7 @@ No active tasks.
                         additional_inputs=[repo_id_state, branch_state]
                     )
 
-                with gr.TabItem("Insights Dashboard", id=1):
+                with gr.TabItem(label="Insights Dashboard", icon="📊", id=1):
                     with gr.Row():
                         with gr.Column(scale=1): # This column will now hold the HTML stat cards
                             gr.Markdown('### <i class="fas fa-chart-bar mr-1.5"></i> Key Statistics') # Icons in Markdown are OK
@@ -575,7 +575,7 @@ No active tasks.
                             duplicate_code_df = gr.DataFrame(headers=["File A", "Lines A", "File B", "Lines B", "Similarity"], interactive=False,
                                                              max_height=400)
 
-                with gr.TabItem("Document Comprehension", id=2):
+                with gr.TabItem(label="Document Comprehension", icon="📄", id=2):
                     with gr.Row():
                         with gr.Column(scale=1): # File Explorer Column
                             gr.Markdown("#### File Explorer")
@@ -590,10 +590,10 @@ No active tasks.
                             )
                         with gr.Column(scale=3): # Content Column
                             with gr.Tabs() as content_tabs:
-                                with gr.TabItem("<i class='fas fa-atom mr-1'></i> Embedding", id="embedding_tab"):
+                                with gr.TabItem(label="Embedding", icon="🔗", id="embedding_tab"):
                                     embedding_html_viewer = gr.HTML(label="Node Embedding Visualization")
                                     # Placeholder for actual content
-                                with gr.TabItem("<i class='fas fa-exchange-alt mr-1'></i> Change Analysis", id="change_analysis_tab"):
+                                with gr.TabItem(label="Change Analysis", icon="⇆", id="change_analysis_tab"):
                                     with gr.Accordion("Analyze Current Changes for Selected File", open=True): # Title updated
                                         gr.Markdown("Analyzes uncommitted changes for the file selected in the File Explorer (vs. current branch HEAD).")
                                         # current_modified_files_dropdown_ca REMOVED from here
@@ -611,7 +611,7 @@ No active tasks.
 
                                     change_analysis_output = gr.Markdown("LLM analysis of changes will appear here.")
 
-                                with gr.TabItem("<i class='fas fa-code-compare mr-1'></i> Raw Diff", id="raw_diff_tab"):
+                                with gr.TabItem(label="Raw Diff", icon="↔️", id="raw_diff_tab"):
                                     no_changes_message_html = gr.HTML(
                                         "<div style='font-size: 1.5em; text-align: center; padding: 40px; color: #888;'>NO CHANGES</div>",
                                         visible=False,
@@ -1503,18 +1503,41 @@ No active tasks.
         lang_breakdown = stats.get('language_breakdown', {}) if stats else {}
         lang_fig = None
         if lang_breakdown:
-            lang_names = list(lang_breakdown.keys())
+            # Custom capitalization for specific languages, fallback to .capitalize()
+            lang_name_map = {
+                "javascript": "JavaScript", "typescript": "TypeScript",
+                "html": "HTML", "css": "CSS", "json": "JSON", "xml": "XML",
+                "markdown": "Markdown", "python": "Python", "java": "Java",
+                "csharp": "C#", "cpp": "C++", "c": "C", "go": "Go", "rust": "Rust",
+                "ruby": "Ruby", "php": "PHP", "swift": "Swift", "kotlin": "Kotlin",
+                "scala": "Scala", "shell": "Shell", "powershell": "PowerShell"
+                # Add more as needed
+            }
+
+            capitalized_lang_names = [lang_name_map.get(lang.lower(), lang.capitalize()) for lang in lang_breakdown.keys()]
             lang_counts = list(lang_breakdown.values())
 
             # Create a DataFrame for Plotly
-            lang_df_for_plot = pd.DataFrame({"Language": lang_names, "Files": lang_counts})
+            lang_df_for_plot = pd.DataFrame({"Language": capitalized_lang_names, "Files": lang_counts})
             lang_df_for_plot = lang_df_for_plot.sort_values(by="Files", ascending=False)
 
             lang_fig = px.pie(lang_df_for_plot, names="Language", values="Files",
                               hole=0.3) # Optional: for a donut chart effect, title removed
-            # Removed in-pie labels for better readability with many languages
-            lang_fig.update_traces(textinfo='none') # Removes text from slices
-            lang_fig.update_layout(showlegend=True) # Ensure legend is visible
+
+            # Styling hover labels
+            lang_fig.update_traces(
+                textinfo='none', # Removes text from slices
+                hoverinfo='label+percent+value', # Show Language, Percentage, and File Count on hover
+                hoverlabel=dict(
+                    bgcolor="rgba(50,50,50,0.8)", # Semi-transparent dark background for hover
+                    font_color="white",            # White font for hover text
+                    font_size=12
+                )
+            )
+            lang_fig.update_layout(
+                showlegend=True,
+                legend_title_text='Languages' # Optional: add a title to the legend
+            )
 
         return stats_html, lang_fig
 

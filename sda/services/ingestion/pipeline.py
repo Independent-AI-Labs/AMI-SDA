@@ -373,7 +373,12 @@ class IntelligentIngestionService:
                     with self.db_manager.get_session("public") as s:
                         s.add(usage_record)
 
-                    _framework_update_task(task.id, "Vector embedding complete.", 100.0, None, {'Total Cost': f"${cost:.4f}"})
+                    final_details = {
+                        'Total Cost': f"${cost:.4f}",
+                        'Tokens Processed': total_tokens, # Add final token count here
+                        'Chunks Processed': f"{processed_chunks}/{total_chunks}" # Add final chunk count
+                    }
+                    _framework_update_task(task.id, "Vector embedding complete.", 100.0, None, final_details)
                     _framework_complete_task(task.id, result={"message": f"Embedding complete. Total cost: ${cost:.4f}", 'tokens': total_tokens, 'cost': cost})
                 except Exception as e:
                     logging.error(f"Vector embedding task failed: {e}", exc_info=True)
