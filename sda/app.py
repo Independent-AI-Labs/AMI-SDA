@@ -15,6 +15,7 @@ import queue
 import requests # Added for Dgraph metrics
 import threading
 import traceback
+from collections import defaultdict # Import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
