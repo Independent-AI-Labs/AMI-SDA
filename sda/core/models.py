@@ -69,7 +69,7 @@ class File(Base):
     chunk_count: Mapped[int] = Column(Integer, default=0)
 
     ast_nodes: Mapped[List["ASTNode"]] = relationship("ASTNode", back_populates="file", cascade="all, delete-orphan")
-    chunks: Mapped[List["DBCodeChunk"]] = relationship("DBCodeChunk", back_populates="file", cascade="all, delete-orphan")
+    # chunks: Mapped[List["DBCodeChunk"]] = relationship("DBCodeChunk", back_populates="file", cascade="all, delete-orphan") # Removed problematic cross-schema relationship
     # code_blob_ref: Mapped[Optional["CodeBlob"]] = relationship("CodeBlob", back_populates="files_referencing") # If bi-directional needed
 
     __table_args__ = (UniqueConstraint('repository_id', 'branch', 'relative_path', name='_repo_branch_file_uc'),)
@@ -173,7 +173,7 @@ class DBCodeChunk(Base):
     created_at: Mapped[datetime] = Column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    file: Mapped["File"] = relationship("File", back_populates="chunks")
+    # file: Mapped["File"] = relationship("File", back_populates="chunks") # Removed problematic cross-schema relationship
 
 
 class Task(Base):
