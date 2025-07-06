@@ -18,7 +18,7 @@ logging.basicConfig(
 )
 
 # --- Core Configuration ---
-WIPE_SCHEMAS_ON_START = os.getenv("WIPE_SCHEMAS_ON_START", "False").lower() in ('true', '1', 't', True)
+WIPE_SCHEMAS_ON_START = os.getenv("WIPE_SCHEMAS_ON_START", "True").lower() in ('true', '1', 't', True)
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # --- Core Paths ---
