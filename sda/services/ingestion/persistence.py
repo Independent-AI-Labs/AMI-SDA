@@ -296,6 +296,35 @@ def _persist_chunks_for_schema(db_manager: DatabaseManager, schema_name: str, pa
                 "token_count": token_count
             })
 
+            # Update the token_count in the DBCodeChunk record itself
+            # This assumes 'session' is still active and the objects are part of it,
+            # or we need to fetch and update. Since we just queried them, let's try to update.
+            # A more robust way is to collect IDs and token_counts and do a bulk update.
+            # For simplicity here, let's do individual updates, but this could be slow.
+            # A better approach is to add token_count to the initial bulk_insert_mappings if possible,
+            # or collect (db_pk_id, token_count) pairs and do a bulk update after the loop.
+
+            # Collect (id, token_count) for bulk update
+            # This part will be moved outside the loop for a bulk update.
+            # For now, let's prepare data for a bulk update.
+            pass # Placeholder - actual update logic will be a bulk update after this loop.
+
+    # After iterating through all chunks and preparing jsonl:
+    updates_for_token_counts = []
+    for item in chunks_for_embedding_jsonl: # chunks_for_embedding_jsonl now contains schema, id, content, token_count
+        updates_for_token_counts.append({'id': item['id'], 'token_count': item['token_count']})
+
+    if updates_for_token_counts:
+        try:
+            # Re-use the 'public' session from above if possible, or get a new one.
+            # The session used for querying 'persisted_chunks_with_db_id' is still in scope.
+            session.bulk_update_mappings(DBCodeChunk, updates_for_token_counts)
+            logging.info(f"[public] Updated token_count for {len(updates_for_token_counts)} DBCodeChunks for repo_id: {repo_id}, branch: {branch}")
+        except Exception as e_token_update:
+            logging.error(f"Error bulk updating token_counts for DBCodeChunks: {e_token_update}", exc_info=True)
+            # Decide if this is a critical error to halt ingestion or just log. For stats, it's important.
+            # For now, we log and continue creating the jsonl file.
+
     if not chunks_for_embedding_jsonl:
         logging.info(f"[{schema_name}] No chunks prepared for embedding jsonl file for repo_id: {repo_id}, branch: {branch}")
         return None
