@@ -1188,12 +1188,15 @@ No active tasks.
             embedding_html_content = html_template.replace("{{repo_id}}", str(repo_id))
             embedding_html_content = embedding_html_content.replace("{{branch_name}}", branch)
             embedding_html_content = embedding_html_content.replace("{{file_path}}", relative_file_path)
-            embedding_html_content = embedding_html_content.replace("{{file_path_display}}", relative_file_path) # Used in "Loading AST for {{file_path_display}}..."
+            embedding_html_content = embedding_html_content.replace("{{file_path_display}}", relative_file_path)
+
+            # More direct logging of the content that will be passed to gr.update
+            logging.info(f"[handle_file_explorer_select] PRE-UPDATE embedding_html_content (repo_id: {repo_id}, branch: {branch}, file: {relative_file_path}). Preview: {embedding_html_content[:500]}...")
 
             embedding_html_update = gr.update(value=embedding_html_content)
-            logging.info(f"[handle_file_explorer_select] Generated HTML for AST viewer (repo_id: {repo_id}, branch: {branch}, file: {relative_file_path})")
         else:
             embedding_html_update = gr.update(value=f"<div style='padding:10px;'>AST visualization is not available for image: {relative_file_path}</div>")
+            logging.info(f"[handle_file_explorer_select] AST visualization skipped for image: {relative_file_path}")
         # --- End Embedding Tab Update ---
 
         # --- Raw Diff Tab Update ---
