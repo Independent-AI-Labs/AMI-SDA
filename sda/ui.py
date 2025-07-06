@@ -1395,6 +1395,7 @@ No active tasks.
     Loading AST for {file_path_for_display}...
 </div>
 <script>
+console.log('[AST Viz] SCRIPT TAG EXECUTION STARTED');
 (async function() {{
     // These values will be replaced by Gradio when rendering the HTML update
     const repoId = "{{repo_id}}";
