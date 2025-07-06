@@ -372,54 +372,67 @@ class CodeAnalysisFramework:
 
     def get_repository_stats(self, repo_id: int, branch: str) -> Dict[str, Any]:
         """Aggregates and returns statistics for a repository branch across all its schemas."""
+        logging.info(f"[get_repository_stats] Called for repo_id={repo_id}, branch='{branch}'")
         repo = self.get_repository_by_id(repo_id)
-        if not repo or not repo.db_schemas:
+
+        if not repo:
+            logging.warning(f"[get_repository_stats] Repository with ID {repo_id} not found. Returning empty stats.")
             return {}
 
-        def _get_file_stats_from_schema(schema_name: str) -> Dict[str, Any]:
-            # Fetches file counts, line counts, and language breakdown from a specific partition schema
-            schema_stats = {"file_count": 0, "total_lines": 0, "language_breakdown": {}}
+        if not repo.db_schemas:
+            logging.warning(f"[get_repository_stats] No db_schemas listed for repo_id={repo_id}, branch='{branch}'. Current repo.db_schemas: {repo.db_schemas}. Returning empty stats dictionary.")
+            return {"file_count": 0, "total_lines": 0, "total_tokens": 0, "language_breakdown": {}, "schema_count": 0}
+
+        logging.info(f"[get_repository_stats] Processing schemas for repo_id={repo_id}, branch='{branch}': {repo.db_schemas}")
+
+        # Helper function to get file data (id, line_count, language) from a single schema
+        def _get_raw_file_data_from_schema(schema_name: str) -> List[Tuple[int, int, str]]:
+            file_data_list = []
             with self.db_manager.get_session(schema_name) as session:
-                file_query_results = session.query(
-                    DBFile.language,
-                    func.count(DBFile.id),
-                    func.sum(DBFile.line_count)
+                files = session.query(
+                    DBFile.id,
+                    DBFile.line_count,
+                    DBFile.language
                 ).filter(
                     DBFile.repository_id == repo_id, DBFile.branch == branch
-                ).group_by(DBFile.language).all()
-
-                for lang, count, lines in file_query_results:
-                    schema_stats["file_count"] += count or 0
-                    schema_stats["total_lines"] += lines or 0
-                    if lang: # Language can be None
-                        schema_stats["language_breakdown"][lang] = schema_stats["language_breakdown"].get(lang, 0) + count
-            return schema_stats
+                ).all()
+                for f_id, lines, lang in files:
+                    file_data_list.append((f_id, lines or 0, lang))
+            logging.debug(f"[_get_raw_file_data_from_schema] Raw file data from schema '{schema_name}' for repo {repo_id}, branch '{branch}': {len(file_data_list)} files found.")
+            return file_data_list
 
         total_stats = {"file_count": 0, "total_lines": 0, "total_tokens": 0, "language_breakdown": defaultdict(int)}
+        unique_files_data: Dict[int, Tuple[int, str]] = {} # {file_id: (line_count, language)}
 
-        # Aggregate file-level stats from partition schemas
-        if repo.db_schemas:
-            with ThreadPoolExecutor(max_workers=len(repo.db_schemas) or 1) as executor:
-                futures = {executor.submit(_get_file_stats_from_schema, sch): sch for sch in repo.db_schemas}
-                for future in as_completed(futures):
-                    try:
-                        partition_stats = future.result()
-                        total_stats["file_count"] += partition_stats["file_count"]
-                        total_stats["total_lines"] += partition_stats["total_lines"]
-                        for lang, count in partition_stats["language_breakdown"].items():
-                            total_stats["language_breakdown"][lang] += count
-                    except Exception as e:
-                        logging.error(f"Failed to get file stats from schema {futures[future]}: {e}", exc_info=True)
+        # Aggregate unique file-level stats from partition schemas
+        for schema_name in repo.db_schemas: # Changed to sequential processing for clarity in this step
+            try:
+                raw_files_in_schema = _get_raw_file_data_from_schema(schema_name)
+                for f_id, lines, lang in raw_files_in_schema:
+                    if f_id not in unique_files_data:
+                        unique_files_data[f_id] = (lines, lang)
+            except Exception as e:
+                logging.error(f"[get_repository_stats] Failed to get raw file data from schema {schema_name}: {e}", exc_info=True)
 
-        # Get total_tokens from public.DBCodeChunk table
+        total_stats["file_count"] = len(unique_files_data)
+        for lines, lang in unique_files_data.values():
+            total_stats["total_lines"] += lines
+            if lang:
+                total_stats["language_breakdown"][lang] += 1
+
+        logging.info(f"[get_repository_stats] Calculated unique file stats for repo {repo_id}, branch '{branch}': files={total_stats['file_count']}, lines={total_stats['total_lines']}")
+
+        # Get total_tokens from public.DBCodeChunk table (DBCodeChunk is in public schema)
         with self.db_manager.get_session("public") as public_session:
             token_sum_result = public_session.query(func.sum(DBCodeChunk.token_count)).filter(
                 DBCodeChunk.repository_id == repo_id, DBCodeChunk.branch == branch
             ).scalar()
+            logging.debug(f"[get_repository_stats] Raw token_sum_result from public.DBCodeChunk for repo {repo_id}, branch '{branch}': {token_sum_result}")
             total_stats["total_tokens"] = token_sum_result or 0
 
-        total_stats["schema_count"] = len(repo.db_schemas) if repo.db_schemas else 0
-        total_stats["language_breakdown"] = dict(total_stats["language_breakdown"]) # Convert defaultdict to dict for output
+        total_stats["schema_count"] = len(repo.db_schemas)
+        total_stats["language_breakdown"] = dict(total_stats["language_breakdown"])
+        logging.info(f"[get_repository_stats] Final stats for repo_id={repo_id}, branch='{branch}': {total_stats}")
         return total_stats
 
     def get_cpg_analysis(self, repo_id: int, branch: str) -> Dict[str, Any]:
