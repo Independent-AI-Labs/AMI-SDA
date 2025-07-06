@@ -1401,13 +1401,27 @@ No active tasks.
     const branchName = "{{branch_name}}";
     const filePath = "{file_path_for_display}"; // Already correctly escaped by f-string for JS string literal
 
+    console.log("[AST Viz] Initializing script for file:", filePath);
+    console.log("[AST Viz] Raw injected repoId:", repoId, "branchName:", branchName);
+
     const container = document.getElementById('ast-visualization-container');
-    if (!repoId || !branchName || !filePath) {{
-        container.innerHTML = "<p>Error: Missing repository, branch, or file path to load AST data.</p>";
+    if (!repoId || repoId === "None" || repoId === "null" || !branchName || branchName === "None" || branchName === "null" || !filePath) {{
+        let errorMsg = "<p>Error: Missing or invalid data to load AST:<ul>";
+        if (!repoId || repoId === "None" || repoId === "null") errorMsg += "<li>Repository ID missing</li>";
+        if (!branchName || branchName === "None" || branchName === "null") errorMsg += "<li>Branch name missing</li>";
+        if (!filePath) errorMsg += "<li>File path missing</li>";
+        errorMsg += "</ul></p>";
+        console.error("[AST Viz] Validation failed:", errorMsg);
+        container.innerHTML = errorMsg;
         return;
     }}
 
+    // Ensure repoId is treated as a number if it's a numeric string, though API path uses it as string.
+    // The main concern is it not being "None" or "null" as a string.
+    console.log(`[AST Viz] Validated params - Repo ID: ${{repoId}}, Branch: ${{(branchName)}}, File: ${{filePath}}`);
+
     const apiUrl = `/api/repo/${{repoId}}/branch/${{encodeURIComponent(branchName)}}/file-ast?path=${{encodeURIComponent(filePath)}}`;
+    console.log("[AST Viz] Fetching AST data from:", apiUrl);
 
     try {{
         const response = await fetch(apiUrl);
