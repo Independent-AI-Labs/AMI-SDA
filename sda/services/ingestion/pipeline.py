@@ -401,8 +401,13 @@ class IntelligentIngestionService:
             _framework_update_task(parent_task_id, "Finalizing...", 95.0, None, None)
             with self.db_manager.get_session("public") as session:
                 repo = session.get(Repository, repo_id)
-                repo.db_schemas = list(all_schema_payloads.keys())
-                repo.active_branch, repo.last_scanned = branch, datetime.utcnow()
+                if repo:
+                    repo.db_schemas = list(all_schema_payloads.keys())
+                    repo.active_branch = branch
+                    repo.last_scanned = datetime.utcnow()
+                    session.commit()
+                else:
+                    logging.error(f"Finalize Ingestion: Repository with ID {repo_id} not found in public schema. Cannot update db_schemas.")
             _framework_complete_task(parent_task_id, result={"status": "completed"})
             logging.info("Repository ingestion completed successfully")
 
