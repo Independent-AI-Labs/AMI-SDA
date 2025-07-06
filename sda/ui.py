@@ -533,7 +533,7 @@ No active tasks.
                     status_modal_close_btn = gr.Button("Close")
 
             with gr.Tabs() as tabs:
-                with gr.TabItem(label="Repository & Agent", icon="🗂️", id=0):
+                with gr.TabItem(label="🗂️ Repository & Agent", id=0):
                     with gr.Row():
                         with gr.Column(scale=1):
                             repo_dropdown = gr.Dropdown(label="Select Repository", interactive=True)
@@ -554,7 +554,7 @@ No active tasks.
                         additional_inputs=[repo_id_state, branch_state]
                     )
 
-                with gr.TabItem(label="Insights Dashboard", icon="📊", id=1):
+                with gr.TabItem(label="📊 Insights Dashboard", id=1):
                     with gr.Row():
                         with gr.Column(scale=1): # This column will now hold the HTML stat cards
                             gr.Markdown('### <i class="fas fa-chart-bar mr-1.5"></i> Key Statistics') # Icons in Markdown are OK
@@ -575,7 +575,7 @@ No active tasks.
                             duplicate_code_df = gr.DataFrame(headers=["File A", "Lines A", "File B", "Lines B", "Similarity"], interactive=False,
                                                              max_height=400)
 
-                with gr.TabItem(label="Document Comprehension", icon="📄", id=2):
+                with gr.TabItem(label="📄 Document Comprehension", id=2):
                     with gr.Row():
                         with gr.Column(scale=1): # File Explorer Column
                             gr.Markdown("#### File Explorer")
@@ -590,10 +590,10 @@ No active tasks.
                             )
                         with gr.Column(scale=3): # Content Column
                             with gr.Tabs() as content_tabs:
-                                with gr.TabItem(label="Embedding", icon="🔗", id="embedding_tab"):
+                                with gr.TabItem(label="🔗 Embedding", id="embedding_tab"):
                                     embedding_html_viewer = gr.HTML(label="Node Embedding Visualization")
                                     # Placeholder for actual content
-                                with gr.TabItem(label="Change Analysis", icon="⇆", id="change_analysis_tab"):
+                                with gr.TabItem(label="⇆ Change Analysis", id="change_analysis_tab"):
                                     with gr.Accordion("Analyze Current Changes for Selected File", open=True): # Title updated
                                         gr.Markdown("Analyzes uncommitted changes for the file selected in the File Explorer (vs. current branch HEAD).")
                                         # current_modified_files_dropdown_ca REMOVED from here
@@ -611,7 +611,7 @@ No active tasks.
 
                                     change_analysis_output = gr.Markdown("LLM analysis of changes will appear here.")
 
-                                with gr.TabItem(label="Raw Diff", icon="↔️", id="raw_diff_tab"):
+                                with gr.TabItem(label="↔️ Raw Diff", id="raw_diff_tab"):
                                     no_changes_message_html = gr.HTML(
                                         "<div style='font-size: 1.5em; text-align: center; padding: 40px; color: #888;'>NO CHANGES</div>",
                                         visible=False,
