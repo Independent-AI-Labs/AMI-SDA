@@ -150,6 +150,10 @@ def _persist_files_for_schema(db_manager: DatabaseManager, schema_name: str, pay
 
     if not file_mappings: return {}
 
+    logging.info(f"[_persist_files_for_schema] Schema: '{schema_name}', Repo_id: {repo_id}, Branch: '{branch}'. Attempting to persist {len(file_mappings)} file records.")
+    if file_mappings:
+        logging.debug(f"[_persist_files_for_schema] Sample file_mappings for schema '{schema_name}' (first 2): {file_mappings[:2]}")
+
     with db_manager.get_session(schema_name) as session:
         stmt = insert(File).values(file_mappings)
         set_data = dict(
@@ -252,17 +256,31 @@ def _persist_chunks_for_schema(db_manager: DatabaseManager, schema_name: str, pa
 
     if not chunk_mappings_for_db: return None
 
+    logging.debug(f"[_persist_chunks_for_schema] For schema '{schema_name}', repo_id {repo_id}, branch '{branch}': Preparing to insert {len(chunk_mappings_for_db)} DBCodeChunk definitions. Sample (first 2): {chunk_mappings_for_db[:2]}")
+
     chunks_for_embedding_jsonl: List[Dict[str, Any]] = []
+    overall_success = True # Flag to track if all operations within the session block succeed
+
     with db_manager.get_session("public") as session: # DBCodeChunk is in public schema
-        # Clear old chunks for this repo/branch was done in pipeline.py
+        try:
+            # Perform bulk insert of chunk definitions
+            session.bulk_insert_mappings(DBCodeChunk, chunk_mappings_for_db)
+            logging.info(f"[public] Inserted {len(chunk_mappings_for_db)} DBCodeChunk definitions for repo_id: {repo_id}, branch: {branch}")
 
-        # Perform bulk insert of chunk definitions
-        # Assuming DBCodeChunk SQLAlchemy model matches db_chunk_map structure
-        session.bulk_insert_mappings(DBCodeChunk, chunk_mappings_for_db)
-        logging.info(f"[public] Inserted {len(chunk_mappings_for_db)} DBCodeChunk definitions for repo_id: {repo_id}, branch: {branch}")
+            # Fetch content for .jsonl file generation
+            blob_contents_cache: Dict[str, str] = {}
+        except Exception as e_insert_chunks:
+            logging.error(f"[public] CRITICAL: Error during bulk_insert_mappings for DBCodeChunk definitions. Repo_id: {repo_id}, branch: {branch}. Error: {e_insert_chunks}", exc_info=True)
+            overall_success = False # Mark failure
+            # Depending on desired behavior, may want to return or raise here.
+            # For now, if definitions fail, subsequent steps for this function will likely also fail or be meaningless.
+            # However, the function might still need to return a value or allow finally block in caller to run.
+            # Let's allow it to proceed to token updates, which will likely operate on an empty set if insert failed.
 
-        # Fetch content for .jsonl file generation
-        blob_contents_cache: Dict[str, str] = {}
+        if not overall_success: # If initial insert failed, skip further DB ops in this block
+            logging.error(f"[_persist_chunks_for_schema] Skipped token count updates and JSONL generation due to initial DBCodeChunk insert failure for repo {repo_id}, branch {branch}, schema context {schema_name}.")
+            return None # Or indicate error appropriately
+
         required_blob_hashes = list(chunks_grouped_by_blob_hash.keys())
         if required_blob_hashes:
             blobs_from_db = session.query(CodeBlob.blob_hash, CodeBlob.content).filter(CodeBlob.blob_hash.in_(required_blob_hashes)).all()
@@ -319,17 +337,22 @@ def _persist_chunks_for_schema(db_manager: DatabaseManager, schema_name: str, pa
         try:
             # The session used for querying 'persisted_chunks_with_db_id' is still in scope.
             # This session is for the 'public' schema.
+        logging.debug(f"[_persist_chunks_for_schema] Preparing to bulk update token_count for {len(updates_for_token_counts)} DBCodeChunks in 'public' schema. Repo_id: {repo_id}, branch: {branch}. Sample updates (first 2): {updates_for_token_counts[:2]}")
             session.bulk_update_mappings(DBCodeChunk, updates_for_token_counts)
             logging.info(f"[public] DBCodeChunk.token_count bulk_update_mappings call executed for {len(updates_for_token_counts)} items for repo_id: {repo_id}, branch: {branch}. Session will commit on block exit.")
             # Note: Actual commit happens when the `with db_manager.get_session("public") as session:` block exits successfully.
         except Exception as e_token_update:
             logging.error(f"[public] CRITICAL: Error during bulk_update_mappings for DBCodeChunk.token_count. Repo_id: {repo_id}, branch: {branch}. Error: {e_token_update}", exc_info=True)
+        overall_success = False # Mark failure due to token update error
             # This error could lead to token_counts not being persisted.
     else:
         logging.info(f"[public] No token count updates to perform for DBCodeChunks for repo_id: {repo_id}, branch: {branch}.")
 
+    if overall_success:
+        logging.info(f"[_persist_chunks_for_schema] All DB operations within 'public' session for repo {repo_id}, branch {branch} (schema context {schema_name}) completed without critical logged errors. Commit will be attempted by session manager.")
+
     if not chunks_for_embedding_jsonl:
-        logging.warning(f"[{schema_name if schema_name else 'unknown_schema'}] No chunks prepared for embedding jsonl file for repo_id: {repo_id}, branch: {branch} (this means updates_for_token_counts was also empty)")
+        logging.warning(f"[{schema_name if schema_name else 'unknown_schema'}] No chunks prepared for embedding jsonl file for repo_id: {repo_id}, branch: {branch} (this means updates_for_token_counts was also empty or initial insert failed)")
         return None
 
     jsonl_file_path = cache_path / f"embed_{schema_name}_{repo_id}_{branch.replace('/', '_')}.jsonl" # More specific name
