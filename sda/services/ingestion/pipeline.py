@@ -372,9 +372,21 @@ class IntelligentIngestionService:
                         except Exception as e_pers_final: logging.error(f"Final vector persistence task failed: {e_pers_final}")
 
                     cost_val = (total_calc_tokens / 1_000_000) * self.embedding_config.price_per_million_tokens
-                    usage = BillingUsage(model_name=self.embedding_config.model_name, provider=self.embedding_config.provider,
-                                         api_key_used_hash=hashlib.sha256(self.embedding_config.api_key.encode() if self.embedding_config.api_key else "".encode()).hexdigest(), # Handle None api_key
-                                         total_tokens=total_calc_tokens, cost=cost_val)
+
+                    # For local embedding models, there's no direct API key.
+                    # We'll use the provider name for the hash, or a placeholder if needed.
+                    # The EmbeddingConfig model doesn't have an 'api_key' attribute.
+                    api_key_source_for_hash = self.embedding_config.provider # e.g., "local"
+                    if not api_key_source_for_hash: # Should always have a provider
+                        api_key_source_for_hash = "unknown_embedding_provider"
+
+                    usage = BillingUsage(
+                        model_name=self.embedding_config.model_name,
+                        provider=self.embedding_config.provider,
+                        api_key_used_hash=hashlib.sha256(api_key_source_for_hash.encode()).hexdigest(),
+                        total_tokens=total_calc_tokens,
+                        cost=cost_val
+                    )
                     with self.db_manager.get_session("public") as s: s.add(usage)
 
                     final_dets = {'Total Cost': f"${cost_val:.4f}", 'Tokens Processed': total_calc_tokens, 'Chunks Processed': f"{processed_db_chunks}/{total_db_chunks}"}

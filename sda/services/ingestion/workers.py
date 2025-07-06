@@ -26,6 +26,7 @@ def _initialize_parsing_worker():
 
 def _persistent_embedding_worker(device: str, model_name: str, cache_folder: str, work_queue: mp.Queue, result_queue: mp.Queue, shutdown_event: mp.Event):
     import torch, gc
+    import numpy as np # Import numpy for NaN checking
     from sentence_transformers import SentenceTransformer
     # Ensure multiprocessing is imported if not already (it was imported in original ingestion.py)
     # import multiprocessing as mp # mp is already an alias from line 4
@@ -55,9 +56,18 @@ def _persistent_embedding_worker(device: str, model_name: str, cache_folder: str
             texts_to_embed = [content for _, _, content, _ in chunk_batch]
             if not texts_to_embed: continue
 
-            embeddings = worker_model.encode(texts_to_embed, show_progress_bar=False, convert_to_tensor=False)
+            embeddings_np = worker_model.encode(texts_to_embed, show_progress_bar=False, convert_to_tensor=False)
+
+            # Handle potential NaN values in embeddings
+            sanitized_embeddings = []
+            for emb_array in embeddings_np:
+                if np.isnan(emb_array).any():
+                    logging.warning(f"{log_prefix} Found NaN in embedding, replacing with zeros. Original embedding (first 5 vals): {emb_array[:5]}")
+                    emb_array[np.isnan(emb_array)] = 0.0
+                sanitized_embeddings.append(emb_array.tolist())
+
             # Ensure results match the structure expected by _persist_vector_batch
-            results = [(d[0], d[1], emb.tolist(), d[3]) for d, emb in zip(chunk_batch, embeddings)]
+            results = [(d[0], d[1], emb_list, d[3]) for d, emb_list in zip(chunk_batch, sanitized_embeddings)]
             result_queue.put(("result", (pid, results)))
         except queue.Empty:
             continue
