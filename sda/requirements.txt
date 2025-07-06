@@ -13,16 +13,20 @@ tree-sitter-python==0.23.6
 tree-sitter-java==0.23.5
 tree-sitter-javascript==0.23.1
 tree-sitter-typescript==0.23.2
+tree-sitter-bash==0.23.3
+tree-sitter-markdown==0.3.2
+tree-sitter-html==0.23.2
+tree-sitter-css==0.23.2
 psycopg2==2.9.10
 pgvector==0.4.1
 pyahocorasick==1.4.4
 pydgraph==24.2.1
-requests
+requests==2.32.4
 
 # For HuggingFace embeddings (CPU is default). Will be replaced by platform-specific implementations.
 #torch
 #transformers
 #sentence-transformers
 accelerate==1.8.1
-Jinja2>=3.0 # For HTML templating in UI
-plotly>=5.0 # For advanced charting
+Jinja2==3.1.6 # For HTML templating in UI
+plotly==6.0.1 # For advanced charting

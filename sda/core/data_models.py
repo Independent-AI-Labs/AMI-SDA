@@ -8,9 +8,14 @@ class DuplicatePair(BaseModel):
     chunk_b_id: str
     file_a: str
     file_b: str
-    lines_a: str
-    lines_b: str
+    lines_a: str # "start-end"
+    lines_b: str # "start-end"
     similarity: float
+    content_a_snippet: Optional[str] = None
+    content_b_snippet: Optional[str] = None
+    chunk_a_token_count: Optional[int] = None
+    chunk_b_token_count: Optional[int] = None
+    # Consider adding chunk_a_line_count, chunk_b_line_count if different from lines_a/b range
 
 # Pydantic models for API responses, especially for ORM conversion.
 

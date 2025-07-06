@@ -11,7 +11,7 @@
                 {% else %}<i class="fas fa-times-circle text-red-500 text-sm"></i>
                 {% endif %}
             </span>
-            <span id="{{ sub_task_base_id }}-name" class="text-xs font-semibold text-gray-700 dark:text-gray-200 truncate" title="{{ task.name }}">{{ task.name }}</span>
+            <span id="{{ sub_task_base_id }}-name" class="text-xs font-semibold text-gray-700 dark:text-gray-200 truncate" title="{{ display_task_name }}">{{ display_task_name }}</span>
         </div>
         <span id="{{ sub_task_base_id }}-status-badge" class="text-xxs px-1.5 py-0.5 rounded-full whitespace-nowrap flex-shrink-0
             {% if task.status == 'running' %}bg-blue-100 text-blue-700 dark:bg-blue-600 dark:text-blue-100
