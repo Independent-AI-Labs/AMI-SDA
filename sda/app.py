@@ -413,10 +413,10 @@ class CodeAnalysisFramework:
 
         # Get total_tokens from public.DBCodeChunk table
         with self.db_manager.get_session("public") as public_session:
-            token_sum_result = public_session.query(func.sum(DBCodeChunk.token_count)).filter(
+            token_sum_result = public_session.query(func.sum(func.coalesce(DBCodeChunk.token_count, 0))).filter(
                 DBCodeChunk.repository_id == repo_id, DBCodeChunk.branch == branch
             ).scalar()
-            total_stats["total_tokens"] = token_sum_result or 0
+            total_stats["total_tokens"] = token_sum_result or 0 # Coalesce in sum handles NULLs, direct result should be numeric or None if no rows
 
         total_stats["schema_count"] = len(repo.db_schemas) if repo.db_schemas else 0
         total_stats["language_breakdown"] = dict(total_stats["language_breakdown"]) # Convert defaultdict to dict for output

@@ -151,6 +151,14 @@ def _persist_files_for_schema(db_manager: DatabaseManager, schema_name: str, pay
     if not file_mappings: return {}
 
     with db_manager.get_session(schema_name) as session:
+        # Clear old File data for this specific branch in this partition schema
+        logging.info(f"[{schema_name}] Clearing old File data for repo_id {repo_id}, branch: {branch}")
+        session.query(File).filter(
+            File.repository_id == repo_id,
+            File.branch == branch
+        ).delete(synchronize_session=False)
+        logging.info(f"[{schema_name}] Finished clearing old File data for repo_id {repo_id}, branch: {branch}")
+
         stmt = insert(File).values(file_mappings)
         set_data = dict(
             content_hash=stmt.excluded.content_hash,
