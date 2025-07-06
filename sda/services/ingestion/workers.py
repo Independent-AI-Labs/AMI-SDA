@@ -83,7 +83,9 @@ def _pass1_parse_files_worker(file_batch: List[str], repo_root_str: str, schema_
 
     for file_path_str in file_batch:
         abs_path = Path(file_path_str)
-        relative_path_str = str(abs_path.relative_to(repo_root_str))
+        # Ensure relative paths are stored in POSIX format (forward slashes)
+        # for cross-platform consistency in the database.
+        relative_path_str = abs_path.relative_to(repo_root_str).as_posix()
         try:
             content = abs_path.read_text(encoding='utf-8', errors='ignore')
             # Assuming TransientNode and TransientChunk are Pydantic models now
