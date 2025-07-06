@@ -427,6 +427,17 @@ class IntelligentIngestionService:
                     # session.commit() # Done by context manager
                 else:
                     logging.error(f"Finalize Ingestion: Repository with ID {repo_id} not found. Cannot update.")
+
+            # Direct DB query for token sum verification post-ingestion
+            try:
+                with self.db_manager.get_session("public") as direct_session:
+                    from sqlalchemy import text
+                    sql_query = text("SELECT SUM(token_count) FROM public.dbcodechunk WHERE repository_id = :repo_id AND branch = :branch")
+                    result = direct_session.execute(sql_query, {"repo_id": repo_id, "branch": branch}).scalar_one_or_none()
+                    logging.info(f"[DIRECT_DB_QUERY] Post-ingestion token sum for repo_id={repo_id}, branch='{branch}': {result}")
+            except Exception as db_query_e:
+                logging.error(f"[DIRECT_DB_QUERY] Error executing direct token sum query for repo_id={repo_id}, branch='{branch}': {db_query_e}", exc_info=True)
+
             _framework_complete_task(parent_task_id, result={"status": "completed"})
             logging.info(f"Repository ingestion completed successfully for repo_id {repo_id}, branch {branch}")
 
