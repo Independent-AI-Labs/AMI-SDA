@@ -278,111 +278,118 @@ def _batch_process_pdfs_worker(
             logging.info(f"{log_prefix_batch} Created temp directory for symlinks: {batch_input_temp_dir}")
 
             # Create symlinks in the temporary directory
-        valid_original_paths_for_mineru: List[Path] = []
-        for original_pdf_path_obj in original_pdf_paths_as_path_obj:
-            try:
-                symlink_path = batch_input_temp_dir / original_pdf_path_obj.name
-                symlink_path.symlink_to(original_pdf_path_obj)
-                valid_original_paths_for_mineru.append(original_pdf_path_obj)
-            except Exception as e_symlink:
-                logging.error(f"{log_prefix_batch} Failed to create symlink for {original_pdf_path_obj.name}: {e_symlink}", exc_info=True)
-                # Add error result for this specific file immediately
-                # Need to calculate relative_path here if possible, or use absolute path
+            valid_original_paths_for_mineru: List[Path] = []
+            for original_pdf_path_obj in original_pdf_paths_as_path_obj:
                 try:
-                    failed_relative_path = original_pdf_path_obj.relative_to(repo_root_str).as_posix()
-                except ValueError: # If original path is not under repo_root_str (should not happen with absolute paths)
-                    failed_relative_path = str(original_pdf_path_obj)
+                    symlink_path = batch_input_temp_dir / original_pdf_path_obj.name
+                    symlink_path.symlink_to(original_pdf_path_obj)
+                    valid_original_paths_for_mineru.append(original_pdf_path_obj)
+                except Exception as e_symlink:
+                    logging.error(f"{log_prefix_batch} Failed to create symlink for {original_pdf_path_obj.name}: {e_symlink}", exc_info=True)
+                    try:
+                        failed_relative_path = original_pdf_path_obj.relative_to(repo_root_str).as_posix()
+                    except ValueError:
+                        failed_relative_path = str(original_pdf_path_obj)
+                    batch_results.append({
+                        "file": failed_relative_path, "status": "error_symlinking",
+                        "path": str(original_pdf_path_obj), "error_message": str(e_symlink)
+                    })
+
+            if not valid_original_paths_for_mineru:
+                logging.warning(f"{log_prefix_batch} No valid PDFs to process after symlinking failures.")
+                # Still need to return results in the expected format from the function
+                # The logging.info and return statement after the 'try' block will handle this.
+                # So, we just let it flow to the end of the 'try' block.
+            else:
+                logging.info(f"{log_prefix_batch} Calling MinerU for directory: {batch_input_temp_dir} containing {len(valid_original_paths_for_mineru)} symlinks.")
+                try:
+                    parsed_results_list, all_image_blobs = asyncio.run(
+                        pdf_parser_instance.parse_pdfs_from_directory_input(
+                            original_pdf_paths=valid_original_paths_for_mineru,
+                            mineru_input_dir=batch_input_temp_dir,
+                            env_override=env_for_mineru
+                        )
+                    )
+                    logging.info(f"{log_prefix_batch} MinerU call finished. Processing {len(parsed_results_list)} results. Found {len(all_image_blobs)} unique images.")
+
+                    for file_result in parsed_results_list:
+                        original_pdf_path_str = file_result["original_path"]
+                        parsed_document_data = file_result["document"]
+                        status = file_result["status"]
+                        error_msg = file_result["error_message"]
+                        current_pdf_path_obj = Path(original_pdf_path_str)
+                        pdf_filename_for_log = current_pdf_path_obj.name
+                        log_prefix_file = f"[PDFBatchWorker PID:{pid} BatchID:{batch_id} File:{pdf_filename_for_log}]"
+
+                        try:
+                            relative_path = current_pdf_path_obj.relative_to(repo_root_str).as_posix()
+                        except ValueError as ve_relpath:
+                            logging.error(f"{log_prefix_file} Error calculating relative path for '{original_pdf_path_str}' against root '{repo_root_str}': {ve_relpath}. Skipping save.")
+                            batch_results.append({
+                                "file": original_pdf_path_str,
+                                "status": "error_path_calculation",
+                                "path": original_pdf_path_str,
+                                "error_message": str(ve_relpath)
+                            })
+                            continue
+
+                        if status == "success" and parsed_document_data:
+                            logging.info(f"{log_prefix_file} Saving parsed data to database.")
+                            doc_uuid = db_manager_instance.save_pdf_document(
+                                parsed_document_data=parsed_document_data,
+                                image_blobs_data=all_image_blobs,
+                                repository_id=repo_id,
+                                branch_name=branch_name,
+                                relative_path=relative_path
+                            )
+                            if doc_uuid:
+                                logging.info(f"{log_prefix_file} Successfully processed and saved. PDF Document UUID: {doc_uuid}")
+                                batch_results.append({"file": relative_path, "status": "success", "uuid": doc_uuid, "path": original_pdf_path_str})
+                            else:
+                                logging.error(f"{log_prefix_file} Failed to save PDF document to database (doc_uuid is None).")
+                                batch_results.append({"file": relative_path, "status": "db_save_failed_no_uuid", "path": original_pdf_path_str, "error_message": "DB save returned no UUID."})
+                        else:
+                            logging.warning(f"{log_prefix_file} Processing failed for this file. Status: {status}. Error: {error_msg}")
+                            batch_results.append({
+                                "file": relative_path, "status": status,
+                                "path": original_pdf_path_str, "error_message": error_msg
+                            })
+                except Exception as e_batch_proc:
+                    logging.error(f"{log_prefix_batch} Critical error during batch PDF processing (inside MinerU/DB operations): {e_batch_proc}", exc_info=True)
+                    for p_path_obj in valid_original_paths_for_mineru:
+                        is_already_errored = any(res.get("path") == str(p_path_obj) and res.get("status") != "success" for res in batch_results)
+                        if not is_already_errored:
+                            try:
+                                err_relative_path = p_path_obj.relative_to(repo_root_str).as_posix()
+                            except ValueError:
+                                err_relative_path = str(p_path_obj)
+                            batch_results.append({"file": err_relative_path, "status": "error_batch_execution", "path": str(p_path_obj), "error_message": str(e_batch_proc)})
+        # The 'with' statement for TemporaryDirectory ensures cleanup.
+        # All operations that depend on the temp_dir_str (like symlinking and MinerU call)
+        # must be within this 'with' block.
+        # The outer 'try' doesn't need its own 'finally' for this specific cleanup.
+        # However, a 'try' block must have an 'except' or 'finally'.
+        # Adding a catch-all 'except' for the outer 'try' to log any unexpected errors
+        # during temp dir setup or if other logic was mistakenly placed outside the 'with' but inside 'try'.
+    except Exception as e_outer:
+        logging.error(f"{log_prefix_batch} Unexpected error in outer try block of PDF batch processing: {e_outer}", exc_info=True)
+        # Populate batch_results with errors for all input PDFs if this outer error occurs,
+        # as individual processing likely didn't even start or complete.
+        for pdf_path_str_original_input in pdf_batch_paths: # Iterate over the original input list
+            # Check if already handled (e.g. by inner exceptions, though unlikely if outer fails early)
+            is_already_errored = any(res.get("path") == pdf_path_str_original_input and res.get("status") != "success" for res in batch_results)
+            if not is_already_errored:
+                try:
+                    # Try to make it relative for consistency, fallback to original path string
+                    err_relative_path = Path(pdf_path_str_original_input).relative_to(repo_root_str).as_posix()
+                except ValueError:
+                    err_relative_path = pdf_path_str_original_input
                 batch_results.append({
-                    "file": failed_relative_path, "status": "error_symlinking",
-                    "path": str(original_pdf_path_obj), "error_message": str(e_symlink)
+                    "file": err_relative_path,
+                    "status": "error_outer_scope",
+                    "path": pdf_path_str_original_input,
+                    "error_message": str(e_outer)
                 })
 
-        if not valid_original_paths_for_mineru:
-            logging.warning(f"{log_prefix_batch} No valid PDFs to process after symlinking failures.")
-            return {"worker_id": f"pdf_batch_worker_{pid}_{batch_id}", "results": batch_results}
-
-        logging.info(f"{log_prefix_batch} Calling MinerU for directory: {batch_input_temp_dir} containing {len(valid_original_paths_for_mineru)} symlinks.")
-
-        try:
-            # Call the new batch parsing method in PDFParsingService
-            # It expects list of original Path objects (absolute) and the Path to temp dir of symlinks
-            parsed_results_list, all_image_blobs = asyncio.run(
-                pdf_parser_instance.parse_pdfs_from_directory_input(
-                    original_pdf_paths=valid_original_paths_for_mineru,
-                    mineru_input_dir=batch_input_temp_dir,
-                    env_override=env_for_mineru # Pass the prepared environment
-                )
-            )
-
-            logging.info(f"{log_prefix_batch} MinerU call finished. Processing {len(parsed_results_list)} results. Found {len(all_image_blobs)} unique images.")
-
-            # Consolidate image blobs: db_manager_instance.save_pdf_document expects a list of PDFImageBlob objects.
-            # The new parser service method already returns a consolidated list of unique image blobs.
-
-            for file_result in parsed_results_list: # file_result is a Dict
-                original_pdf_path_str = file_result["original_path"]
-                parsed_document_data = file_result["document"]
-                status = file_result["status"]
-                error_msg = file_result["error_message"]
-
-                current_pdf_path_obj = Path(original_pdf_path_str)
-                pdf_filename_for_log = current_pdf_path_obj.name
-                log_prefix_file = f"[PDFBatchWorker PID:{pid} BatchID:{batch_id} File:{pdf_filename_for_log}]"
-
-                try:
-                    relative_path = current_pdf_path_obj.relative_to(repo_root_str).as_posix()
-                except ValueError as ve_relpath:
-                    logging.error(f"{log_prefix_file} Error calculating relative path for '{original_pdf_path_str}' against root '{repo_root_str}': {ve_relpath}. Skipping save.")
-                    batch_results.append({
-                        "file": original_pdf_path_str, # Use original_path if relative_path fails
-                        "status": "error_path_calculation",
-                        "path": original_pdf_path_str,
-                        "error_message": str(ve_relpath)
-                    })
-                    continue
-
-                if status == "success" and parsed_document_data:
-                    logging.info(f"{log_prefix_file} Saving parsed data to database.")
-                    doc_uuid = db_manager_instance.save_pdf_document(
-                        parsed_document_data=parsed_document_data,
-                        image_blobs_data=all_image_blobs,
-                        repository_id=repo_id,
-                        branch_name=branch_name,
-                        relative_path=relative_path
-                    )
-                    if doc_uuid:
-                        logging.info(f"{log_prefix_file} Successfully processed and saved. PDF Document UUID: {doc_uuid}")
-                        batch_results.append({"file": relative_path, "status": "success", "uuid": doc_uuid, "path": original_pdf_path_str})
-                    else:
-                        logging.error(f"{log_prefix_file} Failed to save PDF document to database (doc_uuid is None).")
-                        batch_results.append({"file": relative_path, "status": "db_save_failed_no_uuid", "path": original_pdf_path_str, "error_message": "DB save returned no UUID."})
-                else:
-                    # Handle various failure statuses from parsing service
-                    logging.warning(f"{log_prefix_file} Processing failed for this file. Status: {status}. Error: {error_msg}")
-                    batch_results.append({
-                        "file": relative_path,
-                        "status": status, # e.g., "json_not_found", "json_parse_error"
-                        "path": original_pdf_path_str,
-                        "error_message": error_msg
-                    })
-
-        except Exception as e_batch_proc:
-            logging.error(f"{log_prefix_batch} Critical error during batch PDF processing: {e_batch_proc}", exc_info=True)
-            # This is an error for the whole batch operation. We might not have individual file results.
-            # Add a generic error for all files that were attempted in this batch if not already individually handled.
-            for p_path_obj in valid_original_paths_for_mineru:
-                # Avoid adding duplicate errors if some were already logged (e.g. symlink errors)
-                # A simple check:
-                is_already_errored = any(res.get("path") == str(p_path_obj) and res.get("status") != "success" for res in batch_results)
-                if not is_already_errored:
-                    try:
-                        err_relative_path = p_path_obj.relative_to(repo_root_str).as_posix()
-                    except ValueError:
-                        err_relative_path = str(p_path_obj)
-                    batch_results.append({"file": err_relative_path, "status": "error_batch_execution", "path": str(p_path_obj), "error_message": str(e_batch_proc)})
-    # No 'finally' block needed here for os.environ manipulation anymore,
-    # as env_override is passed directly to the subprocess call.
-
-    # TemporaryDirectory is cleaned up automatically here by the 'with' statement.
     logging.info(f"{log_prefix_batch} Finished processing batch. Results count: {len(batch_results)}.")
     return {"worker_id": f"pdf_batch_worker_{pid}_{batch_id}", "results": batch_results}
