@@ -77,10 +77,17 @@ def _persistent_embedding_worker(device: str, model_name: str, cache_folder: str
             result_queue.put(("error", str(e))) # Communicate error back
         finally:
             # Clean up to free GPU memory
-            if 'embeddings' in locals(): del embeddings
+            if 'embeddings_np' in locals(): del embeddings_np # Corrected variable name
             if 'texts_to_embed' in locals(): del texts_to_embed
+            # No need to delete 'results' or 'sanitized_embeddings' as they are constructed from embeddings_np or are small
             gc.collect()
-            if torch.cuda.is_available(): torch.cuda.empty_cache()
+            # Conditional import for torch.xpu if that's the target, or stick to cuda
+            # For now, assuming CUDA or general GPU cleanup if torch.cuda is the indicator
+            if device.startswith("cuda") and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            elif device.startswith("xpu") and hasattr(torch, 'xpu') and torch.xpu.is_available():
+                torch.xpu.empty_cache()
+
 
     logging.info(f"{log_prefix} Shutting down.")
 

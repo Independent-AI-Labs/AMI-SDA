@@ -30,24 +30,34 @@ def get_available_xpu_details() -> List[Dict[str, Any]]:
                 device_props = torch.xpu.get_device_properties(i)
                 device_info = {
                     "id_str": f"level_zero:{i}", # Format for ONEAPI_DEVICE_SELECTOR
-                    "name": device_props.name,
-                    "major": device_props.major,
-                    "minor": device_props.minor,
-                    "total_memory_gb": round(device_props.total_memory / (1024**3), 2)
+                    "name": getattr(device_props, 'name', 'Unknown XPU Name'),
+                    "total_memory_gb": round(getattr(device_props, 'total_memory', 0) / (1024**3), 2)
                 }
+                # Safely try to get major and minor, common for CUDA, may not exist for XPU
+                major = getattr(device_props, 'major', None)
+                minor = getattr(device_props, 'minor', None)
+                if major is not None:
+                    device_info["major"] = major
+                if minor is not None:
+                    device_info["minor"] = minor
+
                 xpu_devices.append(device_info)
-                logging.info(f"  - Device {i}: {device_props.name}, Mem: {device_info['total_memory_gb']}GB")
+                log_message = f"  - Device {i}: {device_info['name']}, Mem: {device_info['total_memory_gb']}GB"
+                if major is not None and minor is not None:
+                    log_message += f", Compute Capability: {major}.{minor}"
+                logging.info(log_message)
+
             except Exception as e_prop:
-                logging.error(f"Could not get properties for XPU device {i}: {e_prop}")
-                # Add a placeholder or skip this device
+                logging.error(f"Could not get properties for XPU device {i}: {e_prop}", exc_info=True)
+                # Add a placeholder with the error
                 xpu_devices.append({
                     "id_str": f"level_zero:{i}",
                     "name": f"Intel XPU {i} (properties error)",
-                    "error": str(e_prop)
+                    "error": str(e_prop) # Keep the error message for diagnostics
                 })
 
     except ImportError:
-        logging.info("PyTorch or torch.xpu is not available. Intel XPU support disabled.")
+        logging.info("PyTorch or intel_extension_for_pytorch is not available. Intel XPU support disabled.")
     except Exception as e:
         logging.error(f"An error occurred while checking for XPU devices: {e}", exc_info=True)
 
