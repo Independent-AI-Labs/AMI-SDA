@@ -2,6 +2,7 @@
 
 import json
 import logging
+import tempfile # Added missing import
 import os
 import multiprocessing as mp
 import queue
