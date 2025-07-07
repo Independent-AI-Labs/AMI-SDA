@@ -23,6 +23,7 @@ pyahocorasick==1.4.4
 pydgraph==24.2.1
 requests==2.32.4
 ftfy
+Pillow>=9.0.0 # For image processing (PNG conversion, resizing)
 
 # For HuggingFace embeddings (CPU is default). Will be replaced by platform-specific implementations.
 #torch
