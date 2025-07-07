@@ -220,3 +220,58 @@ def _pass1_parse_files_worker(
         'calls_file': str(calls_file),
         'code_blob_data_list': code_blob_data_list
     }
+
+def _process_single_pdf_worker(
+    absolute_pdf_path: str,
+    repo_id: int,
+    branch_name: str,
+    relative_path: str,
+    db_url: str,
+    mineru_path: str
+):
+    """
+    Worker function to process a single PDF file.
+    Initializes its own PDFParsingService and DatabaseManager.
+    """
+    pid = os.getpid()
+    log_prefix = f"[PDFWorker PID:{pid} File:{relative_path}]"
+    logging.info(f"{log_prefix} Starting processing.")
+
+    # Ensure services are imported here if not at module level, or ensure module level is fine for MP
+    from sda.services.pdf_parser import PDFParsingService
+    from sda.core.db_management import DatabaseManager
+    import asyncio
+
+    try:
+        db_manager_instance = DatabaseManager(db_url=db_url, is_worker=True)
+        pdf_parser_instance = PDFParsingService(mineru_path=mineru_path)
+
+        logging.info(f"{log_prefix} Parsing PDF...")
+        # parse_pdf is async. Run it in an event loop.
+        parsed_document_data, image_blobs_data = asyncio.run(
+            pdf_parser_instance.parse_pdf(absolute_pdf_path)
+        )
+
+        if not parsed_document_data:
+            logging.warning(f"{log_prefix} PDF parsing returned no data for {absolute_pdf_path}.")
+            return {"status": "parsing_returned_no_data", "file": relative_path, "path": absolute_pdf_path}
+
+        logging.info(f"{log_prefix} Saving parsed PDF data to database for {absolute_pdf_path}...")
+        doc_uuid = db_manager_instance.save_pdf_document(
+            parsed_document_data=parsed_document_data,
+            image_blobs_data=image_blobs_data,
+            repository_id=repo_id,
+            branch_name=branch_name,
+            relative_path=relative_path
+        )
+
+        if doc_uuid:
+            logging.info(f"{log_prefix} Successfully processed and saved {absolute_pdf_path}. PDF Document UUID: {doc_uuid}")
+            return {"status": "success", "file": relative_path, "uuid": doc_uuid, "path": absolute_pdf_path}
+        else:
+            logging.error(f"{log_prefix} Failed to save PDF document {absolute_pdf_path} to database (doc_uuid is None).")
+            return {"status": "db_save_failed_no_uuid", "file": relative_path, "path": absolute_pdf_path}
+
+    except Exception as e:
+        logging.error(f"{log_prefix} Error processing PDF {absolute_pdf_path}: {e}", exc_info=True)
+        return {"status": "error", "file": relative_path, "path": absolute_pdf_path, "error_message": str(e)}

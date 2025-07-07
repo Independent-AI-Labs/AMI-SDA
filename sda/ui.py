@@ -1184,8 +1184,8 @@ No active tasks.
         if is_pdf:
             logging.info(f"PDF file selected: {relative_file_path}. Attempting to get/process for viewing.")
             try:
-                pdf_doc_uuid = await self.framework.get_or_process_pdf_document(
-                    absolute_pdf_path=str(absolute_file_path_resolved),
+                # Call the refactored method
+                pdf_doc_uuid = await self.framework.get_pdf_document_uuid_for_repo_file(
                     repo_id=repo_id,
                     branch_name=branch,
                     relative_path=relative_file_path

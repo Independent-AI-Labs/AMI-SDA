@@ -27,8 +27,10 @@ from sda.services.partitioning import SmartPartitioningService
 from sda.utils.task_executor import TaskExecutor
 
 # Imports from the new ingestion submodules
-from .workers import _initialize_parsing_worker, _persistent_embedding_worker, _pass1_parse_files_worker
+from .workers import _initialize_parsing_worker, _persistent_embedding_worker, _pass1_parse_files_worker, _process_single_pdf_worker # Added _process_single_pdf_worker
 # _chunker_instance is defined and used within workers.py
+
+from sda.services.pdf_parser import PDFParsingService # For type hinting
 
 from .persistence import (
     _aggregate_postgres_payloads, _persist_files_for_schema, _persist_nodes_for_schema,
@@ -45,14 +47,16 @@ StatusUpdater = Callable[[int, str, float, Optional[str], Optional[Dict[str, Any
 
 class IntelligentIngestionService:
     def __init__(self, db_manager: DatabaseManager, git_service: GitService,
-                 task_executor: TaskExecutor, partitioning_service: SmartPartitioningService):
+                 task_executor: TaskExecutor, partitioning_service: SmartPartitioningService,
+                 pdf_parsing_service: PDFParsingService): # Added pdf_parsing_service
         self.db_manager = db_manager
         self.git_service = git_service
         self.task_executor = task_executor
         self.partitioning_service = partitioning_service
+        self.pdf_parsing_service = pdf_parsing_service # Store it
         self.tokenizer = tiktoken.get_encoding(IngestionConfig.TOKENIZER_MODEL)
         self.embedding_config = AIConfig.get_active_embedding_config()
-        logging.info("IntelligentIngestionService initialized with TaskExecutor and SmartPartitioningService.")
+        logging.info("IntelligentIngestionService initialized with TaskExecutor, SmartPartitioningService, and PDFParsingService.")
 
     def _setup_embedding_workers(self) -> Tuple[List[mp.Process], List[mp.Queue], mp.Queue, mp.Event]:
         devices = resolve_embedding_devices()
@@ -146,13 +150,73 @@ class IntelligentIngestionService:
                     self.db_manager._wipe_repo_schemas(repo.uuid) # This drops 'repo_xyz_%' schemas
 
             _framework_update_task(parent_task_id, "Scanning files...", 4.0, None, None)
-            files_on_disk = [p for p in Path(repo_path_str).rglob('*') if not any(
-                d in p.parts for d in IngestionConfig.DEFAULT_IGNORE_DIRS) and p.is_file() and p.suffix in IngestionConfig.LANGUAGE_MAPPING]
-            if not files_on_disk:
-                _framework_complete_task(parent_task_id, result={"message": "No files to ingest."}); return
 
-            _framework_update_task(parent_task_id, "Analyzing repository structure...", 8.0, None, {'Files Found': len(files_on_disk)})
-            file_to_schema_map = self.partitioning_service.generate_schema_map(repo_path_str, files_on_disk, repo_uuid)
+            all_files_in_repo = [p for p in Path(repo_path_str).rglob('*') if p.is_file() and not any(
+                d in p.parts for d in IngestionConfig.DEFAULT_IGNORE_DIRS)]
+
+            pdf_files_to_process: List[Path] = []
+            code_files_for_partitioning: List[Path] = []
+
+            for p in all_files_in_repo:
+                if p.suffix.lower() == '.pdf':
+                    pdf_files_to_process.append(p)
+                elif p.suffix in IngestionConfig.LANGUAGE_MAPPING:
+                    code_files_for_partitioning.append(p)
+
+            logging.info(f"Discovered {len(code_files_for_partitioning)} code files and {len(pdf_files_to_process)} PDF files for ingestion.")
+            _framework_update_task(parent_task_id, "Scanning files complete.", 5.0, None, {'Code Files Found': len(code_files_for_partitioning), 'PDF Files Found': len(pdf_files_to_process)})
+
+            if not code_files_for_partitioning and not pdf_files_to_process:
+                _framework_complete_task(parent_task_id, result={"message": "No relevant files (code or PDF) to ingest."}); return
+
+            pdf_processing_futures = []
+            if pdf_files_to_process:
+                _framework_update_task(parent_task_id, "Submitting PDF processing tasks...", 6.0, None, None)
+                for pdf_path_obj in pdf_files_to_process:
+                    relative_pdf_path = pdf_path_obj.relative_to(repo_path_str).as_posix()
+                    pdf_processing_futures.append(
+                        self.task_executor.submit(
+                            'postgres', # Using a generic pool name, actual execution is local.
+                            _process_single_pdf_worker,
+                            str(pdf_path_obj.resolve()),
+                            repo_id,
+                            branch,
+                            relative_pdf_path,
+                            self.db_manager.db_url,
+                            self.pdf_parsing_service.mineru_path
+                        )
+                    )
+                _framework_update_task(parent_task_id, f"{len(pdf_files_to_process)} PDF tasks submitted.", 7.0, None, None)
+
+            _framework_update_task(parent_task_id, "Analyzing repository structure (for code files)...", 8.0, None, {'Code Files to Analyze': len(code_files_for_partitioning)})
+
+            if not code_files_for_partitioning: # Only PDFs were found and submitted
+                logging.info("No code files found for partitioning. Waiting for PDF tasks to complete.")
+                if pdf_processing_futures:
+                    _framework_update_task(parent_task_id, "Waiting for PDF processing tasks...", 8.5, None, None)
+                    # Wait for PDF processing to finish and check for errors
+                    successful_pdfs = 0
+                    for future in concurrent.futures.as_completed(pdf_processing_futures):
+                        try:
+                            future.result() # Raise exception if PDF processing failed
+                            successful_pdfs += 1
+                        except Exception as e:
+                            logging.error(f"A PDF processing task failed: {e}", exc_info=True)
+                            # Optionally, update parent task to reflect partial failure or log specific PDF
+                    _framework_update_task(parent_task_id, f"PDF processing finished ({successful_pdfs}/{len(pdf_files_to_process)} successful).", 90.0, None, None)
+
+                # Finalize task for PDF-only ingestion
+                with self.db_manager.get_session("public") as session:
+                    repo_obj_final = session.get(Repository, repo_id)
+                    if repo_obj_final:
+                        repo_obj_final.active_branch = branch # Ensure active branch is set
+                        repo_obj_final.last_scanned = datetime.utcnow()
+                        # repo_obj_final.db_schemas might be empty or set if we decide to create a schema for PDFs later
+                _framework_complete_task(parent_task_id, result={"message": f"PDF processing complete. Processed {len(pdf_files_to_process)} PDFs. No code files."})
+                return # Exit ingestion if only PDFs were processed.
+
+            # Proceed with code file partitioning if code_files_for_partitioning is not empty
+            file_to_schema_map = self.partitioning_service.generate_schema_map(repo_path_str, code_files_for_partitioning, repo_uuid)
             schema_to_files_map = defaultdict(list)
             for file_path_obj, schema_name_val in file_to_schema_map.items(): # file_path_obj is Path
                 schema_to_files_map[schema_name_val].append(str(file_path_obj))

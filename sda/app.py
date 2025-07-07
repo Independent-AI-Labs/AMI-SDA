@@ -76,7 +76,8 @@ class CodeAnalysisFramework:
             db_manager=self.db_manager,
             git_service=self.git_service,
             task_executor=self.task_executor,
-            partitioning_service=self.partitioning_service
+            partitioning_service=self.partitioning_service,
+            pdf_parsing_service=self.pdf_parsing_service # Pass PDFParsingService
         )
         self.navigation_tools = AdvancedCodeNavigationTools(db_manager=self.db_manager)
         self.editing_system = SafeFileEditingSystem(db_manager=self.db_manager, chunker=self.chunker)
@@ -868,87 +869,31 @@ class CodeAnalysisFramework:
             sliced_content = full_content[start_offset:end_offset]
             return sliced_content
 
-    async def get_or_process_pdf_document(
+    async def get_pdf_document_uuid_for_repo_file(
         self,
-        absolute_pdf_path: str,
-        repo_id: Optional[int] = None,
-        branch_name: Optional[str] = None,
-        relative_path: Optional[str] = None
-    ) -> Optional[str]: # Returns PDFDocument UUID or None
+        repo_id: int,
+        branch_name: str,
+        relative_path: str
+    ) -> Optional[str]:
         """
-        Checks if a PDF has been processed by its content hash; if so, returns its UUID.
-        Otherwise, processes it using PDFParsingService, saves it, and returns the new UUID.
-        If the PDF is associated with a repository, this linkage is also updated/stored.
+        Retrieves the UUID of a processed PDFDocument linked to a specific repository file path.
+        Assumes the PDF has already been processed during ingestion.
         """
-        logging.info(f"get_or_process_pdf_document called for: {absolute_pdf_path}")
-        pdf_path_obj = Path(absolute_pdf_path)
-        if not pdf_path_obj.exists() or not pdf_path_obj.is_file():
-            logging.error(f"PDF file does not exist or is not a file: {absolute_pdf_path}")
-            return None
-
+        logging.info(f"Looking up PDF document UUID for repo_id={repo_id}, branch='{branch_name}', path='{relative_path}'")
         try:
-            hasher = hashlib.sha256()
-            with open(pdf_path_obj, 'rb') as f:
-                buf = f.read(65536)
-                while len(buf) > 0:
-                    hasher.update(buf)
-                    buf = f.read(65536)
-            pdf_file_hash = hasher.hexdigest()
-            logging.info(f"Calculated hash for {absolute_pdf_path}: {pdf_file_hash}")
-
-            # Check if PDFDocument already exists by hash
-            # The existing db_manager.get_pdf_document_by_hash returns the Pydantic model of parsed_data.
-            # We need the UUID. A direct query for the PDFDocument object is better here.
             with self.db_manager.get_session("public") as session:
-                db_doc_obj = session.query(PDFDocument).filter_by(pdf_file_hash=pdf_file_hash).first()
-                if db_doc_obj:
-                    logging.info(f"PDF document with hash {pdf_file_hash} already processed. UUID: {db_doc_obj.uuid}")
-                    # Optionally, update repo_id, branch_name, relative_path if they are newly provided
-                    # and different from what's stored, or if they were null.
-                    updated_linkage = False
-                    if repo_id is not None and db_doc_obj.repository_id != repo_id:
-                        db_doc_obj.repository_id = repo_id
-                        updated_linkage = True
-                    if branch_name is not None and db_doc_obj.branch_name != branch_name:
-                        db_doc_obj.branch_name = branch_name
-                        updated_linkage = True
-                    if relative_path is not None and db_doc_obj.relative_path != relative_path:
-                        db_doc_obj.relative_path = relative_path
-                        updated_linkage = True
+                db_pdf_doc = session.query(PDFDocument.uuid).filter_by(
+                    repository_id=repo_id,
+                    branch_name=branch_name,
+                    relative_path=relative_path
+                ).scalar_one_or_none() # Use scalar_one_or_none to get the UUID directly or None
 
-                    if updated_linkage:
-                        db_doc_obj.updated_at = datetime.utcnow()
-                        session.commit()
-                        logging.info(f"Updated repository linkage for PDF document UUID: {db_doc_obj.uuid}")
-                    return db_doc_obj.uuid
-
-            # If not found, parse and save
-            logging.info(f"PDF {pdf_file_hash} not found in DB or needs linkage update. Processing with MinerU...")
-
-            # pdf_parsing_service is initialized in CodeAnalysisFramework.__init__
-            parsed_document_data, image_blobs_data = await self.pdf_parsing_service.parse_pdf(absolute_pdf_path)
-
-            # Ensure the hash from parsing matches (it should, as it's from the same file)
-            if parsed_document_data.pdf_file_hash != pdf_file_hash:
-                logging.error(f"Hash mismatch for {absolute_pdf_path}: calculated {pdf_file_hash}, from parsing {parsed_document_data.pdf_file_hash}. Aborting.")
-                return None
-
-            logging.info(f"Saving parsed PDF data for {pdf_file_hash} to database...")
-            doc_uuid = self.db_manager.save_pdf_document(
-                parsed_document_data=parsed_document_data,
-                image_blobs_data=image_blobs_data,
-                repository_id=repo_id,
-                branch_name=branch_name,
-                relative_path=relative_path
-            )
-
-            if doc_uuid:
-                logging.info(f"Successfully processed and saved PDF {pdf_file_hash}. New/Existing UUID: {doc_uuid}")
-            else:
-                logging.error(f"Failed to save processed PDF data for {pdf_file_hash} to database.")
-
-            return doc_uuid
-
+                if db_pdf_doc:
+                    logging.info(f"Found processed PDF with UUID: {db_pdf_doc} for {relative_path}")
+                    return db_pdf_doc
+                else:
+                    logging.warning(f"No processed PDFDocument found for repo_id={repo_id}, branch='{branch_name}', path='{relative_path}'. It might not have been ingested or is not a PDF.")
+                    return None
         except Exception as e:
-            logging.error(f"Error in get_or_process_pdf_document for {absolute_pdf_path}: {e}", exc_info=True)
+            logging.error(f"Error retrieving PDF document UUID for {relative_path} in repo {repo_id}, branch {branch_name}: {e}", exc_info=True)
             return None

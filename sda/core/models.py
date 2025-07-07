@@ -238,21 +238,44 @@ class PDFDocument(Base):
     # Hash of the original PDF file content
     pdf_file_hash: Mapped[str] = Column(String(64), nullable=False, unique=True, index=True) # Assuming SHA256
 
-    # Optional link to a repository if the PDF is part of it
-    repository_id: Mapped[Optional[int]] = Column(Integer, ForeignKey('public.repositories.id', ondelete="SET NULL"), nullable=True, index=True)
-    # Optional path if it's from a repository
-    relative_path: Mapped[Optional[str]] = Column(String, nullable=True)
-    # Optional branch if it's from a repository
-    branch_name: Mapped[Optional[str]] = Column(String, nullable=True, index=True)
-
     parsed_data: Mapped[Dict[str, Any]] = Column(JSON, nullable=False) # Stores the ParsedPDFDocument model as JSON
     total_pages: Mapped[int] = Column(Integer, nullable=False)
 
     created_at: Mapped[datetime] = Column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Relationship to links (one PDF content can be in many repo locations)
+    # repository_links: Mapped[List["RepositoryPDFLink"]] = relationship(back_populates="pdf_document")
+
     def __repr__(self):
         return f"<PDFDocument(id={self.id}, pdf_file_hash='{self.pdf_file_hash[:10]}...', pages={self.total_pages})>"
+
+
+class RepositoryPDFLink(Base):
+    """Links a PDFDocument to a specific location within a repository and branch."""
+    __tablename__ = 'repository_pdf_links'
+    __table_args__ = (
+        UniqueConstraint('repository_id', 'branch_name', 'relative_path', name='uq_repo_pdf_location'),
+        Index('idx_repo_pdf_lookup', 'repository_id', 'branch_name', 'relative_path'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[int] = Column(Integer, primary_key=True)
+
+    pdf_document_id: Mapped[int] = Column(Integer, ForeignKey('public.pdf_documents.id', ondelete="CASCADE"), nullable=False, index=True)
+    repository_id: Mapped[int] = Column(Integer, ForeignKey('public.repositories.id', ondelete="CASCADE"), nullable=False)
+    branch_name: Mapped[str] = Column(String, nullable=False)
+    relative_path: Mapped[str] = Column(String, nullable=False) # Path of the PDF within the repository
+
+    # Optional: add timestamp for when this link was created/updated
+    created_at: Mapped[datetime] = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    pdf_document: Mapped["PDFDocument"] = relationship() # Use this if backref needed in PDFDocument: back_populates="repository_links"
+    repository: Mapped["Repository"] = relationship() # Could add backref in Repository if needed
+
+    def __repr__(self):
+        return f"<RepositoryPDFLink(id={self.id}, pdf_id={self.pdf_document_id}, repo_id={self.repository_id}, path='{self.relative_path}')>"
 
 
 class PDFImageBlobStore(Base):

@@ -1,39 +1,23 @@
 # tests/framework/test_app_pdf_processing.py
 import pytest
-import asyncio
+from unittest.mock import MagicMock, AsyncMock, patch
 from pathlib import Path
 import hashlib
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from sda.app import CodeAnalysisFramework
-from sda.services.pdf_parser import ParsedPDFDocument as PydanticParsedPDFDocument, PDFImageBlob as PydanticPDFImageBlob
-from sda.core.models import PDFDocument as SQLAPDFDocument # SQLAlchemy model
+from sda.core.models import PDFDocument as SQLAPDFDocument, RepositoryPDFLink
+from sda.services.pdf_parser import ParsedPDFDocument as PydanticParsedPDFDocument # For type hints if needed elsewhere
 
-# Dummy PDF content for hashing
-DUMMY_PDF_CONTENT = b"This is a dummy PDF content."
-DUMMY_PDF_HASH = hashlib.sha256(DUMMY_PDF_CONTENT).hexdigest()
-DUMMY_PDF_UUID = "test-pdf-uuid-123"
-NEW_PDF_UUID = "new-pdf-uuid-456"
+DUMMY_PDF_DOC_UUID_FROM_LINK = "retrieved-pdf-doc-uuid-123"
 
 @pytest.fixture
-def framework_instance(tmp_path):
-    # Create a temporary workspace for GitService if it's initialized by default
-    # For these tests, we mainly need to mock db_manager and pdf_parsing_service
-    # So, we can patch parts of CodeAnalysisFramework.__init__ or its dependencies
-    # if their full initialization is problematic for unit testing.
-
-    # For simplicity, let's assume CodeAnalysisFramework can be instantiated,
-    # and we will mock its attributes (db_manager, pdf_parsing_service) directly in tests.
-    # A more robust approach might involve a test-specific configuration or dependency injection.
-
-    # Create a dummy workspace dir if GitService needs it
+def framework_instance_for_pdf_retrieval(tmp_path):
     workspace_dir = tmp_path / "workspace"
-    workspace_dir.mkdir()
+    workspace_dir.mkdir(exist_ok=True)
 
-    # Patch DatabaseManager and PDFParsingService instantiation within CodeAnalysisFramework's scope for these tests
     with patch('sda.app.DatabaseManager') as MockDBManager, \
-         patch('sda.app.PDFParsingService') as MockPDFParsingService, \
-         patch('sda.app.GitService') as MockGitService, \
+         patch('sda.app.PDFParsingService'), \
+         patch('sda.app.GitService'), \
          patch('sda.app.TaskExecutor'), \
          patch('sda.app.RateLimiter'), \
          patch('sda.app.TokenAwareChunker'), \
@@ -45,163 +29,81 @@ def framework_instance(tmp_path):
          patch('sda.app.SafeFileEditingSystem'), \
          patch('sda.app.AgentManager'):
 
-        mock_db_manager = MockDBManager.return_value
-        mock_pdf_parser = MockPDFParsingService.return_value
-
-        # Mock the get_session context manager
+        mock_db_manager_instance = MockDBManager.return_value
         mock_session = MagicMock()
-        mock_db_manager.get_session.return_value.__enter__.return_value = mock_session
+        mock_db_manager_instance.get_session.return_value.__enter__.return_value = mock_session
 
         framework = CodeAnalysisFramework(db_url="sqlite:///:memory:", workspace_dir=str(workspace_dir))
-        # Assign the mocked instances after __init__ if they were replaced by real ones
-        framework.db_manager = mock_db_manager
-        framework.pdf_parsing_service = mock_pdf_parser
-
-        return framework, mock_db_manager, mock_pdf_parser, mock_session
+        framework.db_manager = mock_db_manager_instance
+        yield framework, mock_session
 
 
 @pytest.mark.asyncio
-async def test_get_or_process_pdf_existing_document(framework_instance, tmp_path):
-    framework, mock_db_manager, _, mock_session = framework_instance
-
-    pdf_file = tmp_path / "test.pdf"
-    pdf_file.write_bytes(DUMMY_PDF_CONTENT)
-
-    # Mock DB response: document exists
-    mock_sql_pdf_doc = SQLAPDFDocument(uuid=DUMMY_PDF_UUID, pdf_file_hash=DUMMY_PDF_HASH, repository_id=None)
-    mock_session.query.return_value.filter_by.return_value.first.return_value = mock_sql_pdf_doc
-
-    result_uuid = await framework.get_or_process_pdf_document(str(pdf_file))
-
-    assert result_uuid == DUMMY_PDF_UUID
-    mock_session.query.return_value.filter_by.assert_called_once_with(pdf_file_hash=DUMMY_PDF_HASH)
-    framework.pdf_parsing_service.parse_pdf.assert_not_called() # Should not parse if found
-    mock_db_manager.save_pdf_document.assert_not_called() # Should not save if found (unless linkage update)
-
-@pytest.mark.asyncio
-async def test_get_or_process_pdf_existing_document_with_linkage_update(framework_instance, tmp_path):
-    framework, mock_db_manager, _, mock_session = framework_instance
-
-    pdf_file = tmp_path / "test.pdf"
-    pdf_file.write_bytes(DUMMY_PDF_CONTENT)
-
-    mock_sql_pdf_doc = SQLAPDFDocument(
-        uuid=DUMMY_PDF_UUID,
-        pdf_file_hash=DUMMY_PDF_HASH,
-        repository_id=None, # Initially no repo link
-        branch_name=None,
-        relative_path=None
-    )
-    mock_session.query.return_value.filter_by.return_value.first.return_value = mock_sql_pdf_doc
+async def test_get_pdf_document_uuid_for_repo_file_found(framework_instance_for_pdf_retrieval):
+    framework, mock_session = framework_instance_for_pdf_retrieval
 
     repo_id = 1
     branch = "main"
-    rel_path = "docs/test.pdf"
+    rel_path = "docs/report.pdf"
 
-    result_uuid = await framework.get_or_process_pdf_document(str(pdf_file), repo_id, branch, rel_path)
+    # Mock the chained query:
+    # query(SQLAPDFDocument.uuid).join(RepositoryPDFLink, SQLAPDFDocument.id == RepositoryPDFLink.pdf_document_id)
+    # .filter(...).scalar_one_or_none()
 
-    assert result_uuid == DUMMY_PDF_UUID
-    assert mock_sql_pdf_doc.repository_id == repo_id
-    assert mock_sql_pdf_doc.branch_name == branch
-    assert mock_sql_pdf_doc.relative_path == rel_path
-    assert mock_session.commit.called # Commit should be called due to linkage update
+    # Mock for scalar_one_or_none()
+    mock_scalar_method = MagicMock(return_value=DUMMY_PDF_DOC_UUID_FROM_LINK)
 
-@pytest.mark.asyncio
-async def test_get_or_process_pdf_new_document(framework_instance, tmp_path):
-    framework, mock_db_manager, mock_pdf_parser, mock_session = framework_instance
+    # Mock for filter()
+    mock_filter_obj = MagicMock()
+    mock_filter_obj.scalar_one_or_none = mock_scalar_method # filter(...).scalar_one_or_none()
 
-    pdf_file = tmp_path / "new_test.pdf"
-    new_pdf_content = b"new pdf data"
-    new_pdf_hash = hashlib.sha256(new_pdf_content).hexdigest()
-    pdf_file.write_bytes(new_pdf_content)
+    # Mock for join()
+    mock_join_obj = MagicMock()
+    mock_join_obj.filter.return_value = mock_filter_obj # join(...).filter(...)
 
-    # Mock DB response: document does not exist
-    mock_session.query.return_value.filter_by.return_value.first.return_value = None
+    # Mock for query()
+    mock_session.query.return_value.join.return_value = mock_join_obj # query(...).join(...)
 
-    # Mock PDFParsingService response
-    mock_parsed_doc_pydantic = PydanticParsedPDFDocument(pdf_file_hash=new_pdf_hash, total_pages=1, pages=[])
-    mock_image_blobs = []
-    mock_pdf_parser.parse_pdf = AsyncMock(return_value=(mock_parsed_doc_pydantic, mock_image_blobs))
+    result_uuid = await framework.get_pdf_document_uuid_for_repo_file(repo_id, branch, rel_path)
 
-    # Mock DatabaseManager save response
-    mock_db_manager.save_pdf_document.return_value = NEW_PDF_UUID
+    assert result_uuid == DUMMY_PDF_DOC_UUID_FROM_LINK
+    mock_session.query.assert_called_once_with(SQLAPDFDocument.uuid)
 
-    result_uuid = await framework.get_or_process_pdf_document(str(pdf_file), repo_id=1, branch_name="dev", relative_path="new.pdf")
+    # Assert that join was called, e.g. with RepositoryPDFLink and the correct join condition
+    # This is a bit more involved to assert precisely due to SQLAlchemy's expression objects
+    # For now, checking that join was called is a basic step.
+    mock_session.query.return_value.join.assert_called_once()
 
-    assert result_uuid == NEW_PDF_UUID
-    mock_session.query.return_value.filter_by.assert_called_once_with(pdf_file_hash=new_pdf_hash)
-    mock_pdf_parser.parse_pdf.assert_called_once_with(str(pdf_file))
-    mock_db_manager.save_pdf_document.assert_called_once_with(
-        parsed_document_data=mock_parsed_doc_pydantic,
-        image_blobs_data=mock_image_blobs,
-        repository_id=1,
-        branch_name="dev",
-        relative_path="new.pdf"
-    )
+    # Assert that filter was called on the result of join
+    mock_join_obj.filter.assert_called_once()
+    # We could inspect call_args for filter if needed:
+    # filter_args = mock_join_obj.filter.call_args[0]
+    # assert str(filter_args[0]) == str(RepositoryPDFLink.repository_id == repo_id)
+    # assert str(filter_args[1]) == str(RepositoryPDFLink.branch_name == branch)
+    # assert str(filter_args[2]) == str(RepositoryPDFLink.relative_path == rel_path)
+
+    mock_scalar_method.assert_called_once()
+
 
 @pytest.mark.asyncio
-async def test_get_or_process_pdf_file_not_exist(framework_instance):
-    framework, _, _, _ = framework_instance
-    result_uuid = await framework.get_or_process_pdf_document("/path/to/nonexistent.pdf")
+async def test_get_pdf_document_uuid_for_repo_file_not_found(framework_instance_for_pdf_retrieval):
+    framework, mock_session = framework_instance_for_pdf_retrieval
+
+    mock_scalar_method = MagicMock(return_value=None) # Simulate not found
+    mock_filter_obj = MagicMock()
+    mock_filter_obj.scalar_one_or_none = mock_scalar_method
+    mock_join_obj = MagicMock()
+    mock_join_obj.filter.return_value = mock_filter_obj
+    mock_session.query.return_value.join.return_value = mock_join_obj
+
+    result_uuid = await framework.get_pdf_document_uuid_for_repo_file(1, "main", "other.pdf")
     assert result_uuid is None
 
 @pytest.mark.asyncio
-async def test_get_or_process_pdf_hash_mismatch(framework_instance, tmp_path):
-    framework, _, mock_pdf_parser, mock_session = framework_instance
+async def test_get_pdf_document_uuid_for_repo_file_db_exception(framework_instance_for_pdf_retrieval):
+    framework, mock_session = framework_instance_for_pdf_retrieval
 
-    pdf_file = tmp_path / "mismatch.pdf"
-    pdf_content = b"actual content"
-    calculated_hash = hashlib.sha256(pdf_content).hexdigest()
-    pdf_file.write_bytes(pdf_content)
+    mock_session.query.side_effect = Exception("Simulated DB query failed")
 
-    mock_session.query.return_value.filter_by.return_value.first.return_value = None # Not in DB
-
-    # Parsing service returns a doc with a *different* hash
-    mismatched_hash = "differenthash123"
-    mock_parsed_doc_pydantic = PydanticParsedPDFDocument(pdf_file_hash=mismatched_hash, total_pages=1, pages=[])
-    mock_pdf_parser.parse_pdf = AsyncMock(return_value=(mock_parsed_doc_pydantic, []))
-
-    result_uuid = await framework.get_or_process_pdf_document(str(pdf_file))
+    result_uuid = await framework.get_pdf_document_uuid_for_repo_file(1, "main", "error.pdf")
     assert result_uuid is None
-    mock_pdf_parser.parse_pdf.assert_called_once()
-    framework.db_manager.save_pdf_document.assert_not_called()
-
-@pytest.mark.asyncio
-async def test_get_or_process_pdf_parsing_exception(framework_instance, tmp_path):
-    framework, _, mock_pdf_parser, mock_session = framework_instance
-
-    pdf_file = tmp_path / "error.pdf"
-    pdf_file.write_bytes(b"error content")
-
-    mock_session.query.return_value.filter_by.return_value.first.return_value = None # Not in DB
-    mock_pdf_parser.parse_pdf = AsyncMock(side_effect=Exception("Parsing failed!"))
-
-    result_uuid = await framework.get_or_process_pdf_document(str(pdf_file))
-    assert result_uuid is None
-    framework.db_manager.save_pdf_document.assert_not_called()
-
-@pytest.mark.asyncio
-async def test_get_or_process_pdf_db_save_exception(framework_instance, tmp_path):
-    framework, mock_db_manager, mock_pdf_parser, mock_session = framework_instance
-
-    pdf_file = tmp_path / "dberror.pdf"
-    pdf_content = b"db error content"
-    pdf_hash = hashlib.sha256(pdf_content).hexdigest()
-    pdf_file.write_bytes(pdf_content)
-
-    mock_session.query.return_value.filter_by.return_value.first.return_value = None # Not in DB
-
-    mock_parsed_doc_pydantic = PydanticParsedPDFDocument(pdf_file_hash=pdf_hash, total_pages=1, pages=[])
-    mock_pdf_parser.parse_pdf = AsyncMock(return_value=(mock_parsed_doc_pydantic, []))
-
-    mock_db_manager.save_pdf_document.side_effect = Exception("DB save failed!")
-
-    result_uuid = await framework.get_or_process_pdf_document(str(pdf_file))
-    assert result_uuid is None
-    mock_db_manager.save_pdf_document.assert_called_once()
-
-```
-
-This test suite covers the main scenarios for `get_or_process_pdf_document`. The `framework_instance` fixture uses patching to mock dependencies of `CodeAnalysisFramework` that are not directly relevant to this method's logic, allowing for more focused unit testing.
-
-Now, I will create this test file.
