@@ -227,6 +227,7 @@ class IngestionConfig:
     VECTOR_UPDATE_BATCH_SIZE = int(os.getenv("VECTOR_UPDATE_BATCH_SIZE", "65536"))
     DGRAPH_BATCH_SIZE = int(os.getenv("DGRAPH_BATCH_SIZE", "512"))
     DB_BATCH_SIZE = int(os.getenv("DB_BATCH_SIZE", "2048"))
+    PDF_PROCESSING_BATCH_SIZE = int(os.getenv("PDF_PROCESSING_BATCH_SIZE", "5")) # Batch size for PDF processing
     SUB_TASK_TIMEOUT: int = int(os.getenv("SUB_TASK_TIMEOUT", "3600")) # Default to 1 hour for sub-tasks like graph/vector processing
     IMPORTANCE_WEIGHTS = {
         "base_score": 0.5, "score_split_structural": 0.4, "score_remainder": 0.2,

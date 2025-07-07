@@ -1,6 +1,7 @@
 # sda/services/pdf_parser.py
 import asyncio
 import json
+import logging
 import hashlib
 import os
 import shutil
@@ -113,33 +114,63 @@ class PDFParsingService:
         ]
 
         # print(f"Running MinerU command: {' '.join(cmd)}") # For debugging
-        logging.info(f"Executing MinerU command: {' '.join(cmd)}")
+        pdf_filename = pdf_path.name # For clearer logging
+        log_prefix = f"[MinerU Runner File:{pdf_filename}]"
+        logging.info(f"{log_prefix} Executing MinerU command: {' '.join(cmd)}")
+
+        all_stdout_lines = []
+        all_stderr_lines = []
 
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await process.communicate()
 
-        stdout_decoded = stdout.decode(errors='ignore').strip()
-        stderr_decoded = stderr.decode(errors='ignore').strip()
+        # Stream stdout
+        async def stream_stdout():
+            while process.stdout and not process.stdout.at_eof():
+                line_bytes = await process.stdout.readline()
+                if not line_bytes:
+                    break
+                line = line_bytes.decode(errors='ignore').strip()
+                if line:
+                    all_stdout_lines.append(line)
+                    logging.info(f"{log_prefix} STDOUT: {line}")
 
-        if stdout_decoded:
-            logging.info(f"MinerU stdout:\n{stdout_decoded}")
-        if stderr_decoded:
-            # MinerU often prints warnings to stderr even on success
-            logging.warning(f"MinerU stderr:\n{stderr_decoded}")
+        # Stream stderr
+        async def stream_stderr():
+            while process.stderr and not process.stderr.at_eof():
+                line_bytes = await process.stderr.readline()
+                if not line_bytes:
+                    break
+                line = line_bytes.decode(errors='ignore').strip()
+                if line:
+                    all_stderr_lines.append(line)
+                    logging.warning(f"{log_prefix} STDERR: {line}") # Log stderr as warning
 
-        if process.returncode != 0:
-            err_msg = f"MinerU failed with error code {process.returncode}."
-            if stderr_decoded: # Append stderr if available, as it often has the error
-                 err_msg += f"\nstderr: {stderr_decoded}"
-            if stdout_decoded: # Append stdout too, might have clues
-                 err_msg += f"\nstdout: {stdout_decoded}"
-            raise Exception(err_msg)
+        # Run streaming tasks concurrently
+        await asyncio.gather(stream_stdout(), stream_stderr())
 
-        logging.info("MinerU command executed successfully.")
+        # Wait for the process to complete
+        await process.wait()
+
+        returncode = process.returncode
+        stdout_full = "\n".join(all_stdout_lines)
+        stderr_full = "\n".join(all_stderr_lines)
+
+        logging.info(f"{log_prefix} MinerU command finished with return code {returncode}.")
+
+        if returncode != 0:
+            # The error will be raised by the caller based on this return dict
+            logging.error(f"{log_prefix} MinerU failed. Full stdout and stderr captured.")
+
+        return {
+            "stdout": stdout_full,
+            "stderr": stderr_full,
+            "returncode": returncode,
+            "command": ' '.join(cmd)
+        }
 
     def _calculate_file_hash(self, file_path: Path) -> str:
         hasher = hashlib.sha256()
@@ -240,10 +271,23 @@ class PDFParsingService:
         # So, the TemporaryDirectory itself can be the -o target.
         with tempfile.TemporaryDirectory() as temp_mineru_base_output_dir_str:
             temp_mineru_base_output_dir = Path(temp_mineru_base_output_dir_str)
+            pdf_filename_stem = pdf_file_path.stem # Moved early for logging
+            log_prefix = f"[PDFParser File:{pdf_filename_stem}]" # For parse_pdf level logging
 
-            await self._run_mineru(pdf_file_path, temp_mineru_base_output_dir)
+            mineru_result = await self._run_mineru(pdf_file_path, temp_mineru_base_output_dir)
 
-            pdf_filename_stem = pdf_file_path.stem
+            if mineru_result["returncode"] != 0:
+                error_message = (
+                    f"{log_prefix} MinerU execution failed with code {mineru_result['returncode']}.\n"
+                    f"Command: {mineru_result['command']}\n"
+                    f"MinerU STDOUT:\n{mineru_result['stdout']}\n"
+                    f"MinerU STDERR:\n{mineru_result['stderr']}"
+                )
+                logging.error(error_message)
+                # Propagate a more structured error or just the message
+                raise RuntimeError(f"MinerU failed for {pdf_filename_stem}. See logs for details. STDERR snippet: {mineru_result['stderr'][:500]}")
+
+            logging.info(f"{log_prefix} MinerU execution successful for {pdf_filename_stem}.")
 
             # Primary expected path for MinerU output (sub-directory named after PDF stem)
             expected_mineru_output_subdir = temp_mineru_base_output_dir / pdf_filename_stem
@@ -297,7 +341,7 @@ class PDFParsingService:
             image_blobs_map: Dict[str, PDFImageBlob] = {}
 
             for mineru_element_dict in mineru_data_list:
-                pdf_node = self._map_mineru_element_to_pdfnode(mineru_element_dict, mineru_content_dir, image_blobs_map)
+                pdf_node = self._map_mineru_element_to_pdfnode(mineru_element_dict, mineru_content_dir_for_images, image_blobs_map)
                 if pdf_node:
                     page_num = pdf_node.page_number
                     if page_num not in page_children_map:
