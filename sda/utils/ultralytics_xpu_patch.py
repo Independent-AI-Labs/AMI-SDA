@@ -2,128 +2,130 @@
 import logging
 import torch
 import os
+from pathlib import Path # For PYTHONSTARTUP check
 
-# Flag to ensure patch is applied only once per process
-_patch_applied_flag = False
-_orig_select_device = None
-_orig_predictor_setup_model = None
+# Module-level flag to ensure the patch is attempted only once per process
+_patch_attempted_in_this_process = False
 
-def apply_ultralytics_xpu_patch():
-    global _orig_select_device, _orig_predictor_setup_model, _patch_applied_flag
-
-    if _patch_applied_flag:
-        # logging.debug("Ultralytics XPU patch already applied or attempted.") # Becomes noisy if PYTHONSTARTUP
+def _do_patch_ultralytics_select_device():
+    """
+    Attempts to monkey-patch ultralytics.utils.torch_utils.select_device
+    for XPU support.
+    """
+    global _patch_attempted_in_this_process
+    if _patch_attempted_in_this_process:
+        logging.debug("SDA Patch: Ultralytics select_device patch already attempted in this process.")
         return
 
-    # --- 1. Patch ultralytics.utils.torch_utils.select_device ---
+    _patch_attempted_in_this_process = True # Mark that we've entered this function
+
+    _orig_select_device_func = None
+
     try:
         import ultralytics.utils.torch_utils as tu
-        if hasattr(tu, 'select_device') and tu.select_device.__name__ != 'select_device_xpu_wrapper':
-            _orig_select_device = tu.select_device
+        if not hasattr(tu, 'select_device'):
+            logging.warning("SDA Patch: ultralytics.utils.torch_utils.select_device not found. Cannot patch.")
+            return
 
-            def select_device_xpu_wrapper(device: str = '', verbose: bool = True):
-                global _orig_select_device
-                requested_device_str = str(device).lower()
+        if hasattr(tu.select_device, '_is_sda_patched_select_device'):
+            logging.debug("SDA Patch: select_device found to be already patched by SDA (has _is_sda_patched_select_device attr).")
+            return # Already patched by this specific logic
 
-                if requested_device_str == 'xpu' or requested_device_str.startswith('xpu:'):
-                    if hasattr(torch, 'xpu') and torch.xpu.is_available():
-                        try:
-                            # For 'xpu' or 'xpu:N', PyTorch can create the device object.
-                            # The ONEAPI_DEVICE_SELECTOR in env should guide 'xpu' to the correct tile.
-                            actual_device = torch.device(requested_device_str)
-                            if verbose:
-                                logging.info(f"Patched select_device: Using XPU device '{actual_device}'. ONEAPI_DEVICE_SELECTOR='{os.environ.get('ONEAPI_DEVICE_SELECTOR')}'")
-                            return actual_device
-                        except RuntimeError as e:
-                            logging.error(f"Patched select_device: Error creating torch.device for '{requested_device_str}': {e}. Falling back to CPU.", exc_info=True)
-                            return _orig_select_device('cpu', verbose) if _orig_select_device else torch.device('cpu')
-                    else:
-                        logging.error(f"Patched select_device: XPU requested ('{requested_device_str}') but torch.xpu not available. Falling back to CPU.")
-                        return _orig_select_device('cpu', verbose) if _orig_select_device else torch.device('cpu')
+        _orig_select_device_func = tu.select_device # Backup the original function
 
-                # Fallback to original for non-XPU devices
-                if _orig_select_device:
-                    return _orig_select_device(device, verbose)
-                else: # Should not happen if ultralytics is installed
-                    logging.warning(f"Patched select_device: Original select_device not found. Trying torch.device('{device}').")
-                    return torch.device(device)
+        def select_device_xpu_wrapper(device: str = '', verbose: bool = True):
+            # This wrapper uses _orig_select_device_func from the enclosing scope
+            requested_device_str = str(device).lower()
 
-            tu.select_device = select_device_xpu_wrapper
-            logging.info("Applied monkey-patch to ultralytics.utils.torch_utils.select_device for XPU support.")
-            _patch_applied_flag = True # Mark patch as applied after the first successful one
-        elif hasattr(tu, 'select_device') and tu.select_device.__name__ == 'select_device_xpu_wrapper':
-            logging.debug("select_device already patched.")
-            _patch_applied_flag = True
-
-
-    except ImportError:
-        logging.warning("Ultralytics 'torch_utils' not found. Cannot patch select_device.")
-    except AttributeError:
-        logging.warning("Ultralytics 'select_device' not found in torch_utils. Cannot patch.")
-    except Exception as e:
-        logging.error(f"Unexpected error patching select_device: {e}", exc_info=True)
-
-    # --- 2. (Optional but recommended by user) Patch ultralytics.engine.predictor.BasePredictor.setup_model ---
-    # This patch is to more forcefully ensure device='xpu' is used if passed,
-    # potentially overriding some internal logic in setup_model that might try to default to CUDA.
-    try:
-        import ultralytics.engine.predictor as pred
-        if hasattr(pred, 'BasePredictor') and hasattr(pred.BasePredictor, 'setup_model') and \
-           pred.BasePredictor.setup_model.__name__ != 'setup_model_xpu_wrapper':
-            _orig_predictor_setup_model = pred.BasePredictor.setup_model
-
-            def setup_model_xpu_wrapper(self, model, verbose=False):
-                global _orig_predictor_setup_model
-
-                # If the intended device (from args) is 'xpu', ensure it's passed to the (patched) select_device
-                current_arg_device = str(self.args.device).lower()
-                if current_arg_device == 'xpu' or current_arg_device.startswith('xpu:'):
-                    if verbose:
-                        logging.info(f"Patched BasePredictor.setup_model: Ensuring device '{current_arg_device}' is used via (patched) select_device.")
-                    # The actual device selection happens inside the original setup_model via select_device,
-                    # which should now be our patched version.
-                    # No need to force self.device directly here if select_device is patched.
-
-                if _orig_predictor_setup_model:
-                    return _orig_predictor_setup_model(self, model, verbose)
+            if requested_device_str == 'xpu' or requested_device_str.startswith('xpu:'):
+                if hasattr(torch, 'xpu') and torch.xpu.is_available():
+                    try:
+                        # PyTorch's torch.device() handles "xpu" and "xpu:N" correctly if IPEX is installed.
+                        actual_device = torch.device(requested_device_str)
+                        if verbose:
+                            env_selector = os.environ.get('ONEAPI_DEVICE_SELECTOR', 'Not Set')
+                            logging.info(f"SDA Patched select_device: Using XPU device '{actual_device}'. ONEAPI_DEVICE_SELECTOR='{env_selector}'")
+                        return actual_device
+                    except RuntimeError as e_runtime:
+                        logging.error(f"SDA Patched select_device: RuntimeError creating torch.device for '{requested_device_str}': {e_runtime}. Falling back to CPU.", exc_info=verbose)
+                        if _orig_select_device_func:
+                            return _orig_select_device_func('cpu', verbose)
+                        return torch.device('cpu') # Absolute fallback
                 else:
-                    # This is a fallback and might not be complete if original is missing
-                    logging.warning("Original BasePredictor.setup_model not available for fallback in wrapper.")
-                    self.model = model
-                    # Use the (potentially patched) select_device from tu
-                    self.device = tu.select_device(self.args.device, verbose=verbose)
-                    if getattr(self.args, 'half', False): # Safely get 'half'
-                        self.model.half()
-                    self.model.to(self.device).eval() # Move model to device and eval
-                    return self.model
+                    logging.error(f"SDA Patched select_device: XPU requested ('{requested_device_str}') but torch.xpu not available or IPEX not installed/configured correctly. Falling back to CPU.")
+                    if _orig_select_device_func:
+                        return _orig_select_device_func('cpu', verbose)
+                    return torch.device('cpu') # Absolute fallback
 
-            pred.BasePredictor.setup_model = setup_model_xpu_wrapper
-            logging.info("Applied monkey-patch to ultralytics.engine.predictor.BasePredictor.setup_model for XPU support.")
-            _patch_applied_flag = True # Mark patch as applied
-        elif hasattr(pred, 'BasePredictor') and hasattr(pred.BasePredictor, 'setup_model') and pred.BasePredictor.setup_model.__name__ == 'setup_model_xpu_wrapper':
-            logging.debug("BasePredictor.setup_model already patched.")
-            _patch_applied_flag = True
+            # Fallback to Ultralytics's original logic for other devices
+            if _orig_select_device_func:
+                return _orig_select_device_func(device, verbose)
 
+            # Fallback if _orig_select_device_func is somehow None
+            logging.warning(f"SDA Patched select_device: Original select_device is None (should not happen if initial import worked). Trying torch.device('{device}') directly.")
+            try:
+                return torch.device(device)
+            except RuntimeError as e_runtime_direct:
+                logging.error(f"SDA Patched select_device: Failed torch.device('{device}'): {e_runtime_direct}. Defaulting to CPU.", exc_info=True)
+                return torch.device('cpu')
+
+        select_device_xpu_wrapper._is_sda_patched_select_device = True # Mark our wrapper
+        tu.select_device = select_device_xpu_wrapper
+        logging.info("SDA: Successfully applied monkey-patch to ultralytics.utils.torch_utils.select_device for XPU support.")
 
     except ImportError:
-        logging.warning("Ultralytics 'engine.predictor' not found. Cannot patch BasePredictor.setup_model.")
-    except AttributeError:
-        logging.warning("Ultralytics 'BasePredictor.setup_model' not found. Cannot patch.")
+        logging.warning("SDA Patch: Ultralytics 'torch_utils' module not found during patch attempt.")
     except Exception as e:
-        logging.error(f"Unexpected error patching BasePredictor.setup_model: {e}", exc_info=True)
+        logging.error(f"SDA Patch: Unexpected error during select_device patching: {e}", exc_info=True)
 
-    if not _patch_applied_flag:
-        logging.warning("No Ultralytics patches were successfully applied.")
+# --- Apply the patch immediately upon module import ---
+# This ensures that if this script is run by PYTHONSTARTUP, the patch is applied.
+_do_patch_ultralytics_select_device()
 
+# --- Logging to confirm module execution context ---
+if __name__ != "__main__": # True when imported
+    # This log will appear if the file is imported by pdf_parser.py OR if run by PYTHONSTARTUP
+    logging.info(f"SDA: sda.utils.ultralytics_xpu_patch.py finished execution (imported or via PYTHONSTARTUP). Patch attempted status: {_patch_attempted_in_this_process}")
 
-# Apply patches when this module is imported.
-# This is primarily for when PYTHONSTARTUP points to this file.
-apply_all_patches()
+    # Specifically check if PYTHONSTARTUP was the reason for execution
+    startup_path_env = os.environ.get('PYTHONSTARTUP')
+    if startup_path_env:
+        try:
+            # Resolve both paths for a more robust comparison, handling potential symlinks or case differences
+            if Path(startup_path_env).resolve() == Path(__file__).resolve():
+                logging.info(f"SDA: This script (ultralytics_xpu_patch.py) was confirmed as being executed via PYTHONSTARTUP env var pointing to: {startup_path_env}")
+        except Exception as e:
+            logging.error(f"SDA: Error checking PYTHONSTARTUP path ('{startup_path_env}'): {e}")
 
-# Log to confirm execution via PYTHONSTARTUP
-startup_path = os.environ.get('PYTHONSTARTUP')
-if startup_path and Path(startup_path).resolve() == Path(__file__).resolve():
-    logging.info(f"sda.utils.ultralytics_xpu_patch executed via PYTHONSTARTUP. Patch application status: {_patch_applied_flag}")
-elif __name__ != "__main__":
-     # Also log if imported normally, though PYTHONSTARTUP is the target for MinerU
-    logging.info(f"sda.utils.ultralytics_xpu_patch imported. Patch application status: {_patch_applied_flag}")
+elif __name__ == "__main__": # True when script is run directly (e.g., python path/to/this_script.py)
+    # Basic logging setup for direct execution testing
+    logging.basicConfig(level=logging.DEBUG) # Use DEBUG for more verbose output during direct test
+    logging.info("SDA: sda.utils.ultralytics_xpu_patch.py executed directly (e.g., for testing).")
+    logging.info(f"SDA Patch application status on direct run: {_patch_attempted_in_this_process}")
+
+    if _patch_attempted_in_this_process:
+        print("\nSDA Patch Test calls (requires ultralytics and IPEX to be installed in current env):")
+        try:
+            import ultralytics.utils.torch_utils as tu_test # Re-import to ensure we get the patched version if applicable
+
+            print(f"  Is tu_test.select_device our wrapper? {hasattr(tu_test.select_device, '_is_sda_patched_select_device')}")
+
+            print(f"  Testing patched select_device('xpu', verbose=True):")
+            dev_xpu = tu_test.select_device('xpu', verbose=True)
+            print(f"    Returned: {dev_xpu} (type: {type(dev_xpu)})")
+
+            print(f"  Testing patched select_device('cpu', verbose=True):")
+            dev_cpu = tu_test.select_device('cpu', verbose=True)
+            print(f"    Returned: {dev_cpu} (type: {type(dev_cpu)})")
+
+            if hasattr(torch, "cuda") and torch.cuda.is_available():
+                 print(f"  Testing patched select_device('cuda:0', verbose=True):")
+                 dev_cuda = tu_test.select_device('cuda:0', verbose=True)
+                 print(f"    Returned: {dev_cuda} (type: {type(dev_cuda)})")
+            else:
+                print("  CUDA not available, skipping direct test of select_device('cuda:0').")
+        except Exception as e:
+            print(f"  Error during direct test calls: {e}")
+            logging.error("Error during direct test calls of patched function.", exc_info=True)
+    else:
+        print("  SDA Patches not applied or original Ultralytics components not found; cannot run direct test calls.")
