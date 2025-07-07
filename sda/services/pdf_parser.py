@@ -1,6 +1,7 @@
 # sda/services/pdf_parser.py
 import asyncio
 import json
+import logging
 import hashlib
 import os
 import shutil
@@ -297,7 +298,7 @@ class PDFParsingService:
             image_blobs_map: Dict[str, PDFImageBlob] = {}
 
             for mineru_element_dict in mineru_data_list:
-                pdf_node = self._map_mineru_element_to_pdfnode(mineru_element_dict, mineru_content_dir, image_blobs_map)
+                pdf_node = self._map_mineru_element_to_pdfnode(mineru_element_dict, mineru_content_dir_for_images, image_blobs_map)
                 if pdf_node:
                     page_num = pdf_node.page_number
                     if page_num not in page_children_map:
