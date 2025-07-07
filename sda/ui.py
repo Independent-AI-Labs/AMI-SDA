@@ -1180,9 +1180,9 @@ No active tasks.
 
         if not is_image:
             # Ensure branch_name and relative_file_path are URL-encoded for the iframe src
-            import urllib.parse
-            encoded_branch_name = urllib.parse.quote_plus(branch)
-            encoded_relative_file_path = urllib.parse.quote_plus(relative_file_path)
+            from urllib import parse
+            encoded_branch_name = parse.quote_plus(branch)
+            encoded_relative_file_path = parse.quote_plus(relative_file_path)
 
             iframe_url = f"/static/ast_visualization.html?repo_id={str(repo_id)}&branch_name={encoded_branch_name}&file_path={encoded_relative_file_path}"
             embedding_html_content = f'<iframe src="{iframe_url}" style="width:100%; height:580px; border:none;"></iframe>'
