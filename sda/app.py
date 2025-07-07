@@ -72,17 +72,17 @@ class CodeAnalysisFramework:
         
         # Instantiate and pass the new partitioning service
         self.partitioning_service = SmartPartitioningService()
+        self.pdf_parsing_service = PDFParsingService() # Initialize PDFParsingService first
         self.ingestion_service = IntelligentIngestionService(
             db_manager=self.db_manager,
             git_service=self.git_service,
             task_executor=self.task_executor,
             partitioning_service=self.partitioning_service,
-            pdf_parsing_service=self.pdf_parsing_service # Pass PDFParsingService
+            pdf_parsing_service=self.pdf_parsing_service # Now it exists
         )
         self.navigation_tools = AdvancedCodeNavigationTools(db_manager=self.db_manager)
         self.editing_system = SafeFileEditingSystem(db_manager=self.db_manager, chunker=self.chunker)
         self.agent_manager = AgentManager(framework=self, rate_limiter=self.rate_limiter)
-        self.pdf_parsing_service = PDFParsingService() # Initialize PDFParsingService
         logging.info("Code Analysis Framework initialized successfully.")
 
     # --- Task Management ---
