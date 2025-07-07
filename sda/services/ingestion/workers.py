@@ -224,16 +224,17 @@ def _pass1_parse_files_worker(
 
 
 def _batch_process_pdfs_worker(
-    pdf_batch_paths: List[str],  # List of absolute paths to PDF files in this batch
+    pdf_batch_paths: List[str],
     repo_id: int,
     branch_name: str,
-    repo_root_str: str, # For calculating relative paths
+    repo_root_str: str,
     db_url: str,
     mineru_path: str,
-    cache_path: Path    # Base cache path for this ingestion run (currently unused by this worker but good for future)
+    cache_path: Path,
+    assigned_xpu_id_str: Optional[str] = None # New argument for XPU device ID
 ) -> Dict[str, Any]:
     """
-    Processes a batch of PDF files using MinerU.
+    Processes a batch of PDF files using MinerU, potentially pinned to a specific XPU device.
     Saves parsed data directly to the database.
     Returns a dictionary containing results for each PDF (success/failure, UUIDs, errors).
     """
@@ -250,19 +251,33 @@ def _batch_process_pdfs_worker(
     db_manager_instance = DatabaseManager(db_url=db_url, is_worker=True)
     pdf_parser_instance = PDFParsingService(mineru_path=mineru_path)
 
-    batch_id = str(uuid.uuid4())[:8] # Unique ID for this batch execution
-    log_prefix_batch = f"[PDFBatchWorker PID:{pid} BatchID:{batch_id}]"
-
+    batch_id = str(uuid.uuid4())[:8]
+    log_prefix_batch = f"[PDFBatchWorker PID:{pid} BatchID:{batch_id} XPU_ID:{assigned_xpu_id_str or 'CPU'}]"
     logging.info(f"{log_prefix_batch} Starting processing for batch of {len(pdf_batch_paths)} PDFs.")
 
-    # Convert string paths to Path objects for easier manipulation
+    env_for_mineru: Optional[Dict[str, str]] = None
+    if assigned_xpu_id_str:
+        env_for_mineru = {"ONEAPI_DEVICE_SELECTOR": assigned_xpu_id_str}
+        logging.info(f"{log_prefix_batch} Will use ONEAPI_DEVICE_SELECTOR={assigned_xpu_id_str} for MinerU.")
+    else:
+        # If no specific XPU assigned, ensure ONEAPI_DEVICE_SELECTOR is not set if we want default/CPU behavior
+        # This depends on whether _run_mineru's env=current_env (which is a copy of os.environ)
+        # would pick up a previously set ONEAPI_DEVICE_SELECTOR if not explicitly overridden.
+        # To be safe, we can pass an env dict that explicitly unsets it, or rely on _run_mineru not inheriting it if not set.
+        # For now, if assigned_xpu_id_str is None, env_for_mineru remains None, and _run_mineru will use parent env.
+        # If we want to ensure it's NOT set for CPU runs:
+        # env_for_mineru = {"ONEAPI_DEVICE_SELECTOR": ""} # Or some other way to signify unsetting if needed by subprocess call
+        pass
+
+
     original_pdf_paths_as_path_obj = [Path(p) for p in pdf_batch_paths]
 
-    with tempfile.TemporaryDirectory(prefix=f"mineru_batch_{batch_id}_") as temp_dir_str:
-        batch_input_temp_dir = Path(temp_dir_str)
-        logging.info(f"{log_prefix_batch} Created temp directory for symlinks: {batch_input_temp_dir}")
+    try: # Outer try for the temp directory and MinerU call
+        with tempfile.TemporaryDirectory(prefix=f"mineru_batch_{batch_id}_") as temp_dir_str:
+            batch_input_temp_dir = Path(temp_dir_str)
+            logging.info(f"{log_prefix_batch} Created temp directory for symlinks: {batch_input_temp_dir}")
 
-        # Create symlinks in the temporary directory
+            # Create symlinks in the temporary directory
         valid_original_paths_for_mineru: List[Path] = []
         for original_pdf_path_obj in original_pdf_paths_as_path_obj:
             try:
@@ -293,8 +308,9 @@ def _batch_process_pdfs_worker(
             # It expects list of original Path objects (absolute) and the Path to temp dir of symlinks
             parsed_results_list, all_image_blobs = asyncio.run(
                 pdf_parser_instance.parse_pdfs_from_directory_input(
-                    original_pdf_paths=valid_original_paths_for_mineru, # Pass list of original Path objects
-                    mineru_input_dir=batch_input_temp_dir
+                    original_pdf_paths=valid_original_paths_for_mineru,
+                    mineru_input_dir=batch_input_temp_dir,
+                    env_override=env_for_mineru # Pass the prepared environment
                 )
             )
 
@@ -364,7 +380,9 @@ def _batch_process_pdfs_worker(
                     except ValueError:
                         err_relative_path = str(p_path_obj)
                     batch_results.append({"file": err_relative_path, "status": "error_batch_execution", "path": str(p_path_obj), "error_message": str(e_batch_proc)})
+    # No 'finally' block needed here for os.environ manipulation anymore,
+    # as env_override is passed directly to the subprocess call.
 
-    # TemporaryDirectory is cleaned up automatically here.
+    # TemporaryDirectory is cleaned up automatically here by the 'with' statement.
     logging.info(f"{log_prefix_batch} Finished processing batch. Results count: {len(batch_results)}.")
     return {"worker_id": f"pdf_batch_worker_{pid}_{batch_id}", "results": batch_results}

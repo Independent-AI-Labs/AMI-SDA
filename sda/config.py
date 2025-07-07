@@ -237,6 +237,12 @@ class IngestionConfig:
     MAX_IMAGE_DIMENSION_PX: Optional[int] = int(os.getenv("MAX_IMAGE_DIMENSION_PX", "1024"))
     IMAGE_OUTPUT_FORMAT: str = os.getenv("IMAGE_OUTPUT_FORMAT", "PNG").upper() # Currently fixed to PNG by requirement
 
+    # XPU configuration for PDF processing
+    PDF_PROCESSING_USE_XPUS: bool = os.getenv("PDF_PROCESSING_USE_XPUS", "True").lower() in ('true', '1', 't')
+    # Comma-separated list of XPU indices to use, e.g., "0,1". If empty or None, use all available.
+    _pdf_processing_xpu_ids_str = os.getenv("PDF_PROCESSING_XPU_IDS")
+    PDF_PROCESSING_XPU_IDS: Optional[List[int]] = [int(x.strip()) for x in _pdf_processing_xpu_ids_str.split(',')] if _pdf_processing_xpu_ids_str else None
+
     SUB_TASK_TIMEOUT: int = int(os.getenv("SUB_TASK_TIMEOUT", "3600")) # Default to 1 hour for sub-tasks like graph/vector processing
     IMPORTANCE_WEIGHTS = {
         "base_score": 0.5, "score_split_structural": 0.4, "score_remainder": 0.2,

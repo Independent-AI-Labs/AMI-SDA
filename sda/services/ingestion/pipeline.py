@@ -31,6 +31,7 @@ from .workers import _initialize_parsing_worker, _persistent_embedding_worker, _
 # _chunker_instance is defined and used within workers.py
 
 from sda.services.pdf_parser import PDFParsingService # For type hinting
+from sda.utils.gpu_utils import get_available_xpu_details # For XPU device detection
 
 from .persistence import (
     _aggregate_postgres_payloads, _persist_files_for_schema, _persist_nodes_for_schema,
@@ -186,25 +187,74 @@ class IntelligentIngestionService:
                     # If task creation fails, we might choose to not process PDFs or log a major error.
                     # For now, we'll let it proceed but errors won't be logged to this sub-task.
 
-                # Use a ProcessPoolExecutor for PDF batch processing
-                # Note: _initialize_parsing_worker is for code files, not directly needed for PDF worker init unless it shares some global
-                with concurrent.futures.ProcessPoolExecutor(max_workers=IngestionConfig.MAX_CPU_WORKERS) as pdf_executor:
+                # Determine XPU devices to use for PDF processing
+                xp_force_cpu_for_pdf = IngestionConfig.MINERU_PDF_PARSE_METHOD.lower() == "cpu"
+
+                xpus_to_use_for_pdf: List[Dict[str, Any]] = []
+                if IngestionConfig.PDF_PROCESSING_USE_XPUS and not xp_force_cpu_for_pdf:
+                    all_available_xpus = get_available_xpu_details()
+                    if IngestionConfig.PDF_PROCESSING_XPU_IDS:
+                        # Filter by specified IDs if provided
+                        specified_indices = set(IngestionConfig.PDF_PROCESSING_XPU_IDS)
+                        for xpu_detail in all_available_xpus:
+                            # id_str is "level_zero:idx", so parse out idx
+                            try:
+                                xpu_idx = int(xpu_detail["id_str"].split(':')[-1])
+                                if xpu_idx in specified_indices:
+                                    xpus_to_use_for_pdf.append(xpu_detail)
+                            except ValueError:
+                                logging.warning(f"Could not parse index from XPU id_str: {xpu_detail['id_str']}")
+                        if not xpus_to_use_for_pdf:
+                             logging.warning(f"Specified XPU IDs {IngestionConfig.PDF_PROCESSING_XPU_IDS} not found among available XPUs. Falling back to CPU for PDF processing.")
+                    else:
+                        # Use all available XPUs if no specific IDs are given
+                        xpus_to_use_for_pdf = all_available_xpus
+
+                num_effective_xpus = len(xpus_to_use_for_pdf)
+
+                if num_effective_xpus > 0:
+                    max_pdf_workers = min(num_effective_xpus, IngestionConfig.MAX_CPU_WORKERS)
+                    logging.info(f"Utilizing {max_pdf_workers} XPU devices for PDF processing from: {[x['id_str'] for x in xpus_to_use_for_pdf[:max_pdf_workers]]}.")
+                    # Assumption: MinerU's magic-pdf.json "device-mode" is set to "cuda" (or equivalent for generic GPU)
+                    # and ONEAPI_DEVICE_SELECTOR will correctly pin to the XPU.
+                    if IngestionConfig.MINERU_PDF_PARSE_METHOD.lower() == "cpu":
+                        logging.warning("PDF_PROCESSING_USE_XPUS is True, but MINERU_PDF_PARSE_METHOD is 'cpu'. MinerU will run on CPU. XPU pinning will be ineffective.")
+                else:
+                    max_pdf_workers = IngestionConfig.MAX_CPU_WORKERS
+                    if IngestionConfig.PDF_PROCESSING_USE_XPUS and not xp_force_cpu_for_pdf: # Attempted XPU but none found/matched
+                        logging.info(f"No suitable/available XPU devices found, or XPU use disabled by PDF_PROCESSING_XPU_IDS. Using CPU for PDF processing with {max_pdf_workers} workers.")
+                    elif xp_force_cpu_for_pdf: # CPU explicitly configured for MinerU method
+                         logging.info(f"MinerU PDF parsing method set to 'cpu'. Using {max_pdf_workers} CPU workers.")
+                    else: # General fallback / PDF_PROCESSING_USE_XPUS is False
+                        logging.info(f"XPU use for PDF processing is disabled. Using {max_pdf_workers} CPU workers.")
+
+
+                with concurrent.futures.ProcessPoolExecutor(max_workers=max_pdf_workers) as pdf_executor:
                     pdf_batches = list(_create_batches([str(p.resolve()) for p in pdf_files_to_process], IngestionConfig.PDF_PROCESSING_BATCH_SIZE))
 
                     if pdf_parent_sub_task_id:
-                        _framework_update_task(pdf_parent_sub_task_id, f"Submitting {len(pdf_batches)} PDF batches...", 5.0, None, {'Total PDFs': len(pdf_files_to_process), 'Batches': len(pdf_batches)})
+                        _framework_update_task(pdf_parent_sub_task_id, f"Submitting {len(pdf_batches)} PDF batches to {max_pdf_workers} worker(s)...", 5.0, None, {'Total PDFs': len(pdf_files_to_process), 'Batches': len(pdf_batches), 'Workers': max_pdf_workers, 'Using XPUs': num_effective_xpus > 0})
+
+                    xpu_device_iterator_idx = 0
 
                     for pdf_batch in pdf_batches:
+                        assigned_xpu_id_str = None
+                        if num_effective_xpus > 0: # Only assign if we have effective XPUs to use
+                            # Cycle through the *filtered and capped* list of XPUs to use
+                            assigned_xpu_id_str = xpus_to_use_for_pdf[xpu_device_iterator_idx % max_pdf_workers]["id_str"]
+                            xpu_device_iterator_idx += 1
+
                         pdf_batch_processing_futures.append(
                             pdf_executor.submit(
-                                _batch_process_pdfs_worker, # The new batch worker
-                                pdf_batch, # List of absolute paths
+                                _batch_process_pdfs_worker,
+                                pdf_batch,
                                 repo_id,
                                 branch,
-                                repo_path_str, # repo_root_str for relative path calculation
+                                repo_path_str,
                                 self.db_manager.db_url,
                                 self.pdf_parsing_service.mineru_path,
-                                cache_path # Base cache path for potential future use by worker
+                                cache_path,
+                                assigned_xpu_id_str # NEW: Pass assigned XPU device ID string
                             )
                         )
 
