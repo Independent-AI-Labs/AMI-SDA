@@ -226,8 +226,8 @@ class IntelligentIngestionService:
 
             # --- STAGE 0: PARALLEL CPU-BOUND FILE PARSING ---
             with concurrent.futures.ProcessPoolExecutor(max_workers=IngestionConfig.MAX_CPU_WORKERS, initializer=_initialize_parsing_worker) as cpu_executor:
-                _framework_update_task(parent_task_id, "Parsing files...", 12.0,
-                                       f"Processing {len(files_on_disk)} files across {len(schema_to_files_map)} schemas.", None)
+                _framework_update_task(parent_task_id, "Parsing code files...", 12.0,
+                                       f"Processing {len(code_files_for_partitioning)} code files across {len(schema_to_files_map)} schemas.", None)
                 pass1_futures = []
                 sorted_schemas = sorted(schema_to_files_map.items(), key=lambda item: len(item[1]), reverse=True)
 
