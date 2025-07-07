@@ -221,57 +221,90 @@ def _pass1_parse_files_worker(
         'code_blob_data_list': code_blob_data_list
     }
 
-def _process_single_pdf_worker(
-    absolute_pdf_path: str,
+
+def _batch_process_pdfs_worker(
+    pdf_batch_paths: List[str],  # List of absolute paths to PDF files in this batch
     repo_id: int,
     branch_name: str,
-    relative_path: str,
+    repo_root_str: str, # For calculating relative paths
     db_url: str,
-    mineru_path: str
-):
+    mineru_path: str,
+    cache_path: Path    # Base cache path for this ingestion run (currently unused by this worker but good for future)
+) -> Dict[str, Any]:
     """
-    Worker function to process a single PDF file.
-    Initializes its own PDFParsingService and DatabaseManager.
+    Processes a batch of PDF files using MinerU.
+    Saves parsed data directly to the database.
+    Returns a dictionary containing results for each PDF (success/failure, UUIDs, errors).
     """
     pid = os.getpid()
-    log_prefix = f"[PDFWorker PID:{pid} File:{relative_path}]"
-    logging.info(f"{log_prefix} Starting processing.")
+    batch_results: List[Dict[str, Any]] = []
 
-    # Ensure services are imported here if not at module level, or ensure module level is fine for MP
+    # These imports are needed within the worker process.
     from sda.services.pdf_parser import PDFParsingService
     from sda.core.db_management import DatabaseManager
     import asyncio
+    import uuid # For batch worker id if needed later
 
-    try:
-        db_manager_instance = DatabaseManager(db_url=db_url, is_worker=True)
-        pdf_parser_instance = PDFParsingService(mineru_path=mineru_path)
+    # Initialize services once per batch worker invocation.
+    # Important: Create these *inside* the worker function for multiprocessing compatibility.
+    db_manager_instance = DatabaseManager(db_url=db_url, is_worker=True)
+    pdf_parser_instance = PDFParsingService(mineru_path=mineru_path)
 
-        logging.info(f"{log_prefix} Parsing PDF...")
-        # parse_pdf is async. Run it in an event loop.
-        parsed_document_data, image_blobs_data = asyncio.run(
-            pdf_parser_instance.parse_pdf(absolute_pdf_path)
-        )
+    logging.info(f"[PDFBatchWorker PID:{pid}] Starting processing for batch of {len(pdf_batch_paths)} PDFs.")
 
-        if not parsed_document_data:
-            logging.warning(f"{log_prefix} PDF parsing returned no data for {absolute_pdf_path}.")
-            return {"status": "parsing_returned_no_data", "file": relative_path, "path": absolute_pdf_path}
+    for absolute_pdf_path_str in pdf_batch_paths:
+        absolute_pdf_path = Path(absolute_pdf_path_str)
+        try:
+            # Calculate relative_path safely
+            if not Path(repo_root_str).is_absolute():
+                 # This case should ideally not happen if repo_root_str is always absolute from service
+                logging.error(f"[PDFBatchWorker PID:{pid}] repo_root_str '{repo_root_str}' is not absolute. Cannot determine relative path for '{absolute_pdf_path_str}'. Skipping.")
+                batch_results.append({"file": absolute_pdf_path_str, "status": "error", "path": absolute_pdf_path_str, "error_message": "Internal error: repo_root_str is not absolute."})
+                continue
 
-        logging.info(f"{log_prefix} Saving parsed PDF data to database for {absolute_pdf_path}...")
-        doc_uuid = db_manager_instance.save_pdf_document(
-            parsed_document_data=parsed_document_data,
-            image_blobs_data=image_blobs_data,
-            repository_id=repo_id,
-            branch_name=branch_name,
-            relative_path=relative_path
-        )
+            relative_path = absolute_pdf_path.relative_to(repo_root_str).as_posix()
+        except ValueError as ve:
+            # This can happen if absolute_pdf_path_str is not under repo_root_str
+            logging.error(f"[PDFBatchWorker PID:{pid}] Error calculating relative path for '{absolute_pdf_path_str}' against root '{repo_root_str}': {ve}. Skipping.")
+            batch_results.append({"file": absolute_pdf_path_str, "status": "error", "path": absolute_pdf_path_str, "error_message": f"Path error: {ve}"})
+            continue
 
-        if doc_uuid:
-            logging.info(f"{log_prefix} Successfully processed and saved {absolute_pdf_path}. PDF Document UUID: {doc_uuid}")
-            return {"status": "success", "file": relative_path, "uuid": doc_uuid, "path": absolute_pdf_path}
-        else:
-            logging.error(f"{log_prefix} Failed to save PDF document {absolute_pdf_path} to database (doc_uuid is None).")
-            return {"status": "db_save_failed_no_uuid", "file": relative_path, "path": absolute_pdf_path}
+        pdf_filename = absolute_pdf_path.name
+        log_prefix = f"[PDFBatchWorker PID:{pid} File:{pdf_filename}]"
 
-    except Exception as e:
-        logging.error(f"{log_prefix} Error processing PDF {absolute_pdf_path}: {e}", exc_info=True)
-        return {"status": "error", "file": relative_path, "path": absolute_pdf_path, "error_message": str(e)}
+        logging.info(f"{log_prefix} Starting individual processing.")
+
+        try:
+            logging.info(f"{log_prefix} Parsing PDF via pdf_parser_instance.parse_pdf...")
+            # Ensure parse_pdf gets a string path if it expects one
+            parsed_document_data, image_blobs_data = asyncio.run(
+                pdf_parser_instance.parse_pdf(str(absolute_pdf_path))
+            )
+
+            if not parsed_document_data:
+                logging.warning(f"{log_prefix} PDF parsing returned no data.")
+                batch_results.append({"file": relative_path, "status": "parsing_failed_no_data", "path": str(absolute_pdf_path)})
+                continue
+
+            logging.info(f"{log_prefix} Saving parsed PDF data to database...")
+            doc_uuid = db_manager_instance.save_pdf_document(
+                parsed_document_data=parsed_document_data,
+                image_blobs_data=image_blobs_data,
+                repository_id=repo_id,
+                branch_name=branch_name,
+                relative_path=relative_path
+            )
+
+            if doc_uuid:
+                logging.info(f"{log_prefix} Successfully processed and saved. PDF Document UUID: {doc_uuid}")
+                batch_results.append({"file": relative_path, "status": "success", "uuid": doc_uuid, "path": str(absolute_pdf_path)})
+            else:
+                logging.error(f"{log_prefix} Failed to save PDF document to database (doc_uuid is None).")
+                batch_results.append({"file": relative_path, "status": "db_save_failed_no_uuid", "path": str(absolute_pdf_path)})
+
+        except Exception as e:
+            logging.error(f"{log_prefix} Error processing PDF: {e}", exc_info=True)
+            batch_results.append({"file": relative_path, "status": "error", "path": str(absolute_pdf_path), "error_message": str(e)})
+
+    logging.info(f"[PDFBatchWorker PID:{pid}] Finished processing batch. Results count: {len(batch_results)}.")
+    return {"worker_id": f"pdf_batch_worker_{pid}_{str(uuid.uuid4())[:8]}", "results": batch_results}

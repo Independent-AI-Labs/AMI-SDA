@@ -169,43 +169,97 @@ class IntelligentIngestionService:
             if not code_files_for_partitioning and not pdf_files_to_process:
                 _framework_complete_task(parent_task_id, result={"message": "No relevant files (code or PDF) to ingest."}); return
 
-            pdf_processing_futures = []
+            pdf_batch_processing_futures = []
+            total_pdfs_processed_count = 0
+            total_pdfs_successfully_saved_count = 0
+            pdf_processing_errors: List[Dict[str, str]] = []
+
             if pdf_files_to_process:
-                _framework_update_task(parent_task_id, "Submitting PDF processing tasks...", 6.0, None, None)
-                for pdf_path_obj in pdf_files_to_process:
-                    relative_pdf_path = pdf_path_obj.relative_to(repo_path_str).as_posix()
-                    pdf_processing_futures.append(
-                        self.task_executor.submit(
-                            'postgres', # Using a generic pool name, actual execution is local.
-                            _process_single_pdf_worker,
-                            str(pdf_path_obj.resolve()),
-                            repo_id,
-                            branch,
-                            relative_pdf_path,
-                            self.db_manager.db_url,
-                            self.pdf_parsing_service.mineru_path
+                # This will be the single sub-task for all PDF processing.
+                pdf_parent_sub_task_id: Optional[int] = None
+                try:
+                    pdf_sub_task_obj = _framework_start_task(repo_id, "Processing PDF Documents", "system_pdf_ingestion", parent_task_id)
+                    pdf_parent_sub_task_id = pdf_sub_task_obj.id
+                    _framework_update_task(pdf_parent_sub_task_id, f"Starting PDF processing for {len(pdf_files_to_process)} files...", 1.0, None, None)
+                except Exception as e_pdf_task_start:
+                    logging.error(f"Failed to create parent sub-task for PDF processing: {e_pdf_task_start}", exc_info=True)
+                    # If task creation fails, we might choose to not process PDFs or log a major error.
+                    # For now, we'll let it proceed but errors won't be logged to this sub-task.
+
+                # Use a ProcessPoolExecutor for PDF batch processing
+                # Note: _initialize_parsing_worker is for code files, not directly needed for PDF worker init unless it shares some global
+                with concurrent.futures.ProcessPoolExecutor(max_workers=IngestionConfig.MAX_CPU_WORKERS) as pdf_executor:
+                    pdf_batches = list(_create_batches([str(p.resolve()) for p in pdf_files_to_process], IngestionConfig.PDF_PROCESSING_BATCH_SIZE))
+
+                    if pdf_parent_sub_task_id:
+                        _framework_update_task(pdf_parent_sub_task_id, f"Submitting {len(pdf_batches)} PDF batches...", 5.0, None, {'Total PDFs': len(pdf_files_to_process), 'Batches': len(pdf_batches)})
+
+                    for pdf_batch in pdf_batches:
+                        pdf_batch_processing_futures.append(
+                            pdf_executor.submit(
+                                _batch_process_pdfs_worker, # The new batch worker
+                                pdf_batch, # List of absolute paths
+                                repo_id,
+                                branch,
+                                repo_path_str, # repo_root_str for relative path calculation
+                                self.db_manager.db_url,
+                                self.pdf_parsing_service.mineru_path,
+                                cache_path # Base cache path for potential future use by worker
+                            )
                         )
-                    )
-                _framework_update_task(parent_task_id, f"{len(pdf_files_to_process)} PDF tasks submitted.", 7.0, None, None)
 
-            _framework_update_task(parent_task_id, "Analyzing repository structure (for code files)...", 8.0, None, {'Code Files to Analyze': len(code_files_for_partitioning)})
+                num_batches_completed = 0
+                for future in concurrent.futures.as_completed(pdf_batch_processing_futures):
+                    num_batches_completed += 1
+                    try:
+                        batch_result = future.result() # This is Dict[str, Any] with "results": List[Dict]
+                        if batch_result and "results" in batch_result:
+                            for pdf_res in batch_result["results"]:
+                                total_pdfs_processed_count += 1
+                                if pdf_res.get("status") == "success" and pdf_res.get("uuid"):
+                                    total_pdfs_successfully_saved_count += 1
+                                elif pdf_res.get("status") != "success":
+                                    pdf_processing_errors.append({
+                                        "file": pdf_res.get("file", "Unknown"),
+                                        "status": pdf_res.get("status", "Unknown error"),
+                                        "error_message": pdf_res.get("error_message", "N/A")
+                                    })
+                        else:
+                            logging.error(f"PDF batch processing returned unexpected result: {batch_result}")
+                            pdf_processing_errors.append({"file": "BatchError", "status": "Unknown batch error", "error_message": "Malformed batch result."})
 
-            if not code_files_for_partitioning: # Only PDFs were found and submitted
-                logging.info("No code files found for partitioning. Waiting for PDF tasks to complete.")
-                if pdf_processing_futures:
-                    _framework_update_task(parent_task_id, "Waiting for PDF processing tasks...", 8.5, None, None)
-                    # Wait for PDF processing to finish and check for errors
-                    successful_pdfs = 0
-                    for future in concurrent.futures.as_completed(pdf_processing_futures):
-                        try:
-                            future.result() # Raise exception if PDF processing failed
-                            successful_pdfs += 1
-                        except Exception as e:
-                            logging.error(f"A PDF processing task failed: {e}", exc_info=True)
-                            # Optionally, update parent task to reflect partial failure or log specific PDF
-                    _framework_update_task(parent_task_id, f"PDF processing finished ({successful_pdfs}/{len(pdf_files_to_process)} successful).", 90.0, None, None)
+                    except Exception as e:
+                        logging.error(f"A PDF processing batch failed: {e}", exc_info=True)
+                        pdf_processing_errors.append({"file": "BatchException", "status": "Exception in batch worker", "error_message": str(e)})
 
-                # Finalize task for PDF-only ingestion
+                    if pdf_parent_sub_task_id:
+                        progress = 5.0 + (num_batches_completed / len(pdf_batches) * 85.0) # Progress from 5% to 90%
+                        _framework_update_task(pdf_parent_sub_task_id, f"Processed {num_batches_completed}/{len(pdf_batches)} PDF batches...", progress, None,
+                                               {'PDFs Processed (approx)': total_pdfs_processed_count, 'Successful Saves': total_pdfs_successfully_saved_count})
+
+                if pdf_parent_sub_task_id:
+                    final_pdf_sub_task_message = f"PDF processing complete. {total_pdfs_successfully_saved_count}/{len(pdf_files_to_process)} successfully saved."
+                    if pdf_processing_errors:
+                        final_pdf_sub_task_message += f" Encountered {len(pdf_processing_errors)} errors."
+                    _framework_complete_task(pdf_parent_sub_task_id, result={"processed_pdfs": total_pdfs_processed_count,
+                                                                           "successful_saves": total_pdfs_successfully_saved_count,
+                                                                           "errors": pdf_processing_errors})
+                    logging.info(final_pdf_sub_task_message)
+                    # Log detailed errors if any
+                    for err_info in pdf_processing_errors:
+                        logging.warning(f"PDF Processing Error: File: {err_info['file']}, Status: {err_info['status']}, Details: {err_info['error_message']}")
+
+
+            _framework_update_task(parent_task_id, "PDF processing stage finished. Analyzing repository structure (for code files)...",
+                                   15.0 if code_files_for_partitioning else 90.0, # Jump progress if only PDFs
+                                   None, {'Code Files to Analyze': len(code_files_for_partitioning),
+                                          'PDFs Processed': total_pdfs_processed_count,
+                                          'PDFs Saved': total_pdfs_successfully_saved_count})
+
+
+            if not code_files_for_partitioning: # Only PDFs were found and processed
+                logging.info("No code files found for partitioning. PDF processing is complete.")
+                # Finalize parent task for PDF-only ingestion
                 with self.db_manager.get_session("public") as session:
                     repo_obj_final = session.get(Repository, repo_id)
                     if repo_obj_final:
