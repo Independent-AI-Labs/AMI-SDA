@@ -105,11 +105,23 @@ class PDFParsingService:
                     "Please ensure MinerU is installed and accessible."
                 )
 
+        # Get configured parsing method, default to "auto" if invalid
+        from sda.config import IngestionConfig # Local import to avoid circular dependency at module level if any
+        configured_method = IngestionConfig.MINERU_PDF_PARSE_METHOD.lower()
+        if configured_method not in ["auto", "txt", "ocr"]:
+            logging.warning(
+                f"Invalid MINERU_PDF_PARSE_METHOD '{configured_method}' in config. "
+                f"Defaulting to 'auto'. Valid options are 'auto', 'txt', 'ocr'."
+            )
+            parse_method = "auto"
+        else:
+            parse_method = configured_method
+
         cmd = [
             mineru_executable,
-            "-p", str(pdf_path.resolve()), # Use absolute path for PDF
+            "-p", str(pdf_path.resolve()), # Use absolute path for PDF or directory
             "-o", str(output_dir.resolve()), # Use absolute path for output
-            "-m", "txt",
+            "-m", parse_method, # Use configured method
             "-b", "pipeline"  # Explicitly select the pipeline backend
         ]
 
@@ -259,20 +271,78 @@ class PDFParsingService:
 
         return node
 
-    async def parse_pdf(self, pdf_file_path_str: str) -> Tuple[ParsedPDFDocument, List[PDFImageBlob]]:
-        pdf_file_path = Path(pdf_file_path_str).resolve() # Ensure absolute path
+    def _parse_mineru_content_list_json(
+        self,
+        content_list_json_path: Path,
+        mineru_content_dir_for_images: Path, # Base directory for resolving relative image paths in JSON
+        file_hash: str, # Pre-calculated hash of the original PDF
+        image_blobs_map: Dict[str, PDFImageBlob] # Shared map to accumulate unique image blobs
+    ) -> Optional[ParsedPDFDocument]:
+        """
+        Parses a single _content_list.json file from MinerU output.
+        Updates the shared image_blobs_map.
+        Returns a ParsedPDFDocument or None if parsing fails.
+        """
+        log_prefix = f"[PDFParser JSON:{content_list_json_path.name}]"
+        if not content_list_json_path.exists():
+            logging.warning(f"{log_prefix} _content_list.json not found at {content_list_json_path}")
+            return None
+
+        if not mineru_content_dir_for_images.is_dir():
+            logging.warning(f"{log_prefix} MinerU content directory for images ({mineru_content_dir_for_images}) is not a directory. Image paths might be incorrect.")
+            # Continue parsing JSON, image loading might fail later.
+
+        logging.info(f"{log_prefix} Parsing from: {content_list_json_path}, images relative to: {mineru_content_dir_for_images}")
+
+        try:
+            with open(content_list_json_path, "r", encoding="utf-8") as f:
+                mineru_data_list = json.load(f)
+        except Exception as e:
+            logging.error(f"{log_prefix} Failed to read or parse JSON file {content_list_json_path}: {e}", exc_info=True)
+            return None
+
+        parsed_doc = ParsedPDFDocument(pdf_file_hash=file_hash, total_pages=0)
+        page_children_map: Dict[int, List[PDFNode]] = {}
+        max_page_num = -1
+
+        for mineru_element_dict in mineru_data_list:
+            pdf_node = self._map_mineru_element_to_pdfnode(mineru_element_dict, mineru_content_dir_for_images, image_blobs_map)
+            if pdf_node:
+                page_num = pdf_node.page_number
+                if page_num not in page_children_map:
+                    page_children_map[page_num] = []
+                page_children_map[page_num].append(pdf_node)
+                if page_num > max_page_num:
+                    max_page_num = page_num
+
+        parsed_doc.total_pages = max_page_num + 1
+        for page_num in sorted(page_children_map.keys()):
+            page_node = PDFNode(
+                type=PDFElementType.PAGE,
+                page_number=page_num,
+                children=page_children_map[page_num]
+            )
+            parsed_doc.pages.append(page_node)
+
+        return parsed_doc
+
+    async def parse_single_pdf(self, pdf_file_path_str: str) -> Tuple[Optional[ParsedPDFDocument], List[PDFImageBlob]]:
+        """
+        Parses a single PDF file using MinerU.
+        This is the original parse_pdf method, renamed for clarity.
+        """
+        pdf_file_path = Path(pdf_file_path_str).resolve()
         if not pdf_file_path.exists():
+            logging.error(f"PDF file not found: {pdf_file_path}")
             raise FileNotFoundError(f"PDF file not found: {pdf_file_path}")
 
         file_hash = self._calculate_file_hash(pdf_file_path)
+        image_blobs_map: Dict[str, PDFImageBlob] = {} # Specific to this single PDF call
 
-        # MinerU creates output in a subfolder named after the PDF stem inside the specified output_dir
-        # e.g., mineru -p mydoc.pdf -o /tmp/mineru_out -> output is in /tmp/mineru_out/mydoc/
-        # So, the TemporaryDirectory itself can be the -o target.
         with tempfile.TemporaryDirectory() as temp_mineru_base_output_dir_str:
             temp_mineru_base_output_dir = Path(temp_mineru_base_output_dir_str)
-            pdf_filename_stem = pdf_file_path.stem # Moved early for logging
-            log_prefix = f"[PDFParser File:{pdf_filename_stem}]" # For parse_pdf level logging
+            pdf_filename_stem = pdf_file_path.stem
+            log_prefix = f"[PDFParser SingleFile:{pdf_filename_stem}]"
 
             mineru_result = await self._run_mineru(pdf_file_path, temp_mineru_base_output_dir)
 
@@ -284,83 +354,163 @@ class PDFParsingService:
                     f"MinerU STDERR:\n{mineru_result['stderr']}"
                 )
                 logging.error(error_message)
-                # Propagate a more structured error or just the message
-                raise RuntimeError(f"MinerU failed for {pdf_filename_stem}. See logs for details. STDERR snippet: {mineru_result['stderr'][:500]}")
+                # Consider not raising RuntimeError here directly, but returning None,
+                # so the caller in workers.py can log it appropriately for that file.
+                # For now, keep the raise to match original behavior for single parse.
+                raise RuntimeError(f"MinerU failed for {pdf_filename_stem}. STDERR: {mineru_result['stderr'][:500]}")
 
-            logging.info(f"{log_prefix} MinerU execution successful for {pdf_filename_stem}.")
+            logging.info(f"{log_prefix} MinerU execution successful.")
 
-            # Primary expected path for MinerU output (sub-directory named after PDF stem)
+            # Determine path to _content_list.json and image base directory
+            # MinerU creates a subdir named after the PDF stem in the output dir
             expected_mineru_output_subdir = temp_mineru_base_output_dir / pdf_filename_stem
             content_list_json_path = expected_mineru_output_subdir / f"{pdf_filename_stem}_content_list.json"
-            mineru_content_dir_for_images = expected_mineru_output_subdir # Base for relative img_paths
-
-            logging.info(f"Attempting to find MinerU output JSON at primary path: {content_list_json_path}")
+            mineru_content_dir_for_images = expected_mineru_output_subdir
 
             if not content_list_json_path.exists():
-                logging.warning(f"MinerU output JSON not found at primary path: {content_list_json_path}")
-                # Fallback: Check if MinerU output files directly into the base output directory
+                # Fallback: Check if MinerU output files directly into the base output directory (older behavior or simple cases)
                 content_list_json_path_alt = temp_mineru_base_output_dir / f"{pdf_filename_stem}_content_list.json"
-                logging.info(f"Checking fallback path for MinerU output JSON: {content_list_json_path_alt}")
-
                 if content_list_json_path_alt.exists():
                     content_list_json_path = content_list_json_path_alt
                     mineru_content_dir_for_images = temp_mineru_base_output_dir
-                    logging.info(f"Found MinerU output JSON at fallback path: {content_list_json_path}")
                 else:
-                    logging.error(f"MinerU output _content_list.json not found at primary or fallback paths.")
+                    logging.error(f"{log_prefix} MinerU output _content_list.json not found at primary or fallback paths.")
+                    # Add directory listing for debugging
                     logging.info(f"Debug: Listing contents of MinerU base output directory ({temp_mineru_base_output_dir}):")
                     for item in temp_mineru_base_output_dir.iterdir():
                         logging.info(f"  - {item.name}{'/' if item.is_dir() else ''}")
                         if item.is_dir():
-                            logging.info(f"    Contents of subdir {item.name}:")
-                            for sub_item in item.iterdir():
-                                logging.info(f"      - {sub_item.name}{'/' if sub_item.is_dir() else ''}")
+                            for sub_item in item.iterdir(): logging.info(f"    - {sub_item.name}")
+                    return None, [] # Return None if JSON not found
 
-                    raise FileNotFoundError(
-                        f"MinerU output _content_list.json not found. Looked in {expected_mineru_output_subdir} "
-                        f"and {temp_mineru_base_output_dir}."
-                    )
-
-            if not mineru_content_dir_for_images.is_dir():
-                 # This check might be problematic if content_list_json_path was found at the base level,
-                 # and mineru_content_dir_for_images became temp_mineru_base_output_dir.
-                 # The key is that mineru_content_dir_for_images must be the directory from which
-                 # relative image paths in the JSON are resolved.
-                 logging.warning(f"MinerU content directory for images ({mineru_content_dir_for_images}) is not a directory. Image paths might be incorrect.")
-                 # Not raising an error here, as JSON might still be parsable. Image loading will fail later if path is wrong.
-
-            logging.info(f"Successfully located _content_list.json at: {content_list_json_path}")
-            logging.info(f"Using directory for relative image paths: {mineru_content_dir_for_images}")
-
-            with open(content_list_json_path, "r", encoding="utf-8") as f:
-                mineru_data_list = json.load(f)
-
-            parsed_doc = ParsedPDFDocument(pdf_file_hash=file_hash, total_pages=0)
-            page_children_map: Dict[int, List[PDFNode]] = {}
-            max_page_num = -1
-            image_blobs_map: Dict[str, PDFImageBlob] = {}
-
-            for mineru_element_dict in mineru_data_list:
-                pdf_node = self._map_mineru_element_to_pdfnode(mineru_element_dict, mineru_content_dir_for_images, image_blobs_map)
-                if pdf_node:
-                    page_num = pdf_node.page_number
-                    if page_num not in page_children_map:
-                        page_children_map[page_num] = []
-                    page_children_map[page_num].append(pdf_node)
-                    if page_num > max_page_num:
-                        max_page_num = page_num
-
-            parsed_doc.total_pages = max_page_num + 1
-
-            for page_num in sorted(page_children_map.keys()):
-                page_node = PDFNode(
-                    type=PDFElementType.PAGE,
-                    page_number=page_num,
-                    children=page_children_map[page_num]
-                )
-                parsed_doc.pages.append(page_node)
-
+            parsed_doc = self._parse_mineru_content_list_json(
+                content_list_json_path,
+                mineru_content_dir_for_images,
+                file_hash,
+                image_blobs_map
+            )
             return parsed_doc, list(image_blobs_map.values())
+
+    async def parse_pdfs_from_directory_input(
+        self,
+        original_pdf_paths: List[Path], # List of absolute paths to the original PDFs that were symlinked
+        mineru_input_dir: Path, # The temporary directory containing symlinks, passed to MinerU's -p
+    ) -> Tuple[List[Dict[str, Any]], List[PDFImageBlob]]:
+        """
+        Processes a directory of PDFs (symlinks) using a single MinerU CLI call.
+        Returns a list of dictionaries, each representing the outcome for an original PDF,
+        and a consolidated list of unique image blobs.
+        Each dictionary in the list will have:
+        {
+            "original_path": str,
+            "document": Optional[ParsedPDFDocument],
+            "status": "success" | "json_not_found" | "json_parse_error",
+            "error_message": Optional[str]
+        }
+        """
+        results: List[Dict[str, Any]] = []
+        all_image_blobs_map: Dict[str, PDFImageBlob] = {}
+        log_prefix = f"[PDFParser BatchDir:{mineru_input_dir.name}]"
+        mineru_batch_stderr = "" # To store stderr from the batch MinerU call
+
+        with tempfile.TemporaryDirectory() as temp_mineru_base_output_dir_str:
+            temp_mineru_base_output_dir = Path(temp_mineru_base_output_dir_str)
+            logging.info(f"{log_prefix} Running MinerU on directory: {mineru_input_dir} -> output to: {temp_mineru_base_output_dir}")
+
+            mineru_cli_result = await self._run_mineru(mineru_input_dir, temp_mineru_base_output_dir)
+            mineru_batch_stderr = mineru_cli_result.get("stderr", "")
+
+            if mineru_cli_result["returncode"] != 0:
+                logging.warning(
+                    f"{log_prefix} MinerU execution for directory returned code {mineru_cli_result['returncode']}.\n"
+                    f"Command: {mineru_cli_result['command']}\n"
+                    f"Attempting to parse any successful outputs. STDERR snippet: {mineru_batch_stderr[:500]}"
+                )
+
+            for original_pdf_path in original_pdf_paths:
+                original_pdf_path_str = str(original_pdf_path.resolve())
+                pdf_filename_stem = original_pdf_path.stem
+
+                current_pdf_result = {
+                    "original_path": original_pdf_path_str,
+                    "document": None,
+                    "status": "", # Will be set below
+                    "error_message": None
+                }
+
+                expected_pdf_output_subdir = temp_mineru_base_output_dir / pdf_filename_stem
+                content_list_json_path = expected_pdf_output_subdir / f"{pdf_filename_stem}_content_list.json"
+                mineru_content_dir_for_images = expected_pdf_output_subdir
+
+                logging.info(f"{log_prefix} Attempting to parse result for: {original_pdf_path.name} from {content_list_json_path}")
+
+                if content_list_json_path.exists():
+                    file_hash = self._calculate_file_hash(original_pdf_path)
+                    parsed_doc = self._parse_mineru_content_list_json(
+                        content_list_json_path,
+                        mineru_content_dir_for_images,
+                        file_hash,
+                        all_image_blobs_map
+                    )
+                    if parsed_doc:
+                        current_pdf_result["document"] = parsed_doc
+                        current_pdf_result["status"] = "success"
+                        logging.info(f"{log_prefix} Successfully parsed: {original_pdf_path.name}")
+                    else:
+                        current_pdf_result["status"] = "json_parse_error"
+                        current_pdf_result["error_message"] = f"Failed to parse content_list.json for: {original_pdf_path.name}"
+                        logging.warning(f"{log_prefix} {current_pdf_result['error_message']}")
+                else:
+                    current_pdf_result["status"] = "json_not_found"
+                    current_pdf_result["error_message"] = (
+                        f"Output JSON not found for: {original_pdf_path.name}. "
+                        "Assuming MinerU failed or skipped it."
+                    )
+                    # Check if general MinerU stderr gives a clue (this is a rough check)
+                    if pdf_filename_stem in mineru_batch_stderr or original_pdf_path.name in mineru_batch_stderr:
+                         current_pdf_result["error_message"] += f" MinerU stderr might contain related error: {mineru_batch_stderr[:200]}"
+                    logging.warning(f"{log_prefix} {current_pdf_result['error_message']}")
+
+                results.append(current_pdf_result)
+
+        return results, list(all_image_blobs_map.values())
+
+
+# Example Usage (commented out for non-direct execution)
+# async def main_test_single():
+#     parser = PDFParsingService()
+#     # ... (setup for single PDF test)
+#     parsed_document, image_blobs = await parser.parse_single_pdf("path_to_your.pdf")
+#     # ... (print results)
+
+# async def main_test_batch():
+#     parser = PDFParsingService()
+#     # Create a temp dir with some symlinked PDFs for testing
+#     # For example:
+#     # with tempfile.TemporaryDirectory() as input_dir_for_mineru:
+#     #     input_dir_path = Path(input_dir_for_mineru)
+#     #     pdf_files_to_link = [Path("pdf1.pdf"), Path("pdf2.pdf")] # Absolute paths to actual PDFs
+#     #     for pdf_file in pdf_files_to_link:
+#     #         if pdf_file.exists():
+#     #            (input_dir_path / pdf_file.name).symlink_to(pdf_file)
+#     #         else:
+#     #            print(f"Warning: Test PDF {pdf_file} not found.")
+#     #
+#     #     if any((input_dir_path / p.name).exists() for p in pdf_files_to_link):
+#     #         batch_results, all_images = await parser.parse_pdfs_from_directory_input(pdf_files_to_link, input_dir_path)
+#     #         for original_path, doc_data in batch_results:
+#     #             if doc_data:
+#     #                 print(f"Parsed {Path(original_path).name}: {doc_data.total_pages} pages")
+#     #             else:
+#     #                 print(f"Failed to parse {Path(original_path).name}")
+#     #         print(f"Total unique image blobs from batch: {len(all_images)}")
+#     #     else:
+#     #         print("No valid PDFs symlinked for batch test.")
+#
+# if __name__ == "__main__":
+#     # asyncio.run(main_test_single())
+#     # asyncio.run(main_test_batch())
+#     print("PDFParsingService defined. To test, call main_test_single() or main_test_batch() after setup.")
 
 # Example Usage (commented out for non-direct execution)
 # async def main_test():

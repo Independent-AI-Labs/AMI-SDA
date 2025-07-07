@@ -246,65 +246,124 @@ def _batch_process_pdfs_worker(
     import uuid # For batch worker id if needed later
 
     # Initialize services once per batch worker invocation.
-    # Important: Create these *inside* the worker function for multiprocessing compatibility.
     db_manager_instance = DatabaseManager(db_url=db_url, is_worker=True)
     pdf_parser_instance = PDFParsingService(mineru_path=mineru_path)
 
-    logging.info(f"[PDFBatchWorker PID:{pid}] Starting processing for batch of {len(pdf_batch_paths)} PDFs.")
+    batch_id = str(uuid.uuid4())[:8] # Unique ID for this batch execution
+    log_prefix_batch = f"[PDFBatchWorker PID:{pid} BatchID:{batch_id}]"
 
-    for absolute_pdf_path_str in pdf_batch_paths:
-        absolute_pdf_path = Path(absolute_pdf_path_str)
+    logging.info(f"{log_prefix_batch} Starting processing for batch of {len(pdf_batch_paths)} PDFs.")
+
+    # Convert string paths to Path objects for easier manipulation
+    original_pdf_paths_as_path_obj = [Path(p) for p in pdf_batch_paths]
+
+    with tempfile.TemporaryDirectory(prefix=f"mineru_batch_{batch_id}_") as temp_dir_str:
+        batch_input_temp_dir = Path(temp_dir_str)
+        logging.info(f"{log_prefix_batch} Created temp directory for symlinks: {batch_input_temp_dir}")
+
+        # Create symlinks in the temporary directory
+        valid_original_paths_for_mineru: List[Path] = []
+        for original_pdf_path_obj in original_pdf_paths_as_path_obj:
+            try:
+                symlink_path = batch_input_temp_dir / original_pdf_path_obj.name
+                symlink_path.symlink_to(original_pdf_path_obj)
+                valid_original_paths_for_mineru.append(original_pdf_path_obj)
+            except Exception as e_symlink:
+                logging.error(f"{log_prefix_batch} Failed to create symlink for {original_pdf_path_obj.name}: {e_symlink}", exc_info=True)
+                # Add error result for this specific file immediately
+                # Need to calculate relative_path here if possible, or use absolute path
+                try:
+                    failed_relative_path = original_pdf_path_obj.relative_to(repo_root_str).as_posix()
+                except ValueError: # If original path is not under repo_root_str (should not happen with absolute paths)
+                    failed_relative_path = str(original_pdf_path_obj)
+                batch_results.append({
+                    "file": failed_relative_path, "status": "error_symlinking",
+                    "path": str(original_pdf_path_obj), "error_message": str(e_symlink)
+                })
+
+        if not valid_original_paths_for_mineru:
+            logging.warning(f"{log_prefix_batch} No valid PDFs to process after symlinking failures.")
+            return {"worker_id": f"pdf_batch_worker_{pid}_{batch_id}", "results": batch_results}
+
+        logging.info(f"{log_prefix_batch} Calling MinerU for directory: {batch_input_temp_dir} containing {len(valid_original_paths_for_mineru)} symlinks.")
+
         try:
-            # Calculate relative_path safely
-            if not Path(repo_root_str).is_absolute():
-                 # This case should ideally not happen if repo_root_str is always absolute from service
-                logging.error(f"[PDFBatchWorker PID:{pid}] repo_root_str '{repo_root_str}' is not absolute. Cannot determine relative path for '{absolute_pdf_path_str}'. Skipping.")
-                batch_results.append({"file": absolute_pdf_path_str, "status": "error", "path": absolute_pdf_path_str, "error_message": "Internal error: repo_root_str is not absolute."})
-                continue
-
-            relative_path = absolute_pdf_path.relative_to(repo_root_str).as_posix()
-        except ValueError as ve:
-            # This can happen if absolute_pdf_path_str is not under repo_root_str
-            logging.error(f"[PDFBatchWorker PID:{pid}] Error calculating relative path for '{absolute_pdf_path_str}' against root '{repo_root_str}': {ve}. Skipping.")
-            batch_results.append({"file": absolute_pdf_path_str, "status": "error", "path": absolute_pdf_path_str, "error_message": f"Path error: {ve}"})
-            continue
-
-        pdf_filename = absolute_pdf_path.name
-        log_prefix = f"[PDFBatchWorker PID:{pid} File:{pdf_filename}]"
-
-        logging.info(f"{log_prefix} Starting individual processing.")
-
-        try:
-            logging.info(f"{log_prefix} Parsing PDF via pdf_parser_instance.parse_pdf...")
-            # Ensure parse_pdf gets a string path if it expects one
-            parsed_document_data, image_blobs_data = asyncio.run(
-                pdf_parser_instance.parse_pdf(str(absolute_pdf_path))
+            # Call the new batch parsing method in PDFParsingService
+            # It expects list of original Path objects (absolute) and the Path to temp dir of symlinks
+            parsed_results_list, all_image_blobs = asyncio.run(
+                pdf_parser_instance.parse_pdfs_from_directory_input(
+                    original_pdf_paths=valid_original_paths_for_mineru, # Pass list of original Path objects
+                    mineru_input_dir=batch_input_temp_dir
+                )
             )
 
-            if not parsed_document_data:
-                logging.warning(f"{log_prefix} PDF parsing returned no data.")
-                batch_results.append({"file": relative_path, "status": "parsing_failed_no_data", "path": str(absolute_pdf_path)})
-                continue
+            logging.info(f"{log_prefix_batch} MinerU call finished. Processing {len(parsed_results_list)} results. Found {len(all_image_blobs)} unique images.")
 
-            logging.info(f"{log_prefix} Saving parsed PDF data to database...")
-            doc_uuid = db_manager_instance.save_pdf_document(
-                parsed_document_data=parsed_document_data,
-                image_blobs_data=image_blobs_data,
-                repository_id=repo_id,
-                branch_name=branch_name,
-                relative_path=relative_path
-            )
+            # Consolidate image blobs: db_manager_instance.save_pdf_document expects a list of PDFImageBlob objects.
+            # The new parser service method already returns a consolidated list of unique image blobs.
 
-            if doc_uuid:
-                logging.info(f"{log_prefix} Successfully processed and saved. PDF Document UUID: {doc_uuid}")
-                batch_results.append({"file": relative_path, "status": "success", "uuid": doc_uuid, "path": str(absolute_pdf_path)})
-            else:
-                logging.error(f"{log_prefix} Failed to save PDF document to database (doc_uuid is None).")
-                batch_results.append({"file": relative_path, "status": "db_save_failed_no_uuid", "path": str(absolute_pdf_path)})
+            for file_result in parsed_results_list: # file_result is a Dict
+                original_pdf_path_str = file_result["original_path"]
+                parsed_document_data = file_result["document"]
+                status = file_result["status"]
+                error_msg = file_result["error_message"]
 
-        except Exception as e:
-            logging.error(f"{log_prefix} Error processing PDF: {e}", exc_info=True)
-            batch_results.append({"file": relative_path, "status": "error", "path": str(absolute_pdf_path), "error_message": str(e)})
+                current_pdf_path_obj = Path(original_pdf_path_str)
+                pdf_filename_for_log = current_pdf_path_obj.name
+                log_prefix_file = f"[PDFBatchWorker PID:{pid} BatchID:{batch_id} File:{pdf_filename_for_log}]"
 
-    logging.info(f"[PDFBatchWorker PID:{pid}] Finished processing batch. Results count: {len(batch_results)}.")
-    return {"worker_id": f"pdf_batch_worker_{pid}_{str(uuid.uuid4())[:8]}", "results": batch_results}
+                try:
+                    relative_path = current_pdf_path_obj.relative_to(repo_root_str).as_posix()
+                except ValueError as ve_relpath:
+                    logging.error(f"{log_prefix_file} Error calculating relative path for '{original_pdf_path_str}' against root '{repo_root_str}': {ve_relpath}. Skipping save.")
+                    batch_results.append({
+                        "file": original_pdf_path_str, # Use original_path if relative_path fails
+                        "status": "error_path_calculation",
+                        "path": original_pdf_path_str,
+                        "error_message": str(ve_relpath)
+                    })
+                    continue
+
+                if status == "success" and parsed_document_data:
+                    logging.info(f"{log_prefix_file} Saving parsed data to database.")
+                    doc_uuid = db_manager_instance.save_pdf_document(
+                        parsed_document_data=parsed_document_data,
+                        image_blobs_data=all_image_blobs,
+                        repository_id=repo_id,
+                        branch_name=branch_name,
+                        relative_path=relative_path
+                    )
+                    if doc_uuid:
+                        logging.info(f"{log_prefix_file} Successfully processed and saved. PDF Document UUID: {doc_uuid}")
+                        batch_results.append({"file": relative_path, "status": "success", "uuid": doc_uuid, "path": original_pdf_path_str})
+                    else:
+                        logging.error(f"{log_prefix_file} Failed to save PDF document to database (doc_uuid is None).")
+                        batch_results.append({"file": relative_path, "status": "db_save_failed_no_uuid", "path": original_pdf_path_str, "error_message": "DB save returned no UUID."})
+                else:
+                    # Handle various failure statuses from parsing service
+                    logging.warning(f"{log_prefix_file} Processing failed for this file. Status: {status}. Error: {error_msg}")
+                    batch_results.append({
+                        "file": relative_path,
+                        "status": status, # e.g., "json_not_found", "json_parse_error"
+                        "path": original_pdf_path_str,
+                        "error_message": error_msg
+                    })
+
+        except Exception as e_batch_proc:
+            logging.error(f"{log_prefix_batch} Critical error during batch PDF processing: {e_batch_proc}", exc_info=True)
+            # This is an error for the whole batch operation. We might not have individual file results.
+            # Add a generic error for all files that were attempted in this batch if not already individually handled.
+            for p_path_obj in valid_original_paths_for_mineru:
+                # Avoid adding duplicate errors if some were already logged (e.g. symlink errors)
+                # A simple check:
+                is_already_errored = any(res.get("path") == str(p_path_obj) and res.get("status") != "success" for res in batch_results)
+                if not is_already_errored:
+                    try:
+                        err_relative_path = p_path_obj.relative_to(repo_root_str).as_posix()
+                    except ValueError:
+                        err_relative_path = str(p_path_obj)
+                    batch_results.append({"file": err_relative_path, "status": "error_batch_execution", "path": str(p_path_obj), "error_message": str(e_batch_proc)})
+
+    # TemporaryDirectory is cleaned up automatically here.
+    logging.info(f"{log_prefix_batch} Finished processing batch. Results count: {len(batch_results)}.")
+    return {"worker_id": f"pdf_batch_worker_{pid}_{batch_id}", "results": batch_results}
