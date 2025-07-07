@@ -45,8 +45,8 @@ def _persistent_embedding_worker(device: str, model_name: str, cache_folder: str
     result_queue.put(("ready", pid))
 
     while not shutdown_event.is_set():
-        embeddings_np = None # Ensure it's defined in this scope
-        texts_to_embed = None # Ensure it's defined
+        embeddings_np = None
+        texts_to_embed = None
         try:
             chunk_batch = work_queue.get(timeout=1.0)
             if chunk_batch is None: break
@@ -162,28 +162,40 @@ def _batch_process_pdfs_worker(
 ) -> Dict[str, Any]:
     pid = os.getpid()
     batch_results: List[Dict[str, Any]] = []
-    from sda.services.pdf_parser import PDFParsingService
+    from sda.services.pdf_parser import PDFParsingService # Import here due to patch dependency
     from sda.core.db_management import DatabaseManager
     import asyncio
     import uuid
 
+    # This import applies the patch if PYTHONSTARTUP points to it or if it's the first ultralytics import
+    # from sda.utils import ultralytics_xpu_patch
+    # No, pdf_parser.py imports ultralytics_xpu_patch, which should be enough if env is inherited.
+
     db_manager_instance = DatabaseManager(db_url=db_url, is_worker=True)
-    pdf_parser_instance = PDFParsingService(mineru_path=mineru_path)
+    pdf_parser_instance = PDFParsingService(mineru_path=mineru_path) # Patch should be active when this is init'd
     batch_id = str(uuid.uuid4())[:8]
     log_prefix_batch = f"[PDFBatchWorker PID:{pid} BatchID:{batch_id} XPU_ID:{assigned_xpu_id_str or 'CPU'}]"
     logging.info(f"{log_prefix_batch} Starting processing for batch of {len(pdf_batch_paths)} PDFs.")
 
-    env_for_mineru: Optional[Dict[str, str]] = None
+    env_for_mineru: Dict[str, str] = {} # Initialize as dict
     mineru_device_cli_arg: Optional[str] = None
 
+    # Set ULTRALYTICS_XPU_PATCH_ENABLED - this is critical for the patch script to activate
+    # This environment variable will be inherited by the mineru.EXE subprocess.
+    env_for_mineru["SDA_ULTRALYTICS_XPU_PATCH_ENABLED"] = "1"
+    logging.info(f"{log_prefix_batch} Setting SDA_ULTRALYTICS_XPU_PATCH_ENABLED=1 for MinerU subprocess.")
+
     if assigned_xpu_id_str:
-        env_for_mineru = {"ONEAPI_DEVICE_SELECTOR": assigned_xpu_id_str}
+        # For ONEAPI_DEVICE_SELECTOR (might be used by underlying oneAPI tools if MinerU calls them)
+        env_for_mineru["ONEAPI_DEVICE_SELECTOR"] = assigned_xpu_id_str
         logging.info(f"{log_prefix_batch} Environment for MinerU will include: ONEAPI_DEVICE_SELECTOR={assigned_xpu_id_str}")
+
         mineru_device_cli_arg = "xpu"
         logging.info(f"{log_prefix_batch} MinerU CLI --device argument will be: {mineru_device_cli_arg}")
     else:
         mineru_device_cli_arg = "cpu"
         logging.info(f"{log_prefix_batch} MinerU CLI --device argument will be: {mineru_device_cli_arg}")
+        # No ONEAPI_DEVICE_SELECTOR for CPU
 
     original_pdf_paths_as_path_obj = [Path(p) for p in pdf_batch_paths]
     try:
@@ -215,7 +227,7 @@ def _batch_process_pdfs_worker(
                         pdf_parser_instance.parse_pdfs_from_directory_input(
                             original_pdf_paths=valid_original_paths_for_mineru,
                             mineru_input_dir=batch_input_temp_dir,
-                            env_override=env_for_mineru,
+                            env_override=env_for_mineru, # This now includes SDA_ULTRALYTICS_XPU_PATCH_ENABLED and ONEAPI_DEVICE_SELECTOR
                             mineru_device_arg=mineru_device_cli_arg
                         )
                     )
