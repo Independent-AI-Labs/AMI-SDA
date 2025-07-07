@@ -263,19 +263,32 @@ def _batch_process_pdfs_worker(
     logging.info(f"{log_prefix_batch} Starting processing for batch of {len(pdf_batch_paths)} PDFs.")
 
     env_for_mineru: Optional[Dict[str, str]] = None
-    if assigned_xpu_id_str:
-        env_for_mineru = {"ONEAPI_DEVICE_SELECTOR": assigned_xpu_id_str}
-        logging.info(f"{log_prefix_batch} Will use ONEAPI_DEVICE_SELECTOR={assigned_xpu_id_str} for MinerU.")
-    else:
-        # If no specific XPU assigned, ensure ONEAPI_DEVICE_SELECTOR is not set if we want default/CPU behavior
-        # This depends on whether _run_mineru's env=current_env (which is a copy of os.environ)
-        # would pick up a previously set ONEAPI_DEVICE_SELECTOR if not explicitly overridden.
-        # To be safe, we can pass an env dict that explicitly unsets it, or rely on _run_mineru not inheriting it if not set.
-        # For now, if assigned_xpu_id_str is None, env_for_mineru remains None, and _run_mineru will use parent env.
-        # If we want to ensure it's NOT set for CPU runs:
-        # env_for_mineru = {"ONEAPI_DEVICE_SELECTOR": ""} # Or some other way to signify unsetting if needed by subprocess call
-        pass
+    env_for_mineru: Optional[Dict[str, str]] = None
+    mineru_device_cli_arg: Optional[str] = None
 
+    if assigned_xpu_id_str:
+        # For ONEAPI_DEVICE_SELECTOR (might be used by underlying oneAPI tools if MinerU calls them)
+        env_for_mineru = {"ONEAPI_DEVICE_SELECTOR": assigned_xpu_id_str}
+        logging.info(f"{log_prefix_batch} Environment for MinerU will include: ONEAPI_DEVICE_SELECTOR={assigned_xpu_id_str}")
+
+        # For MinerU's --device argument
+        # Assuming assigned_xpu_id_str is "level_zero:N", convert to "xpu:N"
+        try:
+            device_index = assigned_xpu_id_str.split(':')[-1]
+            mineru_device_cli_arg = f"xpu:{device_index}"
+            logging.info(f"{log_prefix_batch} MinerU CLI --device argument will be: {mineru_device_cli_arg}")
+        except Exception as e:
+            logging.warning(f"{log_prefix_batch} Could not parse XPU index from '{assigned_xpu_id_str}': {e}. MinerU will not receive specific --device xpu:N arg.", exc_info=True)
+            # Fallback: try generic "xpu" and hope ONEAPI_DEVICE_SELECTOR works, or let MinerU auto-detect.
+            # Or, could set mineru_device_cli_arg = "xpu" if MinerU supports a generic XPU flag.
+            # For now, if specific parsing fails, we won't pass --device, relying on env var or MinerU default.
+            mineru_device_cli_arg = "xpu" # Try generic "xpu" as a fallback if index parsing fails
+            logging.info(f"{log_prefix_batch} Using generic MinerU CLI --device argument: {mineru_device_cli_arg} due to parsing issue.")
+
+    else: # No specific XPU assigned, target CPU
+        mineru_device_cli_arg = "cpu"
+        logging.info(f"{log_prefix_batch} MinerU CLI --device argument will be: {mineru_device_cli_arg}")
+        # env_for_mineru remains None, so ONEAPI_DEVICE_SELECTOR will not be set.
 
     original_pdf_paths_as_path_obj = [Path(p) for p in pdf_batch_paths]
 
@@ -304,17 +317,16 @@ def _batch_process_pdfs_worker(
 
             if not valid_original_paths_for_mineru:
                 logging.warning(f"{log_prefix_batch} No valid PDFs to process after symlinking failures.")
-                # Still need to return results in the expected format from the function
-                # The logging.info and return statement after the 'try' block will handle this.
-                # So, we just let it flow to the end of the 'try' block.
             else:
                 logging.info(f"{log_prefix_batch} Calling MinerU for directory: {batch_input_temp_dir} containing {len(valid_original_paths_for_mineru)} symlinks.")
                 try:
+                    # Pass both env_override and the new mineru_device_cli_arg
                     parsed_results_list, all_image_blobs = asyncio.run(
                         pdf_parser_instance.parse_pdfs_from_directory_input(
                             original_pdf_paths=valid_original_paths_for_mineru,
                             mineru_input_dir=batch_input_temp_dir,
-                            env_override=env_for_mineru
+                            env_override=env_for_mineru,
+                            mineru_device_arg=mineru_device_cli_arg # Pass the new CLI argument
                         )
                     )
                     logging.info(f"{log_prefix_batch} MinerU call finished. Processing {len(parsed_results_list)} results. Found {len(all_image_blobs)} unique images.")

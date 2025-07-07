@@ -94,9 +94,11 @@ class PDFParsingService:
         self.mineru_path = mineru_path
         # TODO: Add logging configuration
 
-    async def _run_mineru(self, pdf_path: Path, output_dir: Path, env_override: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    async def _run_mineru(self, pdf_path: Path, output_dir: Path,
+                          env_override: Optional[Dict[str, str]] = None,
+                          mineru_device_arg: Optional[str] = None) -> Dict[str, Any]:
         """
-        Runs the MinerU CLI tool with optional environment variable overrides.
+        Runs the MinerU CLI tool with optional environment variable overrides and device argument.
         """
         # Ensure MinerU executable is findable
         mineru_executable = shutil.which(self.mineru_path)
@@ -130,6 +132,8 @@ class PDFParsingService:
             "-m", parse_method, # Use configured method
             "-b", "pipeline"  # Explicitly select the pipeline backend
         ]
+        if mineru_device_arg:
+            cmd.extend(["--device", mineru_device_arg])
 
         # print(f"Running MinerU command: {' '.join(cmd)}") # For debugging
         pdf_filename = pdf_path.name # For clearer logging
@@ -418,7 +422,9 @@ class PDFParsingService:
 
         return parsed_doc
 
-    async def parse_single_pdf(self, pdf_file_path_str: str, env_override: Optional[Dict[str, str]] = None) -> Tuple[Optional[ParsedPDFDocument], List[PDFImageBlob]]:
+    async def parse_single_pdf(self, pdf_file_path_str: str,
+                               env_override: Optional[Dict[str, str]] = None,
+                               mineru_device_arg: Optional[str] = None) -> Tuple[Optional[ParsedPDFDocument], List[PDFImageBlob]]:
         """
         Parses a single PDF file using MinerU.
         This is the original parse_pdf method, renamed for clarity.
@@ -436,8 +442,9 @@ class PDFParsingService:
             pdf_filename_stem = pdf_file_path.stem
             log_prefix = f"[PDFParser SingleFile:{pdf_filename_stem}]"
 
-            # Pass env_override to _run_mineru
-            mineru_result = await self._run_mineru(pdf_file_path, temp_mineru_base_output_dir, env_override=env_override)
+            # Pass env_override and mineru_device_arg to _run_mineru
+            mineru_result = await self._run_mineru(pdf_file_path, temp_mineru_base_output_dir,
+                                                 env_override=env_override, mineru_device_arg=mineru_device_arg)
 
             if mineru_result["returncode"] != 0:
                 error_message = (
@@ -488,10 +495,12 @@ class PDFParsingService:
         self,
         original_pdf_paths: List[Path],
         mineru_input_dir: Path,
-        env_override: Optional[Dict[str, str]] = None
+        env_override: Optional[Dict[str, str]] = None,
+        mineru_device_arg: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], List[PDFImageBlob]]:
         """
-        Processes a directory of PDFs (symlinks) using a single MinerU CLI call, with optional environment overrides.
+        Processes a directory of PDFs (symlinks) using a single MinerU CLI call,
+        with optional environment overrides and device argument.
         Returns a list of dictionaries, each representing the outcome for an original PDF,
         and a consolidated list of unique image blobs.
         Each dictionary in the list will have:
@@ -511,7 +520,8 @@ class PDFParsingService:
             temp_mineru_base_output_dir = Path(temp_mineru_base_output_dir_str)
             logging.info(f"{log_prefix} Running MinerU on directory: {mineru_input_dir} -> output to: {temp_mineru_base_output_dir}")
 
-            mineru_cli_result = await self._run_mineru(mineru_input_dir, temp_mineru_base_output_dir, env_override=env_override)
+            mineru_cli_result = await self._run_mineru(mineru_input_dir, temp_mineru_base_output_dir,
+                                                     env_override=env_override, mineru_device_arg=mineru_device_arg)
             mineru_batch_stderr = mineru_cli_result.get("stderr", "")
 
             if mineru_cli_result["returncode"] != 0:
