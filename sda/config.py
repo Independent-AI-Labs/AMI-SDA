@@ -78,6 +78,13 @@ MASTER_AI_CONFIG = AIConfigModel(
                 dimension=1024,
                 # Placeholder cost for local model based on estimated hardware/power usage.
                 # E.g., ~$0.02 per million tokens on a mid-range GPU.
+                price_per_million_tokens=0.002,
+                provider="local"
+            ),
+            "jinaai/jina-embeddings-v2-base-code": EmbeddingConfig(
+                model_name="jinaai/jina-embeddings-v2-base-code",
+                max_tokens=1024,
+                dimension=768,
                 price_per_million_tokens=0.02,
                 provider="local"
             )
@@ -90,7 +97,8 @@ class AIConfig:
     """A static class to provide convenient access to the active model configurations."""
     # Define the active models to be used by the application
     ACTIVE_LLM_MODEL = "gemini-2.5-flash-lite-preview-06-17"
-    ACTIVE_EMBEDDING_MODEL = "alikia2x/jina-embedding-v3-m2v-1024"
+    # ACTIVE_EMBEDDING_MODEL = "alikia2x/jina-embedding-v3-m2v-1024"
+    ACTIVE_EMBEDDING_MODEL = "jinaai/jina-embeddings-v2-base-code"
 
     # --- LLM Access ---
     @classmethod
@@ -203,7 +211,8 @@ class IngestionConfig:
     TOKENIZER_MODEL = "cl100k_base"
     MAX_CHUNK_TOKENS = AIConfig.get_active_embedding_config().max_tokens
     CHUNK_OVERLAP_RATIO = 0.1
-    EMBEDDING_TARGET_BATCH_TOKENS = 65536 * 8
+    # EMBEDDING_TARGET_BATCH_TOKENS = 65536 * 8
+    EMBEDDING_TARGET_BATCH_TOKENS = 1024 * 8
     MAX_CPU_WORKERS = 48
     # Configurable per-target worker pools for I/O
     MAX_DB_WORKERS_PER_TARGET = {
@@ -213,7 +222,8 @@ class IngestionConfig:
     POOL_SIZE = sum(MAX_DB_WORKERS_PER_TARGET.values())  # Total pool size for engine config
     POOL_TIMEOUT = 60
     FILE_PROCESSING_BATCH_SIZE = 128
-    EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "65536"))
+    # EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "65536"))
+    EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "1024"))
     VECTOR_UPDATE_BATCH_SIZE = int(os.getenv("VECTOR_UPDATE_BATCH_SIZE", "65536"))
     DGRAPH_BATCH_SIZE = int(os.getenv("DGRAPH_BATCH_SIZE", "512"))
     DB_BATCH_SIZE = int(os.getenv("DB_BATCH_SIZE", "2048"))
