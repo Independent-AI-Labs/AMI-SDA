@@ -884,13 +884,14 @@ class CodeAnalysisFramework:
         try:
             with self.db_manager.get_session("public") as session:
                 # Corrected query joining PDFDocument with RepositoryPDFLink
-                pdf_doc_uuid_result = session.query(PDFDocument.uuid).\
+                pdf_doc_uuid_query = session.query(PDFDocument.uuid).\
                     join(RepositoryPDFLink, PDFDocument.id == RepositoryPDFLink.pdf_document_id).\
                     filter(
                         RepositoryPDFLink.repository_id == repo_id,
                         RepositoryPDFLink.branch_name == branch_name,
                         RepositoryPDFLink.relative_path == relative_path
-                    ).scalar_one_or_none()
+                    )
+                pdf_doc_uuid_result = session.execute(pdf_doc_uuid_query).scalar_one_or_none()
 
                 if pdf_doc_uuid_result:
                     logging.info(f"Found processed PDF with UUID: {pdf_doc_uuid_result} for {relative_path}")
