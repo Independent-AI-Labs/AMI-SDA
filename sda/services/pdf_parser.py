@@ -113,6 +113,7 @@ class PDFParsingService:
         ]
 
         # print(f"Running MinerU command: {' '.join(cmd)}") # For debugging
+        logging.info(f"Executing MinerU command: {' '.join(cmd)}")
 
         process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -121,11 +122,24 @@ class PDFParsingService:
         )
         stdout, stderr = await process.communicate()
 
+        stdout_decoded = stdout.decode(errors='ignore').strip()
+        stderr_decoded = stderr.decode(errors='ignore').strip()
+
+        if stdout_decoded:
+            logging.info(f"MinerU stdout:\n{stdout_decoded}")
+        if stderr_decoded:
+            # MinerU often prints warnings to stderr even on success
+            logging.warning(f"MinerU stderr:\n{stderr_decoded}")
+
         if process.returncode != 0:
-            # print(f"MinerU stdout: {stdout.decode(errors='ignore')}") # For debugging
-            # print(f"MinerU stderr: {stderr.decode(errors='ignore')}") # For debugging
-            raise Exception(f"MinerU failed with error code {process.returncode}: {stderr.decode(errors='ignore')} {stdout.decode(errors='ignore')}")
-        # print(f"MinerU finished successfully. stdout: {stdout.decode(errors='ignore')}") # For debugging
+            err_msg = f"MinerU failed with error code {process.returncode}."
+            if stderr_decoded: # Append stderr if available, as it often has the error
+                 err_msg += f"\nstderr: {stderr_decoded}"
+            if stdout_decoded: # Append stdout too, might have clues
+                 err_msg += f"\nstdout: {stdout_decoded}"
+            raise Exception(err_msg)
+
+        logging.info("MinerU command executed successfully.")
 
     def _calculate_file_hash(self, file_path: Path) -> str:
         hasher = hashlib.sha256()
@@ -230,25 +244,49 @@ class PDFParsingService:
             await self._run_mineru(pdf_file_path, temp_mineru_base_output_dir)
 
             pdf_filename_stem = pdf_file_path.stem
-            # This is the directory where _content_list.json and images/ folder are expected
-            mineru_content_dir = temp_mineru_base_output_dir / pdf_filename_stem
-            content_list_json_path = mineru_content_dir / f"{pdf_filename_stem}_content_list.json"
+
+            # Primary expected path for MinerU output (sub-directory named after PDF stem)
+            expected_mineru_output_subdir = temp_mineru_base_output_dir / pdf_filename_stem
+            content_list_json_path = expected_mineru_output_subdir / f"{pdf_filename_stem}_content_list.json"
+            mineru_content_dir_for_images = expected_mineru_output_subdir # Base for relative img_paths
+
+            logging.info(f"Attempting to find MinerU output JSON at primary path: {content_list_json_path}")
 
             if not content_list_json_path.exists():
-                # Check if MinerU output files directly into the -o path (less common but possible)
+                logging.warning(f"MinerU output JSON not found at primary path: {content_list_json_path}")
+                # Fallback: Check if MinerU output files directly into the base output directory
                 content_list_json_path_alt = temp_mineru_base_output_dir / f"{pdf_filename_stem}_content_list.json"
+                logging.info(f"Checking fallback path for MinerU output JSON: {content_list_json_path_alt}")
+
                 if content_list_json_path_alt.exists():
                     content_list_json_path = content_list_json_path_alt
-                    mineru_content_dir = temp_mineru_base_output_dir # Adjust content dir if files are flat
+                    mineru_content_dir_for_images = temp_mineru_base_output_dir
+                    logging.info(f"Found MinerU output JSON at fallback path: {content_list_json_path}")
                 else:
+                    logging.error(f"MinerU output _content_list.json not found at primary or fallback paths.")
+                    logging.info(f"Debug: Listing contents of MinerU base output directory ({temp_mineru_base_output_dir}):")
+                    for item in temp_mineru_base_output_dir.iterdir():
+                        logging.info(f"  - {item.name}{'/' if item.is_dir() else ''}")
+                        if item.is_dir():
+                            logging.info(f"    Contents of subdir {item.name}:")
+                            for sub_item in item.iterdir():
+                                logging.info(f"      - {sub_item.name}{'/' if sub_item.is_dir() else ''}")
+
                     raise FileNotFoundError(
-                        f"MinerU output _content_list.json not found. Looked in {mineru_content_dir} "
+                        f"MinerU output _content_list.json not found. Looked in {expected_mineru_output_subdir} "
                         f"and {temp_mineru_base_output_dir}."
                     )
 
-            if not mineru_content_dir.is_dir():
-                 raise NotADirectoryError(f"MinerU content directory not found or is not a directory: {mineru_content_dir}")
+            if not mineru_content_dir_for_images.is_dir():
+                 # This check might be problematic if content_list_json_path was found at the base level,
+                 # and mineru_content_dir_for_images became temp_mineru_base_output_dir.
+                 # The key is that mineru_content_dir_for_images must be the directory from which
+                 # relative image paths in the JSON are resolved.
+                 logging.warning(f"MinerU content directory for images ({mineru_content_dir_for_images}) is not a directory. Image paths might be incorrect.")
+                 # Not raising an error here, as JSON might still be parsable. Image loading will fail later if path is wrong.
 
+            logging.info(f"Successfully located _content_list.json at: {content_list_json_path}")
+            logging.info(f"Using directory for relative image paths: {mineru_content_dir_for_images}")
 
             with open(content_list_json_path, "r", encoding="utf-8") as f:
                 mineru_data_list = json.load(f)
