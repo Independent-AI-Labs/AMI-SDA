@@ -28,7 +28,8 @@ from sqlalchemy.orm import joinedload
 
 from sda.config import DB_URL, WORKSPACE_DIR, AIConfig, GOOGLE_API_KEY, DGRAPH_HOST # Added DGRAPH_HOST
 from sda.core.db_management import DatabaseManager
-from sda.core.models import Repository, File as DBFile, DBCodeChunk, Task, BillingUsage, CodeBlob, PDFDocument # Ensure CodeBlob and PDFDocument are imported
+# Ensure CodeBlob, PDFDocument, and RepositoryPDFLink are imported
+from sda.core.models import Repository, File as DBFile, DBCodeChunk, Task, BillingUsage, CodeBlob, PDFDocument, RepositoryPDFLink
 from sda.services.agent import AgentManager
 from sda.services.analysis import EnhancedAnalysisEngine
 from sda.services.chunking import TokenAwareChunker
@@ -882,15 +883,18 @@ class CodeAnalysisFramework:
         logging.info(f"Looking up PDF document UUID for repo_id={repo_id}, branch='{branch_name}', path='{relative_path}'")
         try:
             with self.db_manager.get_session("public") as session:
-                db_pdf_doc = session.query(PDFDocument.uuid).filter_by(
-                    repository_id=repo_id,
-                    branch_name=branch_name,
-                    relative_path=relative_path
-                ).scalar_one_or_none() # Use scalar_one_or_none to get the UUID directly or None
+                # Corrected query joining PDFDocument with RepositoryPDFLink
+                pdf_doc_uuid_result = session.query(PDFDocument.uuid).\
+                    join(RepositoryPDFLink, PDFDocument.id == RepositoryPDFLink.pdf_document_id).\
+                    filter(
+                        RepositoryPDFLink.repository_id == repo_id,
+                        RepositoryPDFLink.branch_name == branch_name,
+                        RepositoryPDFLink.relative_path == relative_path
+                    ).scalar_one_or_none()
 
-                if db_pdf_doc:
-                    logging.info(f"Found processed PDF with UUID: {db_pdf_doc} for {relative_path}")
-                    return db_pdf_doc
+                if pdf_doc_uuid_result:
+                    logging.info(f"Found processed PDF with UUID: {pdf_doc_uuid_result} for {relative_path}")
+                    return pdf_doc_uuid_result
                 else:
                     logging.warning(f"No processed PDFDocument found for repo_id={repo_id}, branch='{branch_name}', path='{relative_path}'. It might not have been ingested or is not a PDF.")
                     return None
