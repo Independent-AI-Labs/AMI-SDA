@@ -109,6 +109,7 @@ class PDFParsingService:
             "-p", str(pdf_path.resolve()), # Use absolute path for PDF
             "-o", str(output_dir.resolve()), # Use absolute path for output
             "-m", "txt",
+            "-b", "pipeline"  # Explicitly select the pipeline backend
         ]
 
         # print(f"Running MinerU command: {' '.join(cmd)}") # For debugging

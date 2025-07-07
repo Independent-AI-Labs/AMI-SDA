@@ -30,3 +30,4 @@ requests==2.32.4
 accelerate==1.8.1
 Jinja2==3.1.6 # For HTML templating in UI
 plotly==6.0.1 # For advanced charting
+openai>=1.0.0 # Added for MinerU dependency, even if not actively using its LLM features
