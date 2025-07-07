@@ -16,6 +16,7 @@ from enum import Enum
 from io import BytesIO
 from PIL import Image
 from sda.config import IngestionConfig
+from sda.utils import ultralytics_xpu_patch # Apply Ultralytics XPU patch
 
 # --- Pydantic Models (defined in the design step) ---
 class PDFElementType(str, Enum):

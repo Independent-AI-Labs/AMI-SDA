@@ -2,20 +2,17 @@
 
 import json
 import logging
-import tempfile # Added missing import
+import tempfile
 import os
 import multiprocessing as mp
 import queue
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple # Added Tuple
+from typing import List, Dict, Any, Optional, Tuple
 
-# Imports that were originally in ingestion.py and are needed by these workers
 import hashlib
 from sda.services.chunking import TokenAwareChunker
-from sda.core.data_models import TransientNode # TransientChunk might not be needed if chunker changes output
-# from sda.core.data_models import TransientNode, TransientChunk # Assuming these are the Pydantic models
+from sda.core.data_models import TransientNode
 
-# Global chunker instance for parsing worker, similar to original setup
 _chunker_instance: Optional[TokenAwareChunker] = None
 
 def _initialize_parsing_worker():
@@ -27,10 +24,8 @@ def _initialize_parsing_worker():
 
 def _persistent_embedding_worker(device: str, model_name: str, cache_folder: str, work_queue: mp.Queue, result_queue: mp.Queue, shutdown_event: mp.Event):
     import torch, gc
-    import numpy as np # Import numpy for NaN checking
+    import numpy as np
     from sentence_transformers import SentenceTransformer
-    # Ensure multiprocessing is imported if not already (it was imported in original ingestion.py)
-    # import multiprocessing as mp # mp is already an alias from line 4
 
     pid = os.getpid()
     log_prefix = f"[EmbedWorker PID:{pid} Device:{device}]"
@@ -40,7 +35,7 @@ def _persistent_embedding_worker(device: str, model_name: str, cache_folder: str
         logging.info(f"{log_prefix} Initializing model...")
         worker_model = SentenceTransformer(model_name_or_path=model_name, device=device, cache_folder=cache_folder)
         worker_model.eval()
-        worker_model.half() # Use half precision if supported and beneficial
+        worker_model.half()
         logging.info(f"{log_prefix} Model initialization complete.")
     except Exception as e:
         logging.error(f"{log_prefix} Failed to initialize model: {e}", exc_info=True)
@@ -50,16 +45,17 @@ def _persistent_embedding_worker(device: str, model_name: str, cache_folder: str
     result_queue.put(("ready", pid))
 
     while not shutdown_event.is_set():
+        embeddings_np = None # Ensure it's defined in this scope
+        texts_to_embed = None # Ensure it's defined
         try:
-            chunk_batch = work_queue.get(timeout=1.0) # Expects list of (schema, id, content, token_count)
-            if chunk_batch is None: break # Shutdown signal
+            chunk_batch = work_queue.get(timeout=1.0)
+            if chunk_batch is None: break
 
             texts_to_embed = [content for _, _, content, _ in chunk_batch]
             if not texts_to_embed: continue
 
             embeddings_np = worker_model.encode(texts_to_embed, show_progress_bar=False, convert_to_tensor=False)
 
-            # Handle potential NaN values in embeddings
             sanitized_embeddings = []
             for emb_array in embeddings_np:
                 if np.isnan(emb_array).any():
@@ -67,237 +63,133 @@ def _persistent_embedding_worker(device: str, model_name: str, cache_folder: str
                     emb_array[np.isnan(emb_array)] = 0.0
                 sanitized_embeddings.append(emb_array.tolist())
 
-            # Ensure results match the structure expected by _persist_vector_batch
             results = [(d[0], d[1], emb_list, d[3]) for d, emb_list in zip(chunk_batch, sanitized_embeddings)]
             result_queue.put(("result", (pid, results)))
         except queue.Empty:
             continue
         except Exception as e:
             logging.error(f"{log_prefix} Error processing batch: {e}", exc_info=True)
-            result_queue.put(("error", str(e))) # Communicate error back
+            result_queue.put(("error", str(e)))
         finally:
-            # Clean up to free GPU memory
-            if 'embeddings_np' in locals(): del embeddings_np # Corrected variable name
-            if 'texts_to_embed' in locals(): del texts_to_embed
-            # No need to delete 'results' or 'sanitized_embeddings' as they are constructed from embeddings_np or are small
+            if embeddings_np is not None and 'embeddings_np' in locals(): del embeddings_np
+            if texts_to_embed is not None and 'texts_to_embed' in locals(): del texts_to_embed
             gc.collect()
-            # Conditional import for torch.xpu if that's the target, or stick to cuda
-            # For now, assuming CUDA or general GPU cleanup if torch.cuda is the indicator
             if device.startswith("cuda") and torch.cuda.is_available():
                 torch.cuda.empty_cache()
             elif device.startswith("xpu") and hasattr(torch, 'xpu') and torch.xpu.is_available():
                 torch.xpu.empty_cache()
-
-
     logging.info(f"{log_prefix} Shutting down.")
 
-def _create_postgres_payload_format(): # Renamed to avoid conflict if imported directly
-    """Helper to define the structure of the postgres payload for partition-specific tables and DBCodeChunks."""
-    return {'files': {}, 'nodes': [], 'chunks': []} # 'nodes' for ASTNode, 'chunks' for DBCodeChunk definitions
+def _create_postgres_payload_format():
+    return {'files': {}, 'nodes': [], 'chunks': []}
 
 def _pass1_parse_files_worker(
-    file_batch: List[str],
-    repo_root_str: str,
-    schema_name: str,
-    cache_path: Path,
-    repo_id: int, # ADDED for CodeBlobs context
-    branch: str   # ADDED for CodeBlobs context
-) -> Dict[str, Any]: # Return type changed slightly to include blob data
-    """
-    Worker that processes files, prepares data for CodeBlobs, ASTNodes (Dgraph),
-    and DBCodeChunks (Postgres). Saves intermediate results to cache files.
-    """
+    file_batch: List[str], repo_root_str: str, schema_name: str, cache_path: Path,
+    repo_id: int, branch: str
+) -> Dict[str, Any]:
     global _chunker_instance
     if _chunker_instance is None: _initialize_parsing_worker()
     chunker = _chunker_instance
     assert chunker is not None
 
-    # This payload is for partition-specific File and ASTNode tables, and DBCodeChunk definitions
     postgres_payload = _create_postgres_payload_format()
-
-    # Data for Dgraph ASTNodes
     dgraph_node_mutations: List[Dict[str, Any]] = []
-
-    # Data for graph edges
-    definitions: List[Tuple[str, str]] = [] # Tuple of (name, node_id)
-    unresolved_calls: List[Tuple[str, str]] = [] # Tuple of (caller_node_id, called_name)
-
-    # Data for the new CodeBlobs table (to be aggregated and persisted once per file)
+    definitions: List[Tuple[str, str]] = []
+    unresolved_calls: List[Tuple[str, str]] = []
     code_blob_data_list: List[Dict[str, Any]] = []
 
     for file_path_str in file_batch:
         abs_path = Path(file_path_str)
-        # Ensure relative paths are stored in POSIX format (forward slashes)
         relative_path_posix = abs_path.relative_to(repo_root_str).as_posix()
-
         try:
             content = abs_path.read_text(encoding='utf-8', errors='ignore')
             content_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
-
-            # Prepare data for CodeBlobs table
             code_blob_data_list.append({
-                "blob_hash": content_hash,
-                "content": content,
-                "repository_id": repo_id,
-                "branch": branch,
-                "file_path": relative_path_posix
+                "blob_hash": content_hash, "content": content,
+                "repository_id": repo_id, "branch": branch, "file_path": relative_path_posix
             })
-
             current_repo_metadata = {
-                "repository_id": repo_id,
-                "branch": branch,
-                "source_blob_hash": content_hash # For DBCodeChunk definitions
+                "repository_id": repo_id, "branch": branch, "source_blob_hash": content_hash
             }
-
-            # This is a CRITICAL change: TokenAwareChunker needs to be updated
-            # to return List[TransientNode] and List[Dict for DBCodeChunk]
             nodes, chunk_definitions_for_db = chunker.process_file_for_hierarchical_storage(
-                file_path=abs_path,
-                file_content=content,
-                file_identifier=relative_path_posix, # Used for node_id generation in TransientNode
-                repo_metadata=current_repo_metadata
+                file_path=abs_path, file_content=content,
+                file_identifier=relative_path_posix, repo_metadata=current_repo_metadata
             )
-
-            # Data for partition-specific File table
             postgres_payload['files'][relative_path_posix] = {
-                'line_count': len(content.splitlines()),
-                'hash': content_hash,
-                'chunk_count': len(chunk_definitions_for_db),
-                'blob_hash': content_hash # Link to CodeBlobs
+                'line_count': len(content.splitlines()), 'hash': content_hash,
+                'chunk_count': len(chunk_definitions_for_db), 'blob_hash': content_hash
             }
-
-            # TransientNode instances (already have new offset fields, no text_content)
             postgres_payload['nodes'].extend([n.model_dump() for n in nodes])
-
-            # DBCodeChunk definitions (already dicts with source_blob_hash, offsets etc.)
-            # Ensure 'relative_file_path' is added here if needed by _persist_chunks_for_schema
             for chunk_def in chunk_definitions_for_db:
-                chunk_def['relative_file_path'] = relative_path_posix # Ensure this is available
+                chunk_def['relative_file_path'] = relative_path_posix
             postgres_payload['chunks'].extend(chunk_definitions_for_db)
-
-
-            # Prepare Dgraph mutations from TransientNode instances
-            for node in nodes: # node is TransientNode
+            for node in nodes:
                 dgraph_node_mutations.append({
-                    "uid": f"_:{node.node_id}", "dgraph.type": "ASTNode",
-                    "node_id": node.node_id,
-                    "node_type": node.node_type,
-                    "name": node.name,
-                    "file_path": node.file_path,
-                    "repo_id": str(repo_id),
-                    "branch": branch,
-                    "startCharOffset": node.start_char_offset,
-                    "endCharOffset": node.end_char_offset,
-                    "startLine": node.start_line,
-                    "endLine": node.end_line,
-                    "startCol": node.start_column,
-                    "endCol": node.end_column,
-                    "parent_id": node.parent_id,
-                    "depth": node.depth,
+                    "uid": f"_:{node.node_id}", "dgraph.type": "ASTNode", "node_id": node.node_id,
+                    "node_type": node.node_type, "name": node.name, "file_path": node.file_path,
+                    "repo_id": str(repo_id), "branch": branch,
+                    "startCharOffset": node.start_char_offset, "endCharOffset": node.end_char_offset,
+                    "startLine": node.start_line, "endLine": node.end_line,
+                    "startCol": node.start_column, "endCol": node.end_column,
+                    "parent_id": node.parent_id, "depth": node.depth,
                     "complexity_score": node.complexity_score
-                    # Any other scalar fields from TransientNode that should go to Dgraph
                 })
-                # Logic for definitions and calls (ensure node.name is appropriate)
                 if node.node_type in ('function_definition', 'class_definition', 'method_declaration', 'function_declaration') and node.name:
                     definitions.append((node.name, node.node_id))
                 if node.node_type in ('call', 'call_expression', 'method_invocation') and node.name:
                     unresolved_calls.append((node.node_id, node.name.split('.')[-1]))
-
         except Exception as e:
             logging.error(f"Error processing file {file_path_str} in worker {os.getpid()}: {e}", exc_info=True)
 
     pid = os.getpid()
     pg_file = cache_path / f"pg_{schema_name}_{pid}.json"
-    with pg_file.open("w", encoding='utf-8') as f:
-        json.dump(postgres_payload, f)
-
+    with pg_file.open("w", encoding='utf-8') as f: json.dump(postgres_payload, f)
     dgnodes_file = cache_path / f"dgnodes_{schema_name}_{pid}.json"
     dgnodes_file.write_text(json.dumps(dgraph_node_mutations), encoding='utf-8')
-
     defs_file = cache_path / f"defs_{schema_name}_{pid}.json"
     defs_file.write_text(json.dumps(definitions), encoding='utf-8')
-
     calls_file = cache_path / f"calls_{schema_name}_{pid}.json"
     calls_file.write_text(json.dumps(unresolved_calls), encoding='utf-8')
-
     return {
-        'schema_name': schema_name,
-        'postgres_file': str(pg_file),
-        'dgraph_nodes_file': str(dgnodes_file),
-        'definitions_file': str(defs_file),
-        'calls_file': str(calls_file),
-        'code_blob_data_list': code_blob_data_list
+        'schema_name': schema_name, 'postgres_file': str(pg_file),
+        'dgraph_nodes_file': str(dgnodes_file), 'definitions_file': str(defs_file),
+        'calls_file': str(calls_file), 'code_blob_data_list': code_blob_data_list
     }
 
-
 def _batch_process_pdfs_worker(
-    pdf_batch_paths: List[str],
-    repo_id: int,
-    branch_name: str,
-    repo_root_str: str,
-    db_url: str,
-    mineru_path: str,
-    cache_path: Path,
-    assigned_xpu_id_str: Optional[str] = None # New argument for XPU device ID
+    pdf_batch_paths: List[str], repo_id: int, branch_name: str, repo_root_str: str,
+    db_url: str, mineru_path: str, cache_path: Path, assigned_xpu_id_str: Optional[str] = None
 ) -> Dict[str, Any]:
-    """
-    Processes a batch of PDF files using MinerU, potentially pinned to a specific XPU device.
-    Saves parsed data directly to the database.
-    Returns a dictionary containing results for each PDF (success/failure, UUIDs, errors).
-    """
     pid = os.getpid()
     batch_results: List[Dict[str, Any]] = []
-
-    # These imports are needed within the worker process.
     from sda.services.pdf_parser import PDFParsingService
     from sda.core.db_management import DatabaseManager
     import asyncio
-    import uuid # For batch worker id if needed later
+    import uuid
 
-    # Initialize services once per batch worker invocation.
     db_manager_instance = DatabaseManager(db_url=db_url, is_worker=True)
     pdf_parser_instance = PDFParsingService(mineru_path=mineru_path)
-
     batch_id = str(uuid.uuid4())[:8]
     log_prefix_batch = f"[PDFBatchWorker PID:{pid} BatchID:{batch_id} XPU_ID:{assigned_xpu_id_str or 'CPU'}]"
     logging.info(f"{log_prefix_batch} Starting processing for batch of {len(pdf_batch_paths)} PDFs.")
 
     env_for_mineru: Optional[Dict[str, str]] = None
-    env_for_mineru: Optional[Dict[str, str]] = None
     mineru_device_cli_arg: Optional[str] = None
 
     if assigned_xpu_id_str:
-        # For ONEAPI_DEVICE_SELECTOR (might be used by underlying oneAPI tools if MinerU calls them)
         env_for_mineru = {"ONEAPI_DEVICE_SELECTOR": assigned_xpu_id_str}
         logging.info(f"{log_prefix_batch} Environment for MinerU will include: ONEAPI_DEVICE_SELECTOR={assigned_xpu_id_str}")
-
-        # For MinerU's --device argument
-        # Assuming assigned_xpu_id_str is "level_zero:N", convert to "xpu:N"
-        try:
-            device_index = assigned_xpu_id_str.split(':')[-1]
-            mineru_device_cli_arg = f"xpu:{device_index}"
-            logging.info(f"{log_prefix_batch} MinerU CLI --device argument will be: {mineru_device_cli_arg}")
-        except Exception as e:
-            logging.warning(f"{log_prefix_batch} Could not parse XPU index from '{assigned_xpu_id_str}': {e}. MinerU will not receive specific --device xpu:N arg.", exc_info=True)
-            # Fallback: try generic "xpu" and hope ONEAPI_DEVICE_SELECTOR works, or let MinerU auto-detect.
-            # Or, could set mineru_device_cli_arg = "xpu" if MinerU supports a generic XPU flag.
-            # For now, if specific parsing fails, we won't pass --device, relying on env var or MinerU default.
-            mineru_device_cli_arg = "xpu" # Try generic "xpu" as a fallback if index parsing fails
-            logging.info(f"{log_prefix_batch} Using generic MinerU CLI --device argument: {mineru_device_cli_arg} due to parsing issue.")
-
-    else: # No specific XPU assigned, target CPU
+        mineru_device_cli_arg = "xpu"
+        logging.info(f"{log_prefix_batch} MinerU CLI --device argument will be: {mineru_device_cli_arg}")
+    else:
         mineru_device_cli_arg = "cpu"
         logging.info(f"{log_prefix_batch} MinerU CLI --device argument will be: {mineru_device_cli_arg}")
-        # env_for_mineru remains None, so ONEAPI_DEVICE_SELECTOR will not be set.
 
     original_pdf_paths_as_path_obj = [Path(p) for p in pdf_batch_paths]
-
-    try: # Outer try for the temp directory and MinerU call
+    try:
         with tempfile.TemporaryDirectory(prefix=f"mineru_batch_{batch_id}_") as temp_dir_str:
             batch_input_temp_dir = Path(temp_dir_str)
             logging.info(f"{log_prefix_batch} Created temp directory for symlinks: {batch_input_temp_dir}")
-
-            # Create symlinks in the temporary directory
             valid_original_paths_for_mineru: List[Path] = []
             for original_pdf_path_obj in original_pdf_paths_as_path_obj:
                 try:
@@ -314,23 +206,20 @@ def _batch_process_pdfs_worker(
                         "file": failed_relative_path, "status": "error_symlinking",
                         "path": str(original_pdf_path_obj), "error_message": str(e_symlink)
                     })
-
             if not valid_original_paths_for_mineru:
                 logging.warning(f"{log_prefix_batch} No valid PDFs to process after symlinking failures.")
             else:
                 logging.info(f"{log_prefix_batch} Calling MinerU for directory: {batch_input_temp_dir} containing {len(valid_original_paths_for_mineru)} symlinks.")
                 try:
-                    # Pass both env_override and the new mineru_device_cli_arg
                     parsed_results_list, all_image_blobs = asyncio.run(
                         pdf_parser_instance.parse_pdfs_from_directory_input(
                             original_pdf_paths=valid_original_paths_for_mineru,
                             mineru_input_dir=batch_input_temp_dir,
                             env_override=env_for_mineru,
-                            mineru_device_arg=mineru_device_cli_arg # Pass the new CLI argument
+                            mineru_device_arg=mineru_device_cli_arg
                         )
                     )
                     logging.info(f"{log_prefix_batch} MinerU call finished. Processing {len(parsed_results_list)} results. Found {len(all_image_blobs)} unique images.")
-
                     for file_result in parsed_results_list:
                         original_pdf_path_str = file_result["original_path"]
                         parsed_document_data = file_result["document"]
@@ -339,27 +228,20 @@ def _batch_process_pdfs_worker(
                         current_pdf_path_obj = Path(original_pdf_path_str)
                         pdf_filename_for_log = current_pdf_path_obj.name
                         log_prefix_file = f"[PDFBatchWorker PID:{pid} BatchID:{batch_id} File:{pdf_filename_for_log}]"
-
                         try:
                             relative_path = current_pdf_path_obj.relative_to(repo_root_str).as_posix()
                         except ValueError as ve_relpath:
                             logging.error(f"{log_prefix_file} Error calculating relative path for '{original_pdf_path_str}' against root '{repo_root_str}': {ve_relpath}. Skipping save.")
                             batch_results.append({
-                                "file": original_pdf_path_str,
-                                "status": "error_path_calculation",
-                                "path": original_pdf_path_str,
-                                "error_message": str(ve_relpath)
+                                "file": original_pdf_path_str, "status": "error_path_calculation",
+                                "path": original_pdf_path_str, "error_message": str(ve_relpath)
                             })
                             continue
-
                         if status == "success" and parsed_document_data:
                             logging.info(f"{log_prefix_file} Saving parsed data to database.")
                             doc_uuid = db_manager_instance.save_pdf_document(
-                                parsed_document_data=parsed_document_data,
-                                image_blobs_data=all_image_blobs,
-                                repository_id=repo_id,
-                                branch_name=branch_name,
-                                relative_path=relative_path
+                                parsed_document_data=parsed_document_data, image_blobs_data=all_image_blobs,
+                                repository_id=repo_id, branch_name=branch_name, relative_path=relative_path
                             )
                             if doc_uuid:
                                 logging.info(f"{log_prefix_file} Successfully processed and saved. PDF Document UUID: {doc_uuid}")
@@ -383,32 +265,18 @@ def _batch_process_pdfs_worker(
                             except ValueError:
                                 err_relative_path = str(p_path_obj)
                             batch_results.append({"file": err_relative_path, "status": "error_batch_execution", "path": str(p_path_obj), "error_message": str(e_batch_proc)})
-        # The 'with' statement for TemporaryDirectory ensures cleanup.
-        # All operations that depend on the temp_dir_str (like symlinking and MinerU call)
-        # must be within this 'with' block.
-        # The outer 'try' doesn't need its own 'finally' for this specific cleanup.
-        # However, a 'try' block must have an 'except' or 'finally'.
-        # Adding a catch-all 'except' for the outer 'try' to log any unexpected errors
-        # during temp dir setup or if other logic was mistakenly placed outside the 'with' but inside 'try'.
     except Exception as e_outer:
         logging.error(f"{log_prefix_batch} Unexpected error in outer try block of PDF batch processing: {e_outer}", exc_info=True)
-        # Populate batch_results with errors for all input PDFs if this outer error occurs,
-        # as individual processing likely didn't even start or complete.
-        for pdf_path_str_original_input in pdf_batch_paths: # Iterate over the original input list
-            # Check if already handled (e.g. by inner exceptions, though unlikely if outer fails early)
+        for pdf_path_str_original_input in pdf_batch_paths:
             is_already_errored = any(res.get("path") == pdf_path_str_original_input and res.get("status") != "success" for res in batch_results)
             if not is_already_errored:
                 try:
-                    # Try to make it relative for consistency, fallback to original path string
                     err_relative_path = Path(pdf_path_str_original_input).relative_to(repo_root_str).as_posix()
                 except ValueError:
                     err_relative_path = pdf_path_str_original_input
                 batch_results.append({
-                    "file": err_relative_path,
-                    "status": "error_outer_scope",
-                    "path": pdf_path_str_original_input,
-                    "error_message": str(e_outer)
+                    "file": err_relative_path, "status": "error_outer_scope",
+                    "path": pdf_path_str_original_input, "error_message": str(e_outer)
                 })
-
     logging.info(f"{log_prefix_batch} Finished processing batch. Results count: {len(batch_results)}.")
     return {"worker_id": f"pdf_batch_worker_{pid}_{batch_id}", "results": batch_results}
