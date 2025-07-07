@@ -151,30 +151,86 @@ class PDFParsingService:
             env=current_env
         )
 
-        # Stream stdout
-        async def stream_stdout():
-            while process.stdout and not process.stdout.at_eof():
-                line_bytes = await process.stdout.readline()
-                if not line_bytes:
-                    break
-                line = line_bytes.decode(errors='ignore').strip()
-                if line:
-                    all_stdout_lines.append(line)
-                    logging.info(f"{log_prefix} STDOUT: {line}")
+        # Stream stdout and stderr
+        # Define a larger chunk size to avoid LimitOverrunError with readline
+        # asyncio.streams._DEFAULT_LIMIT is typically 2**16 (65536)
+        # We'll use this as our read chunk size.
+        CHUNK_SIZE = getattr(asyncio.streams, '_DEFAULT_LIMIT', 65536)
 
-        # Stream stderr
-        async def stream_stderr():
-            while process.stderr and not process.stderr.at_eof():
-                line_bytes = await process.stderr.readline()
-                if not line_bytes:
+        async def stream_pipe(pipe_reader, line_list, log_level):
+            remainder = b""
+            while pipe_reader and not pipe_reader.at_eof():
+                try:
+                    # Read a chunk of data
+                    chunk = await pipe_reader.read(CHUNK_SIZE)
+                    if not chunk:
+                        break
+
+                    # Prepend any remainder from the previous chunk
+                    current_data = remainder + chunk
+
+                    # Split into lines, keeping the last part if it's not a full line
+                    lines = current_data.splitlines(True) # Keep line endings
+
+                    processed_something_in_chunk = False
+                    for i, line_bytes in enumerate(lines):
+                        if line_bytes.endswith(b'\n') or line_bytes.endswith(b'\r'):
+                            line_str = line_bytes.decode(errors='ignore').strip()
+                            if line_str: # Avoid logging empty lines from multiple newlines
+                                line_list.append(line_str)
+                                if log_level == logging.INFO:
+                                    logging.info(f"{log_prefix} STDOUT: {line_str}")
+                                elif log_level == logging.WARNING:
+                                    logging.warning(f"{log_prefix} STDERR: {line_str}")
+                            processed_something_in_chunk = True
+                            if i == len(lines) - 1: # Last element was a full line
+                                remainder = b""
+                        else: # Last element is a partial line
+                            remainder = line_bytes
+                            processed_something_in_chunk = True # Processed up to this partial line
+                            break # Stop processing lines from this chunk, wait for more data
+
+                    # If the chunk was processed up to a partial line, remainder is set.
+                    # If the chunk ended perfectly on a newline, remainder is b"".
+                    # If the chunk was empty or only contained newlines that were stripped,
+                    # and nothing was appended to line_list, this logic might need refinement
+                    # if we strictly need to ensure remainder is only what's *after* the last newline.
+                    # However, for logging purposes, this approach should be robust against very long lines.
+
+                except asyncio.LimitOverrunError as e: # Should ideally not happen with read(CHUNK_SIZE)
+                    logging.error(f"{log_prefix} Unexpected LimitOverrunError with read: {e}")
+                    # Store what we have and break
+                    if remainder:
+                         line_str = remainder.decode(errors='ignore').strip()
+                         if line_str: line_list.append(line_str)
                     break
-                line = line_bytes.decode(errors='ignore').strip()
-                if line:
-                    all_stderr_lines.append(line)
-                    logging.warning(f"{log_prefix} STDERR: {line}") # Log stderr as warning
+                except Exception as e_stream:
+                    logging.error(f"{log_prefix} Error streaming pipe: {e_stream}", exc_info=True)
+                    if remainder: # Log any remaining partial data
+                        line_str = remainder.decode(errors='ignore').strip()
+                        if line_str: line_list.append(line_str)
+                    break
+
+            # After EOF, if there's any remainder, process it
+            if remainder:
+                line_str = remainder.decode(errors='ignore').strip()
+                if line_str:
+                    line_list.append(line_str)
+                    if log_level == logging.INFO: # Assuming stdout
+                        logging.info(f"{log_prefix} STDOUT (remainder): {line_str}")
+                    elif log_level == logging.WARNING: # Assuming stderr
+                        logging.warning(f"{log_prefix} STDERR (remainder): {line_str}")
 
         # Run streaming tasks concurrently
-        await asyncio.gather(stream_stdout(), stream_stderr())
+        try:
+            await asyncio.gather(
+                stream_pipe(process.stdout, all_stdout_lines, logging.INFO),
+                stream_pipe(process.stderr, all_stderr_lines, logging.WARNING)
+            )
+        except Exception as e_gather:
+            # This might catch errors from within stream_pipe if not handled there,
+            # or errors related to gather itself.
+            logging.error(f"{log_prefix} Error in asyncio.gather for streaming: {e_gather}", exc_info=True)
 
         # Wait for the process to complete
         await process.wait()
