@@ -13,6 +13,10 @@ from typing import List, Dict, Any, Optional, Tuple, Union
 from pydantic import BaseModel, Field
 from enum import Enum
 
+from io import BytesIO
+from PIL import Image
+from sda.config import IngestionConfig
+
 # --- Pydantic Models (defined in the design step) ---
 class PDFElementType(str, Enum):
     PAGE = "page"
@@ -193,127 +197,12 @@ class PDFParsingService:
                 buf = f.read(65536)
         return hasher.hexdigest()
 
-    def _map_mineru_element_to_pdfnode(
-from io import BytesIO # For in-memory image manipulation
-from PIL import Image # For image processing
-
-from sda.config import IngestionConfig # For image processing settings
-
-
-class PDFParsingService:
-    def __init__(self, mineru_path: str = "mineru"): # Allow overriding MinerU path for testing/env
-        self.mineru_path = mineru_path
-        # TODO: Add logging configuration
-
-    async def _run_mineru(self, pdf_path: Path, output_dir: Path) -> Dict[str, Any]:
-        """Runs the MinerU CLI tool."""
-        # Ensure MinerU executable is findable
-        mineru_executable = shutil.which(self.mineru_path)
-        if not mineru_executable:
-            # Try common user local bin if not in PATH
-            user_local_bin = Path.home() / ".local" / "bin" / self.mineru_path
-            if user_local_bin.exists():
-                mineru_executable = str(user_local_bin)
-            else:
-                raise FileNotFoundError(
-                    f"MinerU executable '{self.mineru_path}' not found in PATH or ~/.local/bin/. "
-                    "Please ensure MinerU is installed and accessible."
-                )
-
-        # Get configured parsing method, default to "auto" if invalid
-        # from sda.config import InestionConfig # Already imported at class level
-        configured_method = IngestionConfig.MINERU_PDF_PARSE_METHOD.lower()
-        if configured_method not in ["auto", "txt", "ocr"]:
-            logging.warning(
-                f"Invalid MINERU_PDF_PARSE_METHOD '{configured_method}' in config. "
-                f"Defaulting to 'auto'. Valid options are 'auto', 'txt', 'ocr'."
-            )
-            parse_method = "auto"
-        else:
-            parse_method = configured_method
-
-        cmd = [
-            mineru_executable,
-            "-p", str(pdf_path.resolve()), # Use absolute path for PDF or directory
-            "-o", str(output_dir.resolve()), # Use absolute path for output
-            "-m", parse_method, # Use configured method
-            "-b", "pipeline"  # Explicitly select the pipeline backend
-        ]
-
-        # print(f"Running MinerU command: {' '.join(cmd)}") # For debugging
-        pdf_filename = pdf_path.name # For clearer logging
-        log_prefix = f"[MinerU Runner File:{pdf_filename}]"
-        logging.info(f"{log_prefix} Executing MinerU command: {' '.join(cmd)}")
-
-        all_stdout_lines = []
-        all_stderr_lines = []
-
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-
-        # Stream stdout
-        async def stream_stdout():
-            while process.stdout and not process.stdout.at_eof():
-                line_bytes = await process.stdout.readline()
-                if not line_bytes:
-                    break
-                line = line_bytes.decode(errors='ignore').strip()
-                if line:
-                    all_stdout_lines.append(line)
-                    logging.info(f"{log_prefix} STDOUT: {line}")
-
-        # Stream stderr
-        async def stream_stderr():
-            while process.stderr and not process.stderr.at_eof():
-                line_bytes = await process.stderr.readline()
-                if not line_bytes:
-                    break
-                line = line_bytes.decode(errors='ignore').strip()
-                if line:
-                    all_stderr_lines.append(line)
-                    logging.warning(f"{log_prefix} STDERR: {line}") # Log stderr as warning
-
-        # Run streaming tasks concurrently
-        await asyncio.gather(stream_stdout(), stream_stderr())
-
-        # Wait for the process to complete
-        await process.wait()
-
-        returncode = process.returncode
-        stdout_full = "\n".join(all_stdout_lines)
-        stderr_full = "\n".join(all_stderr_lines)
-
-        logging.info(f"{log_prefix} MinerU command finished with return code {returncode}.")
-
-        if returncode != 0:
-            # The error will be raised by the caller based on this return dict
-            logging.error(f"{log_prefix} MinerU failed. Full stdout and stderr captured.")
-
-        return {
-            "stdout": stdout_full,
-            "stderr": stderr_full,
-            "returncode": returncode,
-            "command": ' '.join(cmd)
-        }
-
-    def _calculate_file_hash(self, file_path: Path) -> str:
-        hasher = hashlib.sha256()
-        with open(file_path, 'rb') as f:
-            buf = f.read(65536)
-            while len(buf) > 0:
-                hasher.update(buf)
-                buf = f.read(65536)
-        return hasher.hexdigest()
-
     def _calculate_bytes_hash(self, data_bytes: bytes) -> str:
         hasher = hashlib.sha256()
         hasher.update(data_bytes)
         return hasher.hexdigest()
 
-    def _map_mineru_element_to_pdfnode(
+    def _map_mineru_element_to_pdfnode( # This is the start of the correct definition
         self,
         mineru_element: Dict[str, Any],
         mineru_content_dir: Path, # Directory where _content_list.json and images/ are
