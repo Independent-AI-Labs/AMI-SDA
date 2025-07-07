@@ -3,6 +3,7 @@
 import logging
 import os
 from pathlib import Path
+from typing import Optional # Added import for Optional
 
 from dotenv import load_dotenv
 
