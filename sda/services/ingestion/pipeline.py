@@ -27,7 +27,7 @@ from sda.services.partitioning import SmartPartitioningService
 from sda.utils.task_executor import TaskExecutor
 
 # Imports from the new ingestion submodules
-from .workers import _initialize_parsing_worker, _persistent_embedding_worker, _pass1_parse_files_worker, _process_single_pdf_worker # Added _process_single_pdf_worker
+from .workers import _initialize_parsing_worker, _persistent_embedding_worker, _pass1_parse_files_worker, _batch_process_pdfs_worker # Use new batch worker
 # _chunker_instance is defined and used within workers.py
 
 from sda.services.pdf_parser import PDFParsingService # For type hinting
