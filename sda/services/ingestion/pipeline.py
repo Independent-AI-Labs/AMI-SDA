@@ -238,17 +238,34 @@ class IntelligentIngestionService:
                                                {'PDFs Processed (approx)': total_pdfs_processed_count, 'Successful Saves': total_pdfs_successfully_saved_count})
 
                 if pdf_parent_sub_task_id:
-                    final_pdf_sub_task_message = f"PDF processing complete. {total_pdfs_successfully_saved_count}/{len(pdf_files_to_process)} successfully saved."
-                    if pdf_processing_errors:
-                        final_pdf_sub_task_message += f" Encountered {len(pdf_processing_errors)} errors."
-                    _framework_complete_task(pdf_parent_sub_task_id, result={"processed_pdfs": total_pdfs_processed_count,
-                                                                           "successful_saves": total_pdfs_successfully_saved_count,
-                                                                           "errors": pdf_processing_errors})
-                    logging.info(final_pdf_sub_task_message)
-                    # Log detailed errors if any
-                    for err_info in pdf_processing_errors:
-                        logging.warning(f"PDF Processing Error: File: {err_info['file']}, Status: {err_info['status']}, Details: {err_info['error_message']}")
+                    task_result_payload = {
+                        "processed_pdfs": total_pdfs_processed_count,
+                        "successful_saves": total_pdfs_successfully_saved_count,
+                        "errors_count": len(pdf_processing_errors),
+                        "errors": pdf_processing_errors # Full error details
+                    }
+                    final_status_message = f"PDFs: {total_pdfs_successfully_saved_count}/{len(pdf_files_to_process)} saved."
 
+                    if pdf_processing_errors:
+                        final_status_message += f" {len(pdf_processing_errors)} errors."
+                        # Create a summary of the first few errors for the main error message field
+                        error_summary_for_task = "; ".join(
+                            [f"{err['file']}: {err['error_message'][:100]}" for err in pdf_processing_errors[:3]]
+                        )
+                        if len(pdf_processing_errors) > 3:
+                            error_summary_for_task += " ... (see details for more)"
+
+                        _framework_complete_task(pdf_parent_sub_task_id,
+                                                 result=task_result_payload,
+                                                 error=error_summary_for_task) # Pass summary to error field
+                        logging.warning(f"{final_status_message} See details in task {pdf_parent_sub_task_id} and logs.")
+                    else:
+                        _framework_complete_task(pdf_parent_sub_task_id, result=task_result_payload)
+
+                    logging.info(final_status_message) # General log
+                    # Detailed logging of errors still happens
+                    for err_info in pdf_processing_errors:
+                        logging.warning(f"PDF Processing Error Detail: File: {err_info['file']}, Status: {err_info['status']}, Message: {err_info['error_message']}")
 
             _framework_update_task(parent_task_id, "PDF processing stage finished. Analyzing repository structure (for code files)...",
                                    15.0 if code_files_for_partitioning else 90.0, # Jump progress if only PDFs
